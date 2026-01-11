@@ -1,0 +1,29 @@
+\subsection{\Tool{} Algorithms}
+\label{sec:algos}
+
+\subsubsection{Algorithm~\ref{alg:start}: Start Function}
+This algorithm initializes an \Tool{} session for an $\textit{itergen}$ object (which contains the model and tokenizer) and an input prompt string \( O_0 \). 
+It initializes the decoding trace \( \mathcal{H} \), a key-value cache \( KV \), and a symbol position map \( \mathcal{D} \). 
+The prompt is tokenized into $\textit{cur\_tokens}$.
+
+\input{algorithms/start}
+
+\subsubsection{Algorithm~\ref{alg:forward}: Forward Function}
+This function performs token generation for an \Tool{} session. 
+It takes a target $\textit{stop\_symbol}$, the $\textit{count}$ of occurrences to stop at, a $\textit{max\_tokens}$ limit, and a recurrence penalty \( \gamma \). 
+The function begins by counting the initial occurrences of the $\textit{stop\_symbol}$. 
+It then enters a loop to generate tokens based on model scores, applying the recurrence penalty to previously generated tokens. 
+The loop continues until the specified conditions for stopping (based on symbol occurrences and token length) are met, after which the generated tokens are detokenized into the final output string \( O_n \).
+
+\input{algorithms/forward}
+
+
+\subsubsection{Algorithm~\ref{alg:backward}: Backward Function}
+This algorithm enables backtracking in a \Tool{} session. 
+It takes a $\textit{stop\_symbol}$ to backtrack to, and a $\textit{num}$ specifying how many symbols to backtrack. 
+The total occurrences of the $\textit{stop\_symbol}$ are counted, and the backtrack character position is calculated. 
+The output string \( O_m \) is initially constructed from the current tokens up to this position. 
+The algorithm then identifies the corresponding token index, updates the key-value cache \( KV \) by cropping it to the backtrack position, and updates the symbol position map \( \mathcal{D} \). 
+Finally, it updates $\textit{cur\_tokens}$ with the new sliced tokens and returns the backtracked output string \( O_m \).
+
+\input{algorithms/backward}

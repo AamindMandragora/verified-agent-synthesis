@@ -154,23 +154,40 @@ class DafnyVerifier:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             
-            # Create agents subdirectory to match include path
-            agents_dir = temp_path / "agents"
-            agents_dir.mkdir()
-            
-            # Create proofs subdirectory and copy/link the verification module
-            proofs_dir = temp_path / "proofs"
-            proofs_dir.mkdir()
+            # The VerifiedAgentSynthesis.dfy and GeneratedCSD.dfy are expected
+            # to be in the same directory by default Dafny include semantics unless paths are relative
+            # The template says: include "VerifiedAgentSynthesis.dfy"
             
             # Copy the VerifiedAgentSynthesis.dfy to temp location
             source_proof = self.PROOFS_DIR / "VerifiedAgentSynthesis.dfy"
+            # Fallback: check dafny/ directory if not in proofs/
+            if not source_proof.exists():
+                source_proof = Path(__file__).parent.parent / "dafny" / "VerifiedAgentSynthesis.dfy"
+            
             if source_proof.exists():
-                (proofs_dir / "VerifiedAgentSynthesis.dfy").write_text(
+                (temp_path / "VerifiedAgentSynthesis.dfy").write_text(
                     source_proof.read_text()
+                )
+                
+                # Create agents directory for relative imports
+                agents_dir = temp_path / "agents"
+                agents_dir.mkdir(exist_ok=True)
+                (agents_dir / "VerifiedAgentSynthesis.dfy").write_text(
+                    source_proof.read_text()
+                )
+                
+            else:
+                return VerificationResult(
+                    success=False,
+                    errors=[VerificationError(
+                        file="System", line=0, column=0,
+                        message=f"VerifiedAgentSynthesis.dfy not found in proofs/ or dafny/"
+                    )],
+                    return_code=-1
                 )
             
             # Write the generated code
-            source_file = agents_dir / "GeneratedCSD.dfy"
+            source_file = temp_path / "GeneratedCSD.dfy"
             source_file.write_text(dafny_code)
             
             # Run dafny verify

@@ -152,8 +152,17 @@ class DafnyCompiler:
             
             # Copy the VerifiedAgentSynthesis.dfy
             source_proof = self.PROOFS_DIR / "VerifiedAgentSynthesis.dfy"
+            # Fallback: check dafny/ directory if not in proofs/
+            if not source_proof.exists():
+                source_proof = Path(__file__).parent.parent / "dafny" / "VerifiedAgentSynthesis.dfy"
+
             if source_proof.exists():
                 (proofs_dir / "VerifiedAgentSynthesis.dfy").write_text(
+                    source_proof.read_text()
+                )
+
+                # Copy into agents/ directory too, as some relative imports might look there
+                (agents_dir / "VerifiedAgentSynthesis.dfy").write_text(
                     source_proof.read_text()
                 )
             

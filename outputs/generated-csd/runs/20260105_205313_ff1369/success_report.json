@@ -1,8 +1,0 @@
-{
-  "strategy_code": "// CSD_RATIONALE_BEGIN\n// I chose HybridGeneration to balance exploration with constraint adherence, ensuring the graph remains valid while allowing some creativity early.\n// The interval N=5 allows occasional unconstrained tokens without overwhelming the constraint-checking overhead.\n// CSD_RATIONALE_END\n\nvar temp;\ntemp := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 5);\ngenerated := temp;",
-  "tool_choice_rationale": "I chose HybridGeneration to balance exploration with constraint adherence, ensuring the graph remains valid while allowing some creativity early.\nThe interval N=5 allows occasional unconstrained tokens without overwhelming the constraint-checking overhead.",
-  "dafny_file": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260105_205313_ff1369/generated_csd.dfy",
-  "compiled_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260105_205313_ff1369/generated_csd",
-  "total_attempts": 1,
-  "timestamp": "2026-01-05T20:53:37.544398"
-}

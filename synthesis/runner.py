@@ -12,10 +12,9 @@ import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Literal
-from parsers.lark_parser import LarkGrammarParser
 
 # Type for parser mode
-ParserMode = Literal["permissive", "json", "math"]
+ParserMode = Literal["permissive", "json"]
 
 
 @dataclass
@@ -157,7 +156,7 @@ class StrategyRunner:
         
         return lm, parser, prompt, all_tokens
     
-    def _create_dafny_test_environment(self, module_dir: Path, lark_file: Optional[Path] = None) -> tuple[Any, Any, Any, int]:
+    def _create_dafny_test_environment(self, module_dir: Path) -> tuple[Any, Any, Any, int]:
         """
         Create a Dafny-compatible test environment.
         
@@ -288,20 +287,68 @@ class StrategyRunner:
                 return self._lm_tokens
         
         # Create a JSON-aware parser
+        class JsonParser(VerifiedDecoderAgent.Parser):
+            """Parser that validates JSON structure."""
+            
+            def __init__(self, lm_tokens):
+                super().__init__()
+                self._lm_tokens = lm_tokens
+                self._token_list = list(lm_tokens)
+                
+                # Import JSON validator
+                from parsers.json_prefix import is_valid_json_prefix, is_complete_json
+                self._is_valid_prefix = is_valid_json_prefix
+                self._is_complete = is_complete_json
+            
+            def _tokens_to_text(self, tokens) -> str:
+                """Convert token sequence to text."""
+                if hasattr(tokens, '__iter__'):
+                    return "".join(str(t) for t in tokens)
+                return str(tokens)
+            
+            def IsValidPrefix(self, prefix) -> bool:
+                """Check if prefix decodes to valid JSON prefix."""
+                if len(prefix) == 0:
+                    return True
+                text = self._tokens_to_text(prefix)
+                return self._is_valid_prefix(text)
+            
+            def IsCompletePrefix(self, prefix) -> bool:
+                """Check if prefix decodes to complete JSON."""
+                if len(prefix) == 0:
+                    return False
+                text = self._tokens_to_text(prefix)
+                return self._is_complete(text)
+            
+            def ValidNextTokens(self, prefix):
+                """Get tokens that can validly follow the prefix."""
+                current_text = self._tokens_to_text(prefix) if len(prefix) > 0 else ""
+                
+                # If current prefix is invalid, return empty
+                if current_text and not self._is_valid_prefix(current_text):
+                    return _dafny.SeqWithoutIsStrInference([])
+                
+                # Filter tokens
+                valid = []
+                for token in self._token_list:
+                    token_str = str(token)
+                    if not token_str:
+                        continue
+                    extended = current_text + token_str
+                    if self._is_valid_prefix(extended):
+                        valid.append(token)
+                
+                return _dafny.SeqWithoutIsStrInference(valid)
         
         # Create instances based on parser mode
         is_json_mode = self.parser_mode == "json"
-        is_math_mode = self.parser_mode == "math"
         lm = TestLM(vocab_size=self.vocab_size, json_mode=is_json_mode)
-
-
-        if is_math_mode:
-            parser = LarkGrammarParser.from_grammar_file(lark_file, start="start")
-        else:
-            parser = TestParser(lm._Tokens)
+        
         if is_json_mode:
+            parser = JsonParser(lm._Tokens)
             prompt = _dafny.SeqWithoutIsStrInference([])  # Empty prompt for JSON
         else:
+            parser = TestParser(lm._Tokens)
             prompt = _dafny.SeqWithoutIsStrInference(["<START>"])
         
         return lm, parser, prompt, self.max_steps
@@ -309,8 +356,7 @@ class StrategyRunner:
     def run(
         self,
         module_path: Path,
-        prompt: Optional[list[str]] = None,
-        lark_file: Optional[Path] = None
+        prompt: Optional[list[str]] = None
     ) -> RuntimeResult:
         """
         Execute a compiled strategy module.
@@ -330,17 +376,9 @@ class StrategyRunner:
             # Load the compiled module first to set up paths
             compiled_module = self._load_compiled_module(module_path)
             module_dir = module_path.parent
-
-            if str(module_dir) not in sys.path:
-                sys.path.insert(0, str(module_dir))
-
-            import _dafny
             
             # Create Dafny-compatible test environment
-            lm, parser, test_prompt, max_steps = self._create_dafny_test_environment(module_dir, lark_file=lark_file)
-
-            if prompt is not None:
-                test_prompt = _dafny.SeqWithoutIsStrInference(prompt)
+            lm, parser, test_prompt, max_steps = self._create_dafny_test_environment(module_dir)
             
             # Find and run the MyCSDStrategy method from GeneratedCSD module
             csd_strategy_method = None
@@ -372,7 +410,7 @@ class StrategyRunner:
                     ),
                     execution_time_ms=(time.time() - start_time) * 1000
                 )
-
+            
             # Call the strategy method directly - it performs constrained decoding
             # and returns the generated sequence
             output = csd_strategy_method(lm, parser, test_prompt, max_steps)

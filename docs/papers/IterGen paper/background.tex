@@ -1,0 +1,62 @@
+
+%In this section, we provide the necessary background on grammar-guided LLMs generation.
+
+% \noindent{\bf Notation.} 
+Let the alphabet $\Sigma$ be a finite set of characters and $\epsilon$ denotes an empty string.
+Given a set $S$, $S^i$ denotes the set of all $i$-length sequences that can be formed by concatenating elements from $S$,
+and $S^* = \bigcup_{i \in \mathbb{N}} S^i$.
+$\alphabets^{*}$ represents the set of all strings over characters in $\alphabets$, including the empty string $\epsilon$. 
+% Further, we use $\alphabets^{+}$ to denote $(\alphabets^{*} - \epsilon)$.
+% Given two strings $w_1, w_2 \in \alphabets^*$, we use $w_1.w_2$ to denote string obtained by concatenating $w_2$ to $w_1$.
+
+% \input{algorithms/masked_decoding}
+
+
+\subsection{Language Models}
+
+Current autoregressive language models (LM) operate on vocabulary $V \subseteq \Sigma^*$ of tokens.
+A tokenizer takes an input prompt $O_0 \in \Sigma^*$,
+which is a sequence of characters,
+as input and converts $O_0$ into a sequence of tokens $t_1, t_2, \dots, t_k$. 
+In order to generate the next token, the LM $M: V^* \to \mathbb{R}^{|V|}$ takes as input the sequence of tokens $t_1, t_2, \dots, t_k$, and outputs a vector of scores $\mathcal{S}$ over the vocabulary: $\mathcal{S} = M(t_1, t_2, \dots, t_k)$.
+The softmax function $\textit{softmax}(\mathcal{S}_i) = \exp(\mathcal{S}_i)/\sum_j(\exp(\mathcal{S}_j))$ 
+transforms $\mathcal{S}$ into a probability distribution over the vocabulary $V$, and then $t_{k+1}$ is sampled as the next token.
+
+\sloppypar
+\noindent{\bf Decoding.} 
+% The language model $M$ is recurrently applied to generate a sequence of tokens $t_1, t_2 \dots t_k$. 
+% When choosing the $(k + 1)$-th token, the probability distribution for the next token is obtained through $\text{softmax}(M(t_1, t_2 \dots t_k))$. 
+Various approaches for token selection from this distribution have been explored in the literature such as greedy decoding, sampling, and beam search.
+Each technique is repeated until the prediction of a special end-of-sequence token, EOS, or another stopping criterion is fulfilled. 
+This iterative process is equivalent to sampling from a distribution over $V^*$, potentially resulting in multiple feasible decoding outputs.
+
+\noindent{\bf Constrained Masking.} 
+In the context of decoding, we encounter scenarios where excluding specific tokens at particular positions becomes crucial (e.g., excluding harmful words). 
+This implies we can disregard these tokens and proceed with decoding based on the remaining set. 
+An algorithm for such masking relies on a function $f_m$ to generate the mask $m$ based on the exact use case. 
+In the mask $m \in \{0, 1\}^{|V|}$, $1$ indicates a viable token, and $0$ signifies a discarded one. 
+Decoding methods mentioned earlier can be applied to $m \odot \textit{softmax}(\mathcal{S})$, where $\odot$ represents element-wise multiplication. 
+% The resultant vector should be scaled by $1/\sum_i(m \times \textit{softmax}(\mathcal{S}))_i$ to restore correct probabilities.
+% Algorithm~\ref{alg:masked} presents the steps for constrained decoding.
+
+\subsection{Grammar-guided generation}
+
+\noindent\textbf{Grammar:}
+A formal language's syntax is defined by grammar, which comprises a set of production rules that specify all possible strings within that language. 
+A grammar includes terminal and nonterminal symbols. Terminal symbols represent the actual characters or tokens; nonterminal symbols serve as placeholders that define patterns or structures within the language.
+Most programming languages can be described using context-free grammar, which consists of production rules that apply to nonterminal symbols independently of their context. 
+Each production rule is of the form $S \to S_1, S_2 \dots S_n$ with $S$ a single nonterminal symbol, and $S_1, S_2 \dots S_n$ a string of terminals and nonterminals. 
+Single nonterminal $S$ on the left-hand side can be replaced by $S_1, S_2 \dots S_n$ \mbox{on the right-hand side.}
+
+
+\noindent\textbf{Shift-Reduce LR Parser:}
+An LR parser is a bottom-up parser used for analyzing context-free grammars (CFGs)~\cite{aho86}. 
+It handles deterministic grammars by reading input from left to right, constructing a rightmost derivation in reverse (hence LR). 
+The parser uses a shift-reduce method, shifting symbols onto a stack until a sequence matches a grammar rule. 
+When a match is found, the symbols on the stack are reduced by applying the rule, replacing them with the corresponding non-terminal. 
+This process repeats until the entire input is successfully parsed or an error occurs.
+
+\noindent\textbf{Constrained grammar-guided generation:}
+ Recent works have explored constrained grammar-guided LLM generation~\cite{Wei_2023, 10.1145/3591300, guidance, willard2023efficient, scholak-etal-2021-picard, poesia2022synchromesh, geng2023grammar, beurerkellner2024guiding, ugare2024syncodellmgenerationgrammar}. 
+These methods typically incorporate an incremental parser alongside the LLM, which parses the partial output at each decoding step. 
+The parsing results are then used to filter out tokens that would lead to syntactically invalid sequences.

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 from .prompts import (
     build_initial_prompt,
@@ -98,22 +98,46 @@ class StrategyGenerator:
         return self.TEMPLATE_PATH.read_text()
     
     def _ensure_model_loaded(self) -> None:
-        """Lazy-load the model and tokenizer."""
+        """Lazy-load the model and tokenizer with CUDA fallback."""
         if self._model is None:
             print(f"Loading {self.model_name}...")
             self._tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name,
                 trust_remote_code=True
             )
-            self._model = AutoModelForCausalLM.from_pretrained(
-                self.model_name,
-                torch_dtype=self.torch_dtype,
-                device_map=self.device if self.device != "mps" else None,
-                trust_remote_code=True
-            )
-            if self.device == "mps":
-                self._model = self._model.to(self.device)
-            print(f"Model loaded on {self.device}")
+
+            # Try loading on requested device, fallback to CPU on CUDA OOM
+            try:
+                self._model = AutoModelForCausalLM.from_pretrained(
+                    self.model_name,
+                    torch_dtype=self.torch_dtype,
+                    device_map=self.device if self.device != "mps" else None,
+                    trust_remote_code=True
+                )
+                if self.device == "mps":
+                    self._model = self._model.to(self.device)
+                print(f"Model loaded on {self.device}")
+            except RuntimeError as e:
+                error_str = str(e).lower()
+                if self.device in ["cuda", "mps"] and ("out of memory" in error_str or "cuda" in error_str):
+                    print(f"⚠️  {self.device.upper()} out of memory: {e}")
+                    print(f"   Falling back to CPU (this will be slower)...")
+
+                    # Clear CUDA cache if available
+                    if self.device == "cuda":
+                        torch.cuda.empty_cache()
+
+                    # Retry on CPU
+                    self.device = "cpu"
+                    self.torch_dtype = torch.float32
+                    self._model = AutoModelForCausalLM.from_pretrained(
+                        self.model_name,
+                        torch_dtype=self.torch_dtype,
+                        trust_remote_code=True
+                    ).to(self.device)
+                    print(f"Model loaded on {self.device} (CPU fallback)")
+                else:
+                    raise
     
     def _generate_text(self, system_prompt: str, user_prompt: str) -> str:
         """

@@ -1,8 +1,0 @@
-{
-  "strategy_code": "// CSD_RATIONALE_BEGIN\n// The TryUnconstrainedThenConstrained helper allows initial creative generation followed by constrained refinement.\n// However, its precondition fails because the parser might require a strict initial step, which we cannot guarantee without\n// additional checks. Therefore, we switch to the PureConstrainedGeneration helper for safety, ensuring all steps adhere strictly\n// to the parser's rules from the beginning.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);",
-  "tool_choice_rationale": "The TryUnconstrainedThenConstrained helper allows initial creative generation followed by constrained refinement.\nHowever, its precondition fails because the parser might require a strict initial step, which we cannot guarantee without\nadditional checks. Therefore, we switch to the PureConstrainedGeneration helper for safety, ensuring all steps adhere strictly\nto the parser's rules from the beginning.",
-  "dafny_file": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260105_204344_71ca0b/generated_csd.dfy",
-  "compiled_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260105_204344_71ca0b/generated_csd",
-  "total_attempts": 2,
-  "timestamp": "2026-01-05T20:44:13.195182"
-}

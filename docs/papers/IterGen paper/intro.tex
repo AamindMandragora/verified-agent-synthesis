@@ -1,0 +1,72 @@
+
+% Issues in standard LLM genetation
+Large Language Models (LLMs) are increasingly used for various tasks, including natural language generation~\cite{radford2019language} and code generation~\cite{chen2021evaluatinglargelanguagemodels}.
+However, their outputs can suffer from issues such as hallucination~\cite{xu2024hallucinationinevitableinnatelimitation}, disclosure of private user information found in the training corpus \cite{wang2023decodingtrust}, as well as incorrect code generation in programming tasks.
+When the output does not meet user expectations, users often have to restart the generation process with additional information in the prompt.
+Alternatively, decoding strategies like beam search can generate multiple potential outputs for a single prompt, allowing for the selection of the most suitable response.
+Both these approaches are computationally intensive and demand significant token generation, posing challenges in terms of efficiency and resource utilization.
+
+% Issues in constrained LLM generation
+%To address these issues, 
+Recent techniques in context-free grammar (CFG) guided generation tried to address these issues by introducing constrained decoding techniques that ensure LLM outputs adhere to user-specified grammatical rules ~\cite{poesia2022synchromesh, willard2023efficient, guidance, geng2023grammar, ugare2024syncodellmgenerationgrammar, beurerkellner2024guiding}. 
+These approaches typically involve various parsing techniques to analyze the LLM's partial outputs and determine the acceptable set of tokens {based on the defined grammar.}
+% Issues in constrained LLM generation
+While effective in producing \textit{syntactically} correct output, these techniques fall short of enforcing \textit{semantic} properties that extend beyond syntax.
+%For example, ensuring that a variable name in LLM-generated code is defined before its use or that the generated text avoids harmful language, cannot be adequately captured by grammatical constraints alone. 
+For example, grammatical constraints alone cannot adequately ensure that a variable name in LLM-generated code is defined before its use or that the generated text avoids harmful language. 
+
+If an LLM generates a semantically incorrect output, the user typically must restart the generation from scratch.
+Current grammar-guided generation tools fail to address this problem effectively, as they cannot detect semantic violations, or pause the generation at intermediate points. 
+Additionally, navigation through the generation by naively backtracking a certain number of tokens from the end of the output to the part that caused the violation is very difficult. The main challenge is that the token-level abstraction provided by current LLM generation libraries~\cite{wolf-etal-2020-transformers, llamacpp} is not tied to the syntax of the underlying generation. 
+%, making effective navigation through the generation difficult. %, making it often difficult to navigate through the generation effectively.
+%
+%Our key insight is that symbols in a grammar defined using Backus-Naur Form (BNF)  -- terminals (e.g., keywords, operators) and non-terminals (e.g., expressions, statements) -- offer a more intuitive and interpretable abstraction for navigating through the generation process. 
+%
+Our key insight is that symbols in a grammar, both terminals (e.g., keywords, operators) and non-terminals (e.g., expressions, statements)
+offer a more intuitive and interpretable abstraction for navigating through \mbox{the generation process.}
+
+
+
+
+% Our work
+%To address these challenges, 
+\paragraph{\Tool{}.} 
+We introduce \Tool{}, a novel framework that provides a user-friendly interface for iteratively generating structured outputs from LLMs. 
+Users specify a context-free grammar in the Backus-Naur Form (BNF) for the target output language, guiding the LLM to adhere to the syntax defined by the grammar.
+%
+Beyond syntax adherence, \Tool{} enables the user to programmatically check and correct for custom semantic properties of the generated output.
+% For example, in a code generation task, the \Tool{} program can move forward and backward by a \textit{statement} or \textit{expression}, instead of a specific number of LLM tokens.
+% This iterative control over the generation allows backtracking LLM generation and selectively resampling fragments of generation with any semantic violation. 
+For example, in a code generation task, instead of moving forward or backward by a fixed number of LLM tokens, the \Tool{} program can navigate by higher-level abstractions such as \textit{statements} or \textit{expressions}.
+This semantic-aware control enables selective resampling of fragments that violate desired properties, allowing for targeted corrections while preserving valid parts of the generation.
+% \sasa{TBD: unclear last sentence; also For example sentence talks about syntax-directed generation, not that semantic analysis determines the move fwd/backward is needed. }
+
+
+The key technical challenge to precise grammar-aware navigation is addressing
+\textit{token misalignment} -- i.e., that LLM tokens from the model's fixed vocabulary do not directly correspond to lexical tokens associated with any specific grammar.
+%
+\Tool{} handles this issue by dynamically computing a mapping of grammar symbols to their corresponding positions in the partially parsed output. 
+This capability enables efficient navigation both forward and backward through the generation process.
+% Further, the generation efficiency is optimized by maintaining the state of the key-value (KV) cache. 
+For each LLM generation task, \Tool{} maintains the history of generated tokens (as a tree of decoded tokens) that enables it to avoid regenerating the same tokens heuristically. 
+\Tool{}'s intuitive interface can be used to program LLM generation algorithms that enhance specific semantic properties of the outputs by leveraging grammar symbols as navigational abstractions.
+
+% Eval
+Our evaluation presents three distinct scenarios, which demonstrate the effectiveness of \Tool{}. 
+First, we illustrate how it can be used to improve the accuracy of LLM-generated SQL queries by enforcing additional semantic constraints.
+\Tool{} achieves 18.5\% mean improvement over the state-of-the-art grammar-guided generation technique~\cite{ugare2024syncodellmgenerationgrammar}.
+Second, we show how \Tool{} effectively reduces privacy leaks in LLM-generated text from 51.4\% to 0\%, thus successfully safeguarding sensitive information while maintaining the quality of response.
+Third, we show that \Tool{} improves the accuracy of LLM-generated Vega-lite specification (a subset of JSON for data visualization) by 17.8\% by enforcing semantic constraints. 
+
+\noindent{\bf Contributions.} The main contributions of this paper are:
+
+\vspace{-.06in} \begin{itemize}[leftmargin=*]
+\itemsep 1pt 
+\parskip 2pt 
+%
+\item We present \Tool{}, the first framework that uses grammar symbols as abstractions for navigating LLM generation both forward and backward. 
+
+\item We introduce an algorithm that enables efficient and accurate control of the LLM generation through grammar symbol abstraction by maintaining the decoding history and the \mbox{LLM key-value cache.}
+
+\item We demonstrate how \Tool{} enhances specific semantic properties in LLM-generated outputs through three scenarios, addressing issues of privacy leaks and accuracy in SQL \add{and Vega-Lite specification generation}. \end{itemize}
+

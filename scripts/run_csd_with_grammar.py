@@ -1,6 +1,21 @@
 #!/usr/bin/env python3
 """
-Run a compiled CSD strategy with a specific grammar using a reusable LM, tokenizer, and parser.
+Run a compiled CSD strategy with a specific grammar.
+
+This script allows you to:
+1. Take a compiled CSD strategy (from a successful synthesis run)
+2. Specify a grammar file (.lark) for constraint validation
+3. Run constrained generation with real grammar enforcement
+
+Usage:
+    # With a .lark grammar file
+    python scripts/run_csd_with_grammar.py --run-dir outputs/generated-csd/runs/XXXXX --grammar grammars/json.lark
+    
+    # With a built-in format
+    python scripts/run_csd_with_grammar.py --run-dir outputs/generated-csd/runs/XXXXX --format json
+    
+    # Custom vocabulary from HuggingFace tokenizer
+    python scripts/run_csd_with_grammar.py --run-dir outputs/generated-csd/runs/XXXXX --format json --tokenizer Qwen/Qwen2.5-Coder-7B-Instruct
 """
 
 import argparse
@@ -9,14 +24,11 @@ import json
 import random
 from pathlib import Path
 from typing import Optional
-from math import inf
-
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
 
 def create_lark_dafny_parser(grammar_source: str, VerifiedDecoderAgent, _dafny, start: str = "start"):
     """
@@ -113,26 +125,82 @@ def create_lark_dafny_parser(grammar_source: str, VerifiedDecoderAgent, _dafny, 
             if current_text and not self._is_valid_prefix(current_text):
                 return _dafny.SeqWithoutIsStrInference([])
             
-            valid = []
+            valid_non_ws = []
+            valid_ws = []
             for token in self._token_list:
                 token_str = str(token)
                 if not token_str:
                     continue
                 extended = current_text + token_str
                 if self._is_valid_prefix(extended):
-                    valid.append(token)
+                    # Heuristic: avoid stalling on whitespace-only tokens (common when grammar ignores WS)
+                    # unless whitespace is the only valid option.
+                    if token_str.strip() == "":
+                        valid_ws.append(token)
+                    else:
+                        valid_non_ws.append(token)
             
-            return _dafny.SeqWithoutIsStrInference(valid)
+            return _dafny.SeqWithoutIsStrInference(valid_non_ws if valid_non_ws else valid_ws)
     
     return LarkDafnyParser
+
+
+def get_builtin_grammar(format_name: str) -> str:
+    """Get built-in grammar for common formats."""
+    grammars = {
+        "json": r'''
+            start: value
+            ?value: object | array | string | number | "true" -> true | "false" -> false | "null" -> null
+            object: "{" [pair ("," pair)*] "}"
+            pair: string ":" value
+            array: "[" [value ("," value)*] "]"
+            string: ESCAPED_STRING
+            number: SIGNED_NUMBER
+            %import common.ESCAPED_STRING
+            %import common.SIGNED_NUMBER
+            %import common.WS
+            %ignore WS
+        ''',
+        "sql": r'''
+            start: select_stmt
+            select_stmt: "SELECT"i columns "FROM"i table [where_clause]
+            columns: "*" | column ("," column)*
+            column: NAME
+            table: NAME
+            where_clause: "WHERE"i condition
+            condition: NAME comp_op value
+            comp_op: "=" | "!=" | "<" | ">" | "<=" | ">="
+            value: NAME | NUMBER | STRING
+            %import common.CNAME -> NAME
+            %import common.NUMBER
+            %import common.ESCAPED_STRING -> STRING
+            %import common.WS
+            %ignore WS
+        ''',
+        "math": r'''
+            start: expr
+            ?expr: term | expr "+" term | expr "-" term
+            ?term: factor | term "*" factor | term "/" factor
+            ?factor: NUMBER | "(" expr ")" | "-" factor
+            %import common.NUMBER
+            %import common.WS
+            %ignore WS
+        ''',
+    }
+    
+    if format_name.lower() not in grammars:
+        raise ValueError(f"Unknown format: {format_name}. Available: {list(grammars.keys())}")
+    
+    return grammars[format_name.lower()]
+
 
 def create_vocabulary(vocab_type: str = "default", tokenizer_name: Optional[str] = None, size: int = 500) -> list[str]:
     """Create vocabulary for the LM."""
     if vocab_type == "tokenizer" and tokenizer_name:
+        from transformers import AutoTokenizer
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
         vocab = []
-        # for i in range(min(len(tokenizer), size)):
-        for i in range(len(tokenizer)):
+        for i in range(min(len(tokenizer), size)):
             try:
                 token = tokenizer.decode([i])
                 if token:
@@ -154,255 +222,205 @@ def create_vocabulary(vocab_type: str = "default", tokenizer_name: Optional[str]
     
     return vocab[:size]
 
-class CSDRunner:
+
+def run_csd_with_grammar(
+    run_dir: Path,
+    grammar_source: str,
+    max_steps: int = 50,
+    vocab_size: int = 500,
+    tokenizer_name: Optional[str] = None,
+    seed: int = 42,
+    start_rule: str = "start"
+) -> dict:
     """
-    Encapsulates LM, tokenizer, parser, and compiled CSD module
-    for repeated prompt evaluation without reloading.
-    """
-
-    _instance = None
-
-    @classmethod
-    def get_instance(cls):
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-
-    def __init__(self):
-        self.lm = None
-        self.tokenizer = None
-        self.parser_class = None
-        self._dafny = None
-        self.VerifiedDecoderAgent = None
-        self.GeneratedCSD = None
-        self.vocab = None
-
-    def initialize(
-        self,
-        run_dir: Path,
-        grammar_source: str,
-        lm_name: str,
-        device: str = "cpu",
-        start_rule: str = "start"
-    ):
-        """
-        Load the LM, tokenizer, vocabulary, parser, and compiled CSD module once.
-        """
-
-        if lm_name is None: 
-            if tokenizer_name is None: 
-                return { "success": False, "error": "Either lm_name or tokenizer_name must be provided" } 
-            lm_name = tokenizer_name 
-
-        run_dir = Path(run_dir) 
-        module_dir = run_dir / "generated_csd" 
-
-        if not module_dir.exists(): 
-            return {"success": False, "error": f"Module directory not found: {module_dir}"} 
+    Run a compiled CSD strategy with a specific grammar.
+    
+    Args:
+        run_dir: Path to the run directory containing compiled CSD
+        grammar_source: Grammar file path or built-in format name
+        max_steps: Maximum generation steps
+        vocab_size: Vocabulary size
+        tokenizer_name: HuggingFace tokenizer for vocabulary
+        seed: Random seed
+        start_rule: Grammar start rule
         
-        if str(module_dir) not in sys.path: 
-            sys.path.insert(0, str(module_dir))
-
+    Returns:
+        Dictionary with results
+    """
+    random.seed(seed)
+    
+    run_dir = Path(run_dir)
+    module_dir = run_dir / "generated_csd"
+    
+    if not module_dir.exists():
+        return {"success": False, "error": f"Module directory not found: {module_dir}"}
+    
+    # Add module dir to path
+    if str(module_dir) not in sys.path:
+        sys.path.insert(0, str(module_dir))
+    
+    try:
         import _dafny
         import VerifiedDecoderAgent
         import GeneratedCSD
-
-        self._dafny = _dafny
-        self.VerifiedDecoderAgent = VerifiedDecoderAgent
-        self.GeneratedCSD = GeneratedCSD
-
-        # Load grammar
+        
+        # Determine grammar source
         if Path(grammar_source).exists():
             grammar = Path(grammar_source).read_text()
-
-        # Build vocabulary
-        self.vocab = create_vocabulary(
-            vocab_type="tokenizer" if lm_name else "default",
-            tokenizer_name=lm_name,
+        else:
+            grammar = get_builtin_grammar(grammar_source)
+        
+        # Create vocabulary
+        vocab = create_vocabulary(
+            vocab_type="tokenizer" if tokenizer_name else "default",
+            tokenizer_name=tokenizer_name,
+            size=vocab_size
         )
-
-        # Create grammar-backed parser
-        self.parser_class = create_lark_dafny_parser(
-            grammar, VerifiedDecoderAgent, _dafny, start_rule
-        )
-
-        # Load LM and tokenizer
-        class HFBackedLM(VerifiedDecoderAgent.LM):
-            MASKED_VAL = -1e4
-
-            def __init__(self_inner, lm_name: str, tokens, device: str = "cpu"):
+        
+        # Helper for BigRational
+        def bigrational_to_float(br):
+            s = str(br)
+            if '/' in s:
+                num, den = s.split('/')
+                return float(num) / float(den)
+            return float(s)
+        
+        # Create LM
+        class TestLM(VerifiedDecoderAgent.LM):
+            def __init__(self, tokens):
                 super().__init__()
-
-                self_inner.tokenizer = AutoTokenizer.from_pretrained(
-                    lm_name, trust_remote_code=True
-                )
-                self_inner.model = AutoModelForCausalLM.from_pretrained(
-                    lm_name,
-                    trust_remote_code=True,
-                    device_map=device,
-                    torch_dtype=torch.float16,
-                )
-                self_inner.model.eval()
-
-                self_inner._Tokens = _dafny.SeqWithoutIsStrInference(tokens)
-                self_inner.Logits = _dafny.Array(None, len(tokens))
-
-                vocab = self_inner.tokenizer.get_vocab()
-
-                hf_ids = []
-                valid = []
-                for t in tokens:
-                    if t in vocab:
-                        hf_ids.append(vocab[t])
-                        valid.append(True)
-                    else:
-                        hf_ids.append(0)
-                        valid.append(False)
-
-                self_inner.hf_ids = torch.tensor(hf_ids, device=self_inner.model.device)
-                self_inner.valid_mask = torch.tensor(valid, device=self_inner.model.device)
-
-                self_inner.reset()
-
-                masked = _dafny.BigRational(str(self_inner.MASKED_VAL))
+                self._Tokens = _dafny.SeqWithoutIsStrInference(tokens)
+                self._Ids = _dafny.SeqWithoutIsStrInference(list(range(len(tokens))))
+                self.Logits = _dafny.Array(None, len(tokens))
                 for i in range(len(tokens)):
-                    self_inner.Logits[i] = masked
-
-            # 🔴 MUST be called per prompt
-            def reset(self_inner):
-                self_inner.past_kv = None
-                self_inner.last_input_id = None
-
-            def GenerateLogits(self_inner, input_prefix):
-                # First call: seed from full prefix
-                if self_inner.past_kv is None:
-                    text = "".join(str(input_prefix[i]) for i in range(len(input_prefix)))
-                    input_ids = self_inner.tokenizer(
-                        text, return_tensors="pt"
-                    ).input_ids.to(self_inner.model.device)
-                else:
-                    input_ids = torch.tensor(
-                        [[self_inner.last_input_id]],
-                        device=self_inner.model.device,
-                    )
-
-                with torch.no_grad():
-                    out = self_inner.model(
-                        input_ids=input_ids,
-                        use_cache=True,
-                        past_key_values=self_inner.past_kv,
-                    )
-
-                self_inner.past_kv = out.past_key_values
-                logits = out.logits[0, -1]
-
-                projected = logits[self_inner.hf_ids]
-                projected = projected.masked_fill(
-                    ~self_inner.valid_mask,
-                    torch.finfo(projected.dtype).min,
-                )
-
-                vals = projected.float().cpu().tolist()
-                for i, v in enumerate(vals):
-                    self_inner.Logits[i] = _dafny.BigRational(v)
-
-            def ChooseNextToken(self_inner):
+                    self.Logits[i] = _dafny.BigRational(0)
+            
+            def GenerateLogits(self, input_prefix):
+                for i in range(self.Logits.length(0)):
+                    self.Logits[i] = _dafny.BigRational(random.gauss(0, 1))
+            
+            def ChooseNextToken(self):
                 best_idx = 0
-                best_val = self_inner.MASKED_VAL
-
-                for i in range(self_inner.Logits.length(0)):
-                    v = float(self_inner.Logits[i])
-                    if v > best_val:
-                        best_val = v
-                        best_idx = i
-
-                tok = self_inner._Tokens[best_idx]
-                hf_id = self_inner.tokenizer.get_vocab().get(tok)
-
-                self_inner.last_input_id = hf_id
-                return tok
-
-        self.lm = HFBackedLM(lm_name, self.vocab, device)
-        self.parser = self.parser_class(self.vocab)
-
-    def run_prompt(self, prompt: str, max_steps: int = 50):
-        """
-        Run a prompt using the preloaded LM, tokenizer, and parser.
-        """
-        if self.lm is None or self.parser is None:
-            raise RuntimeError("CSDRunner not initialized. Call .initialize() first.")
-
-        prompt_seq = self._dafny.SeqWithoutIsStrInference(prompt.split(" "))
-
-        print(f"starting with prompt: {prompt}")
-
-        output = self.GeneratedCSD.default__.MyCSDStrategy(
-            self.lm, self.parser, prompt_seq, max_steps
-        )
-
-        print("ended prompt")
-
-        self.lm.reset()
-
-        output_tokens = [str(t) for t in output]
-        output_text = "".join(output_tokens)
-
+                best_logit = -1e10
+                masked_val = _dafny.BigRational('-1e9')
+                for i in range(self.Logits.length(0)):
+                    if self.Logits[i] != masked_val:
+                        val = bigrational_to_float(self.Logits[i])
+                        if val > best_logit:
+                            best_logit = val
+                            best_idx = i
+                return self._Tokens[best_idx]
+        
+        # Create parser from grammar
+        LarkDafnyParser = create_lark_dafny_parser(grammar, VerifiedDecoderAgent, _dafny, start_rule)
+        
+        lm = TestLM(vocab)
+        parser = LarkDafnyParser(lm._Tokens)
+        prompt = _dafny.SeqWithoutIsStrInference([])
+        
+        # Run the CSD strategy
+        output = GeneratedCSD.default__.MyCSDStrategy(lm, parser, prompt, max_steps)
+        output_list = [str(t) for t in output]
+        output_text = "".join(output_list)
+        
+        # Validate output
+        is_valid = parser._is_valid_prefix(output_text)
+        is_complete = parser._is_complete(output_text)
+        
         return {
             "success": True,
-            "output_tokens": output_tokens,
+            "output_tokens": output_list,
             "output_text": output_text,
-            "output_length": len(output_tokens),
-            "IsValidPrefix": self.parser.IsValidPrefix(output_text),
-            "IsCompletePrefix": self.parser.IsCompletePrefix(output_text),
+            "output_length": len(output_list),
+            "is_valid_prefix": is_valid,
+            "is_complete": is_complete,
+            "grammar_source": str(grammar_source),
+        }
+        
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
         }
 
 
-# ------------------------------
-# CLI entry
-# ------------------------------
-
 def main():
-    parser = argparse.ArgumentParser(description="Run compiled CSD with grammar")
-    parser.add_argument("--run-dir", "-r", type=Path, required=True)
+    parser = argparse.ArgumentParser(
+        description="Run a compiled CSD strategy with a specific grammar",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Use a .lark grammar file
+  python scripts/run_csd_with_grammar.py --run-dir outputs/generated-csd/runs/20260105_204255_8b7116 --grammar grammars/json.lark
+  
+  # Use a built-in format
+  python scripts/run_csd_with_grammar.py --run-dir outputs/generated-csd/runs/20260105_204255_8b7116 --format json
+  
+  # With HuggingFace tokenizer vocabulary
+  python scripts/run_csd_with_grammar.py --run-dir outputs/generated-csd/runs/20260105_204255_8b7116 --format json --tokenizer Qwen/Qwen2.5-Coder-7B-Instruct
+"""
+    )
+    
+    parser.add_argument("--run-dir", "-r", type=Path, required=True,
+                        help="Path to the run directory containing compiled CSD")
+    
     grammar_group = parser.add_mutually_exclusive_group(required=True)
-    grammar_group.add_argument("--grammar", "-g", type=str)
-    grammar_group.add_argument("--format", "-f", type=str, choices=["json", "sql", "math"])
-    parser.add_argument("--max-steps", type=int, default=50)
-    parser.add_argument("--vocab-size", type=int, default=500)
-    parser.add_argument("--tokenizer", "-t", type=str, default=None)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--start-rule", type=str, default="start")
-    parser.add_argument("--json", action="store_true")
+    grammar_group.add_argument("--grammar", "-g", type=str,
+                               help="Path to .lark grammar file")
+    grammar_group.add_argument("--format", "-f", type=str, choices=["json", "sql", "math"],
+                               help="Built-in format name")
+    
+    parser.add_argument("--max-steps", type=int, default=50,
+                        help="Maximum generation steps (default: 50)")
+    parser.add_argument("--vocab-size", type=int, default=500,
+                        help="Vocabulary size (default: 500)")
+    parser.add_argument("--tokenizer", "-t", type=str, default=None,
+                        help="HuggingFace tokenizer for vocabulary")
+    parser.add_argument("--seed", type=int, default=42,
+                        help="Random seed (default: 42)")
+    parser.add_argument("--start-rule", type=str, default="start",
+                        help="Grammar start rule (default: start)")
+    parser.add_argument("--json", action="store_true",
+                        help="Output as JSON")
+    
     args = parser.parse_args()
-
+    
+    # Determine grammar source
     grammar_source = args.grammar if args.grammar else args.format
-    lm_name = args.tokenizer or args.format
-
-    random.seed(args.seed)
-
-    runner = CSDRunner.get_instance()
-    runner.initialize(
+    
+    print(f"Running CSD with grammar: {grammar_source}")
+    print(f"Run directory: {args.run_dir}")
+    print()
+    
+    results = run_csd_with_grammar(
         run_dir=args.run_dir,
         grammar_source=grammar_source,
-        lm_name=lm_name,
-        device="cuda" if torch.cuda.is_available() else "cpu",
+        max_steps=args.max_steps,
+        vocab_size=args.vocab_size,
+        tokenizer_name=args.tokenizer,
+        seed=args.seed,
         start_rule=args.start_rule
     )
-
-    results = runner.run_prompt(prompt="", max_steps=args.max_steps)
-
+    
     if args.json:
         print(json.dumps(results, indent=2, default=str))
     else:
         if results["success"]:
             print(f"✓ Generation successful")
-            print(f"  Output length: {results['output_length']}")
+            print(f"  Output length: {results['output_length']} tokens")
             print(f"  Output: {repr(results['output_text'][:80])}...")
+            print(f"  Valid prefix: {results['is_valid_prefix']}")
+            print(f"  Complete: {results['is_complete']}")
         else:
             print(f"✗ Generation failed: {results.get('error', 'Unknown error')}")
-
-    sys.exit(0 if results["success"] else 1)
+            if results.get("traceback"):
+                print(results["traceback"])
+    
+    sys.exit(0 if results["success"] and results.get("is_valid_prefix") else 1)
 
 
 if __name__ == "__main__":
     main()
+

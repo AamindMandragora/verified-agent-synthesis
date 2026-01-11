@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-CLI entry point for CSD synthesis pipeline with reusable LM for batch dataset runs.
+CLI entry point for CSD synthesis pipeline.
+
+Usage:
+    python run_synthesis.py --task "Generate a strategy that..."
+    python run_synthesis.py --task "..." --max-iterations 10
+    python run_synthesis.py --task "..." --model Qwen/Qwen2.5-Coder-3B-Instruct
 """
 
 import argparse
@@ -8,94 +13,171 @@ import sys
 from pathlib import Path
 from datetime import datetime
 import secrets
-import json
-import time
-import random
-import torch
 
-# ------------------------------
-# Import CSDRunner from your refactored run_csd_with_grammar
-# ------------------------------
-from scripts.run_csd_with_grammar import CSDRunner
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Synthesize or run constrained decoding strategies",
+        description="Synthesize constrained decoding strategies using Qwen",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Basic usage
+  python run_synthesis.py --task "Generate a strategy for JSON output"
+  
+  # With custom iterations
+  python run_synthesis.py --task "Generate a CRANE-style strategy" --max-iterations 10
+  
+  # Use a smaller model for faster testing
+  python run_synthesis.py --task "Generate a simple retry strategy" \\
+      --model Qwen/Qwen2.5-Coder-3B-Instruct
+  
+  # Specify output name
+  python run_synthesis.py --task "..." --output-name my_strategy
+"""
+    )
+    
+    parser.add_argument(
+        "--task", "-t",
+        type=str,
+        required=True,
+        help="Task description for strategy generation"
+    )
+    
+    parser.add_argument(
+        "--max-iterations", "-n",
+        type=int,
+        default=5,
+        help="Maximum refinement iterations (default: 5)"
+    )
+    
+    parser.add_argument(
+        "--model", "-m",
+        type=str,
+        default="Qwen/Qwen2.5-Coder-7B-Instruct",
+        help="HuggingFace model name (default: Qwen/Qwen2.5-Coder-7B-Instruct)"
+    )
+    
+    parser.add_argument(
+        "--output-name", "-o",
+        type=str,
+        default="generated_csd",
+        help="Name for the output module (default: generated_csd)"
+    )
+    
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Base output directory (default: outputs/generated-csd/). Each run writes into a unique subfolder."
+    )
+    
+    parser.add_argument(
+        "--dafny-path",
+        type=str,
+        default="dafny",
+        help="Path to Dafny executable (default: dafny)"
+    )
+    
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.7,
+        help="Sampling temperature for Qwen (default: 0.7)"
+    )
+    
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=256,
+        help="Maximum tokens to generate per attempt (default: 256)"
+    )
+    
+    parser.add_argument(
+        "--no-save-reports",
+        action="store_true",
+        help="Don't save failure/success reports to disk"
+    )
+    
+    parser.add_argument(
+        "--device",
+        type=str,
+        choices=["cuda", "mps", "cpu", "auto"],
+        default="auto",
+        help="Device for model inference (default: auto)"
+    )
+    
+    parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="Only verify existing GeneratedCSD.dfy without generating"
+    )
+    
+    parser.add_argument(
+        "--compile-only",
+        action="store_true",
+        help="Verify and compile existing GeneratedCSD.dfy without generating"
     )
 
-    # ======================
-    # Synthesis arguments
-    # ======================
-    parser.add_argument("--task", "-t", type=str, help="Task description for strategy generation")
-    parser.add_argument("--max-iterations", "-n", type=int, default=5)
-    parser.add_argument("--model", "-m", type=str, default="Qwen/Qwen2.5-Coder-7B-Instruct")
-    parser.add_argument("--output-name", "-o", type=str, default="generated_csd")
-    parser.add_argument("--output-dir", type=Path, default=None)
-    parser.add_argument("--dafny-path", type=str, default="dafny")
-    parser.add_argument("--temperature", type=float, default=0.7)
-    parser.add_argument("--max-tokens", type=int, default=256)
-    parser.add_argument("--no-save-reports", action="store_true")
-    parser.add_argument("--device", choices=["cuda", "mps", "cpu", "auto"], default="auto")
-
-    # ======================
-    # Mode switches
-    # ======================
-    parser.add_argument("--verify-only", action="store_true")
-    parser.add_argument("--compile-only", action="store_true")
-
-    # ======================
-    # Dataset execution
-    # ======================
-    parser.add_argument("--dataset", type=Path, help="JSONL dataset for batch execution")
-    parser.add_argument("--compiled-module", type=Path, help="Compiled Dafny Python module to execute")
-    parser.add_argument("--dataset-output", type=Path, help="Where to write JSONL results")
-    parser.add_argument("--parser-mode", choices=["permissive", "json", "math"], default="permissive",
-                        help="Parser mode for dataset execution")
-    parser.add_argument("--lark-file", type=Path, default=None, help="Path to Lark grammar file (required for math mode)")
-
+    # Evaluation Arguments
+    parser.add_argument(
+        "--evaluate",
+        action="store_true",
+        help="Run performance evaluation after synthesis"
+    )
+    
+    parser.add_argument(
+        "--eval-task",
+        type=str,
+        choices=["json", "sql"],
+        default="json",
+        help="Task for evaluation (default: json)"
+    )
+    
+    parser.add_argument(
+        "--eval-model",
+        type=str,
+        default="Qwen/Qwen2.5-Coder-1.5B-Instruct",
+        help="Model to use for evaluation (default: Qwen/Qwen2.5-Coder-1.5B-Instruct)"
+    )
+    
+    parser.add_argument(
+        "--eval-vocab-size",
+        type=int,
+        default=1000,
+        help="Vocabulary size for evaluation (default: 1000)"
+    )
+    
     args = parser.parse_args()
-
-    # ======================
-    # Dataset mode (early exit)
-    # ======================
-    if args.dataset is not None:
-        run_dataset_mode(args)
-        return
-
-    # ======================
-    # Verify / compile only
-    # ======================
+    
+    # Handle verify-only mode
     if args.verify_only or args.compile_only:
         run_verification_only(args)
         return
-
-    # ======================
-    # Normal synthesis
-    # ======================
-    if not args.task:
-        print("Error: --task is required unless running dataset mode")
-        sys.exit(1)
-
+    
+    # Import here to avoid loading heavy dependencies if just showing help
     from synthesis.generator import StrategyGenerator
     from synthesis.verifier import DafnyVerifier
     from synthesis.compiler import DafnyCompiler
     from synthesis.runner import StrategyRunner
     from synthesis.feedback_loop import SynthesisPipeline, SynthesisExhaustionError
-
+    
+    # Create components
+    print("Initializing synthesis pipeline...")
+    
     device = None if args.device == "auto" else args.device
-
+    
     generator = StrategyGenerator(
         model_name=args.model,
         device=device,
         max_new_tokens=args.max_tokens,
-        temperature=args.temperature,
+        temperature=args.temperature
     )
-
+    
     verifier = DafnyVerifier(dafny_path=args.dafny_path)
+    # Compiler output dir is set per-run inside the pipeline (so runs don't overwrite each other).
     compiler = DafnyCompiler(dafny_path=args.dafny_path, output_dir=args.output_dir)
     runner = StrategyRunner()
-
+    
     pipeline = SynthesisPipeline(
         generator=generator,
         verifier=verifier,
@@ -103,154 +185,145 @@ def main():
         runner=runner,
         max_iterations=args.max_iterations,
         output_dir=args.output_dir,
-        save_reports=not args.no_save_reports,
+        save_reports=not args.no_save_reports
     )
-
+    
+    # Run synthesis
     try:
         result = pipeline.synthesize(
             task_description=args.task,
-            output_name=args.output_name,
+            output_name=args.output_name
         )
-
-        print("\nSYNTHESIS COMPLETE")
+        
+        print("\n" + "=" * 60)
+        print("SYNTHESIS COMPLETE")
+        print("=" * 60)
+        print(f"Strategy: {result.strategy_code}")
         print(f"Compiled module: {result.compiled_module_path}")
+        print(f"Output directory: {result.output_dir}")
+        if getattr(result, "run_dir", None):
+            print(f"Run directory: {result.run_dir}")
         print(f"Total attempts: {len(result.attempts)}")
         print(f"Total time: {result.total_time_ms:.1f}ms")
+        
+        # Run Evaluation if requested
+        if args.evaluate and getattr(result, "run_dir", None):
+            try:
+                # Unload synthesis model to free memory for evaluation
+                print("\nUnloading synthesis model to free memory for evaluation...")
+                del generator
+                del pipeline
+                import gc
+                import torch
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                from scripts.evaluate_csd_performance import run_evaluation
+                run_evaluation(
+                    run_dir=result.run_dir,
+                    task=args.eval_task,
+                    model_name=args.eval_model,
+                    device=device or "cuda", # Default to cuda if available
+                    vocab_size=args.eval_vocab_size,
+                    max_steps=args.max_tokens
+                )
+            except Exception as e:
+                print(f"\nWarning: Evaluation failed to start: {e}")
+                import traceback
+                traceback.print_exc()
+
         sys.exit(0)
-
+        
     except SynthesisExhaustionError as e:
+        print("\n" + "=" * 60)
         print("SYNTHESIS FAILED")
+        print("=" * 60)
         print(e.get_failure_summary())
+        
+        sys.exit(1)
+        
+    except KeyboardInterrupt:
+        print("\n\nSynthesis interrupted by user")
+        sys.exit(130)
+        
+    except Exception as e:
+        print(f"\nUnexpected error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
-
-# ============================================================
-# Dataset execution using CSDRunner
-# ============================================================
-
-def run_dataset_mode(args):
-    import json
-    import time
-
-    if args.compiled_module is None:
-        print("Error: --compiled-module is required for dataset runs")
-        sys.exit(1)
-
-    if not args.dataset.exists():
-        print(f"Dataset not found: {args.dataset}")
-        sys.exit(1)
-
-    output_path = args.dataset_output or (
-        args.compiled_module.parent / "dataset_results.jsonl"
-    )
-
-    # ------------------------------
-    # Initialize runner once
-    # ------------------------------
-    device = args.device
-
-    runner = CSDRunner.get_instance()
-    grammar_source = args.lark_file if args.lark_file else args.parser_mode
-    runner.initialize(
-        run_dir=args.compiled_module.parent,
-        grammar_source=grammar_source,
-        lm_name=args.model,
-        device=device
-    )
-
-    # ------------------------------
-    # Run dataset
-    # ------------------------------
-    total = 0
-    successes = 0
-    total_time = 0.0
-
-    with args.dataset.open() as f, output_path.open("w") as out:
-        for line in f:
-            item = json.loads(line)
-            prompt = item.get("question", "")
-            example_id = item.get("id")
-
-            start = time.time()
-            result = runner.run_prompt(prompt=prompt, max_steps=args.max_tokens)
-            elapsed = (time.time() - start) * 1000
-
-            record = {
-                "id": example_id,
-                "success": result.get("success", False),
-                "output": result.get("output_text", ""),
-                "error_message": result.get("error", None),
-                "execution_time_ms": elapsed,
-            }
-
-            out.write(json.dumps(record) + "\n")
-
-            total += 1
-            total_time += elapsed
-            if result.get("success"):
-                successes += 1
-
-    print("\nDATASET RUN COMPLETE")
-    print(f"Parser mode: {args.parser_mode}")
-    if args.lark_file:
-        print(f"Lark grammar: {args.lark_file}")
-    print(f"Total examples: {total}")
-    print(f"Success rate: {successes / max(total,1):.3f}")
-    print(f"Avg time (ms): {total_time / max(total,1):.1f}")
-    print(f"Results written to: {output_path}")
-
-
-# ============================================================
-# Verification / compilation only
-# ============================================================
 
 def run_verification_only(args):
+    """Run verification/compilation on existing file without generation."""
     from synthesis.verifier import DafnyVerifier
     from synthesis.compiler import DafnyCompiler
     from synthesis.runner import StrategyRunner
-
+    
     dafny_file = Path(__file__).parent / "dafny" / "GeneratedCSD.dfy"
-
+    
     if not dafny_file.exists():
         print(f"Error: {dafny_file} not found")
         sys.exit(1)
-
+    
+    print(f"Processing: {dafny_file}")
+    
+    # Verification
+    print("\n[1/3] Verifying...")
     verifier = DafnyVerifier(dafny_path=args.dafny_path)
     result = verifier.verify_file(dafny_file)
-
+    
     if not result.success:
-        print("Verification failed")
+        print("✗ Verification failed:")
         print(result.get_error_summary())
         sys.exit(1)
-
+    
+    print("✓ Verification passed")
+    
     if args.verify_only:
         sys.exit(0)
-
+    
+    # Compilation
+    print("\n[2/3] Compiling to Python...")
     base_output_dir = args.output_dir or (Path(__file__).parent / "outputs" / "generated-csd")
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + secrets.token_hex(3)
     run_dir = base_output_dir / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        (base_output_dir / "latest_run.txt").write_text(str(run_dir) + "\n")
+    except Exception:
+        pass
 
     compiler = DafnyCompiler(dafny_path=args.dafny_path, output_dir=run_dir)
     compile_result = compiler.compile_file(dafny_file, args.output_name)
-
+    
     if not compile_result.success:
-        print("Compilation failed")
+        print("✗ Compilation failed:")
         print(compile_result.get_error_summary())
         sys.exit(1)
-
+    
+    print(f"✓ Compiled to {compile_result.output_dir}")
+    print(f"Run directory: {run_dir}")
+    
+    # Runtime test
+    print("\n[3/3] Testing runtime...")
     if compile_result.main_module_path:
         runner = StrategyRunner()
         runtime_result = runner.run(compile_result.main_module_path)
-
+        
         if not runtime_result.success:
-            print("Runtime error")
+            print("✗ Runtime error:")
             print(runtime_result.get_error_summary())
             sys.exit(1)
-
-    print("Verification + compilation successful")
+        
+        print(f"✓ Execution successful ({runtime_result.execution_time_ms:.1f}ms)")
+    else:
+        print("⚠ No main module found for runtime testing")
+    
+    print("\n✓ All checks passed")
     sys.exit(0)
 
 
 if __name__ == "__main__":
     main()
+

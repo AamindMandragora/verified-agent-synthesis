@@ -82,7 +82,7 @@ class LarkGrammarParser:
         grammar = path.read_text()
         return cls(grammar, start)
     
-    def IsValidPrefix(self, text: str) -> bool:
+    def is_valid_prefix(self, text: str) -> bool:
         """
         Check if text is a valid prefix of the grammar.
         
@@ -110,7 +110,7 @@ class LarkGrammarParser:
         except Exception:
             return False
     
-    def IsCompletePrefix(self, text: str) -> bool:
+    def is_complete(self, text: str) -> bool:
         """Check if text is a complete valid parse."""
         if not text:
             return False
@@ -121,7 +121,7 @@ class LarkGrammarParser:
         except Exception:
             return False
     
-    def ValidNextTokens(self, text: str, vocabulary: list[str]) -> list[str]:
+    def get_valid_next_tokens(self, text: str, vocabulary: list[str]) -> list[str]:
         """
         Get tokens from vocabulary that can validly follow the text.
         
@@ -132,21 +132,21 @@ class LarkGrammarParser:
         Returns:
             Filtered list of valid next tokens
         """
-        if not self.IsValidPrefix(text):
+        if not self.is_valid_prefix(text):
             return []
         
         valid = []
         for token in vocabulary:
             extended = text + token
-            if self.IsValidPrefix(extended):
+            if self.is_valid_prefix(extended):
                 valid.append(token)
         
         return valid
     
     @lru_cache(maxsize=10000)
-    def _cached_IsValidPrefix(self, text: str) -> bool:
-        """Cached version of IsValidPrefix."""
-        return self.IsValidPrefix(text)
+    def _cached_is_valid_prefix(self, text: str) -> bool:
+        """Cached version of is_valid_prefix."""
+        return self.is_valid_prefix(text)
 
 
 class InteractiveLarkParser:

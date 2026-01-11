@@ -1,8 +1,0 @@
-{
-  "strategy_code": "// CSD_RATIONALE_BEGIN\n// I chose a multi-step approach to ensure strict adherence to the INI format. For small maxSteps, I use pure constrained generation to avoid unnecessary complexity. For larger maxSteps, I employ a speculative strategy with a window size of 4 to balance between speed and validation efficiency. This approach allows for early creativity while maintaining overall validity.\n// CSD_RATIONALE_END\nif maxSteps < 12 {\n    generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);\n} else {\n    generated := CSDHelpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, 4);\n}",
-  "tool_choice_rationale": "I chose a multi-step approach to ensure strict adherence to the INI format. For small maxSteps, I use pure constrained generation to avoid unnecessary complexity. For larger maxSteps, I employ a speculative strategy with a window size of 4 to balance between speed and validation efficiency. This approach allows for early creativity while maintaining overall validity.",
-  "dafny_file": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260105_215059_4ee3a0/generated_csd.dfy",
-  "compiled_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260105_215059_4ee3a0/generated_csd",
-  "total_attempts": 1,
-  "timestamp": "2026-01-05T21:51:27.415791"
-}

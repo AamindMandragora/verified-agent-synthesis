@@ -18,3 +18,7 @@ einops>=0.7.0
 pytest>=7.0.0
 pytest-timeout>=2.0.0
 
+# Evaluation harnesses (apples-to-apples-ish vs Syncode/IterGen papers)
+datasets>=2.16.0
+jsonschema>=4.20.0
+

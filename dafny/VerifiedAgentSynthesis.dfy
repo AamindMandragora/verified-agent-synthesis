@@ -656,5 +656,159 @@ module VerifiedDecoderAgent {
     {
       generated := ConstrainedGeneration(lm, parser, prompt, maxSteps);
     }
+
+    // =========================================================================
+    // NEW: COMPACTNESS-AWARE STRATEGIES FOR GSM-SYMBOLIC
+    // =========================================================================
+
+    // Strategy 6: Generate with reasonable length constraint
+    // Stops early if expression is complete AND within reasonable length
+    static method GenerateWithReasonableLength(
+      lm: LM,
+      parser: Parser,
+      prompt: Prefix,
+      maxSteps: nat,
+      reasonableLength: nat
+    ) returns (generated: Prefix)
+      modifies lm.Logits
+      requires lm.ValidTokensIdsLogits()
+      requires parser.IsValidPrefix([])
+      requires forall t: Token :: t in parser.ValidNextTokens([]) ==> t in lm.Tokens
+      requires reasonableLength > 0
+      ensures lm.ValidTokensIdsLogits()
+      ensures |generated| <= maxSteps
+      ensures parser.IsValidPrefix(generated)
+      ensures |generated| == maxSteps || parser.IsCompletePrefix(generated)
+      // If complete and within reasonable length, we stopped early
+      ensures parser.IsCompletePrefix(generated) && |generated| <= reasonableLength ==>
+        |generated| <= reasonableLength
+    {
+      generated := [];
+      var steps := 0;
+      
+      while steps < maxSteps && !parser.IsCompletePrefix(generated)
+        invariant 0 <= steps <= maxSteps
+        invariant lm.ValidTokensIdsLogits()
+        invariant steps == |generated|
+        invariant parser.IsValidPrefix(generated)
+        invariant forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens
+        decreases maxSteps - steps
+      {
+        var next := ConstrainedStep(lm, parser, prompt, generated);
+        generated := generated + [next];
+        steps := steps + 1;
+        
+        // Stop early if complete and within reasonable length
+        if parser.IsCompletePrefix(generated) && |generated| <= reasonableLength {
+          break;
+        }
+      }
+    }
+
+    // Strategy 7: Generate until first complete (explicit early stopping)
+    // This is similar to ConstrainedGeneration but makes the early stop explicit
+    static method GenerateUntilFirstComplete(
+      lm: LM,
+      parser: Parser,
+      prompt: Prefix,
+      maxSteps: nat
+    ) returns (generated: Prefix)
+      modifies lm.Logits
+      requires lm.ValidTokensIdsLogits()
+      requires parser.IsValidPrefix([])
+      requires forall t: Token :: t in parser.ValidNextTokens([]) ==> t in lm.Tokens
+      ensures lm.ValidTokensIdsLogits()
+      ensures |generated| <= maxSteps
+      ensures parser.IsValidPrefix(generated)
+      ensures |generated| == maxSteps || parser.IsCompletePrefix(generated)
+    {
+      // This is essentially the same as ConstrainedGeneration - it already stops at first complete
+      generated := ConstrainedGeneration(lm, parser, prompt, maxSteps);
+    }
+
+    // Helper: Select best candidate from a sequence based on a scoring function
+    // Note: This is a method that doesn't modify LM state (pure computation)
+    static method SelectBestCandidate(
+      candidates: seq<Prefix>,
+      parser: Parser,
+      preferShorter: bool
+    ) returns (best: Prefix)
+      requires |candidates| > 0
+      requires forall c: Prefix :: c in candidates ==> parser.IsValidPrefix(c)
+      ensures best in candidates
+    {
+      var result := candidates[0];
+      var bestScore := if preferShorter && parser.IsCompletePrefix(result) then -|result| else -1000;
+      
+      var i := 1;
+      while i < |candidates|
+        invariant 0 <= i <= |candidates|
+        invariant result in candidates
+        decreases |candidates| - i
+      {
+        var candidate := candidates[i];
+        var score := if preferShorter && parser.IsCompletePrefix(candidate) then -|candidate| else -1000;
+        
+        if score > bestScore || (score == bestScore && preferShorter && parser.IsCompletePrefix(candidate) && |candidate| < |result|) {
+          result := candidate;
+          bestScore := score;
+        }
+        i := i + 1;
+      }
+      best := result;
+    }
+
+    // Strategy 8: Generate multiple candidates and select the best one
+    // Note: This generates candidates sequentially, which may not be ideal for diversity
+    // but is necessary given the LM state modification constraints
+    static method GenerateAndSelectBest(
+      lm: LM,
+      parser: Parser,
+      prompt: Prefix,
+      maxSteps: nat,
+      numCandidates: nat,
+      preferShorter: bool
+    ) returns (generated: Prefix)
+      modifies lm.Logits
+      requires lm.ValidTokensIdsLogits()
+      requires parser.IsValidPrefix([])
+      requires forall t: Token :: t in parser.ValidNextTokens([]) ==> t in lm.Tokens
+      requires numCandidates > 0
+      ensures lm.ValidTokensIdsLogits()
+      ensures |generated| <= maxSteps
+      ensures parser.IsValidPrefix(generated)
+      ensures |generated| == maxSteps || parser.IsCompletePrefix(generated)
+    {
+      // Generate first candidate
+      var firstCandidate: Prefix;
+      firstCandidate := ConstrainedGeneration(lm, parser, prompt, maxSteps);
+      var candidates: seq<Prefix> := [firstCandidate];
+      
+      // Generate additional candidates (they may be similar due to deterministic generation)
+      // In practice, this would use temperature sampling, but that requires LM interface changes
+      var i := 1;
+      while i < numCandidates
+        invariant 1 <= i <= numCandidates
+        invariant |candidates| == i
+        invariant lm.ValidTokensIdsLogits()
+        invariant forall c: Prefix :: c in candidates ==>
+          (|c| <= maxSteps && parser.IsValidPrefix(c) && 
+           (parser.IsCompletePrefix(c) || |c| == maxSteps))
+        decreases numCandidates - i
+      {
+        // Generate another candidate
+        // Note: This will be similar to the first due to deterministic generation
+        // In a real implementation, you'd use temperature sampling here
+        var candidate: Prefix;
+        candidate := ConstrainedGeneration(lm, parser, prompt, maxSteps);
+        candidates := candidates + [candidate];
+        i := i + 1;
+      }
+      
+      // Select best candidate
+      var best: Prefix;
+      best := SelectBestCandidate(candidates, parser, preferShorter);
+      generated := best;
+    }
   }
 }

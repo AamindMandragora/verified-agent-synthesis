@@ -1,8 +1,0 @@
-{
-  "strategy_code": "// CSD_RATIONALE_BEGIN\n// The JSON response parser is likely permissive, allowing a mix of tokens. \n// To balance between creativity and validity, I'll use a hybrid approach with an interval of 3,\n// allowing occasional unconstrained attempts while mostly staying constrained.\n// CSD_RATIONALE_END\nif maxSteps <= 3 {\n  generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);\n} else {\n  generated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 3);\n}",
-  "tool_choice_rationale": "The JSON response parser is likely permissive, allowing a mix of tokens.\nTo balance between creativity and validity, I'll use a hybrid approach with an interval of 3,\nallowing occasional unconstrained attempts while mostly staying constrained.",
-  "dafny_file": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260105_204255_8b7116/generated_csd.dfy",
-  "compiled_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260105_204255_8b7116/generated_csd",
-  "total_attempts": 1,
-  "timestamp": "2026-01-05T20:43:18.641197"
-}

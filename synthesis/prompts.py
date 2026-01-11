@@ -88,7 +88,7 @@ Do NOT omit these markers. Do NOT use /* */ for this block. Use '//' on every ra
 
 2) Optimistic then fallback:
   generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, N);
-N in [1..20], and must satisfy N <= maxSteps.
+N in [1..20], and MUST satisfy N <= maxSteps (guard with if/else or use a small N like 3-5).
 
 3) Interleaved hybrid:
   generated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, N);
@@ -105,6 +105,29 @@ N in [2..8], speculation window. Larger N = faster but more rejection waste.
   generated := CSDHelpers.CompletePrefix(lm, parser, prompt, partial, maxSteps);
 Where `partial` is an existing valid prefix you constructed earlier (e.g., by rollback/validation).
 Do NOT pass `prompt` as `partial`. Do NOT invent other helpers.
+
+7) NEW: Generate with reasonable length (for compact expressions like math):
+  generated := CSDHelpers.GenerateWithReasonableLength(lm, parser, prompt, maxSteps, reasonableLength);
+Stops early if expression is complete AND within reasonableLength. Use for short expressions (5-20 tokens).
+reasonableLength should be a small number like 10-15 for math expressions.
+
+8) NEW: Generate until first complete (explicit early stopping):
+  generated := CSDHelpers.GenerateUntilFirstComplete(lm, parser, prompt, maxSteps);
+Stops immediately when a complete expression is found. Similar to PureConstrainedGeneration but makes early stop explicit.
+
+9) NEW: Generate multiple candidates and select best:
+  var candidates: seq<Prefix>;
+  candidates := [];  // Initialize
+  var candidate: Prefix;
+  candidate := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
+  candidates := candidates + [candidate];
+  // Repeat for more candidates, then:
+  var best: Prefix;
+  best := CSDHelpers.SelectBestCandidate(candidates, parser, true);  // true = prefer shorter
+  generated := best;
+Or use the combined helper:
+  generated := CSDHelpers.GenerateAndSelectBest(lm, parser, prompt, maxSteps, numCandidates, preferShorter);
+numCandidates in [2..5], preferShorter is bool. Generates multiple candidates and picks shortest complete one.
 
 ## Decision rubric (internal reasoning only)
 Use the use-case description to decide:
@@ -144,12 +167,16 @@ Example (fully constrained):
   // CSD_RATIONALE_END
   generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
 
-Example (optimistic then fallback):
+Example (optimistic then fallback - MUST guard for precondition):
   // CSD_RATIONALE_BEGIN
   // I chose TryUnconstrainedThenConstrained to allow a short burst of free drafting, then guarantee validity.
-  // N=5 is small to reduce waste if the parser is strict.
+  // N=5 is small to reduce waste if the parser is strict. I guard with maxSteps check to satisfy N<=maxSteps.
   // CSD_RATIONALE_END
-  generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);
+  if maxSteps < 5 {{
+    generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
+  }} else {{
+    generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);
+  }}
 
 Example (interleaved hybrid):
   // CSD_RATIONALE_BEGIN
@@ -221,6 +248,14 @@ Rules:
 Common fixes:
 - Do NOT write `var generated: Prefix;` (duplicate/shadowing). Assign to the existing out-parameter `generated` instead.
 - Avoid subtracting from `maxSteps` (e.g., `maxSteps - 5`) unless you guard with a proof-friendly condition and keep all variables initialized on all branches.
+- **CRITICAL**: When using TryUnconstrainedThenConstrained with a constant N, you MUST guard it with `if maxSteps >= N` or use PureConstrainedGeneration when maxSteps is too small. Otherwise Dafny cannot prove the precondition `N <= maxSteps`.
+  Example fix for "precondition could not be proved" error:
+    WRONG: generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);
+    RIGHT: if maxSteps < 5 {{
+             generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
+           }} else {{
+             generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);
+           }}
 
 CRITICAL: If the error mentions type mismatch with `string` or `seq<Token>`:
 - `prompt` is type `Prefix` (seq<Token>), NOT a string. You CANNOT use `+` with strings.
