@@ -118,35 +118,6 @@ Examples:
         help="Verify and compile existing GeneratedCSD.dfy without generating"
     )
 
-    # Evaluation Arguments
-    parser.add_argument(
-        "--evaluate",
-        action="store_true",
-        help="Run performance evaluation after synthesis"
-    )
-    
-    parser.add_argument(
-        "--eval-task",
-        type=str,
-        choices=["json", "sql"],
-        default="json",
-        help="Task for evaluation (default: json)"
-    )
-    
-    parser.add_argument(
-        "--eval-model",
-        type=str,
-        default="Qwen/Qwen2.5-Coder-1.5B-Instruct",
-        help="Model to use for evaluation (default: Qwen/Qwen2.5-Coder-1.5B-Instruct)"
-    )
-    
-    parser.add_argument(
-        "--eval-vocab-size",
-        type=int,
-        default=1000,
-        help="Vocabulary size for evaluation (default: 1000)"
-    )
-    
     args = parser.parse_args()
     
     # Handle verify-only mode
@@ -158,7 +129,6 @@ Examples:
     from synthesis.generator import StrategyGenerator
     from synthesis.verifier import DafnyVerifier
     from synthesis.compiler import DafnyCompiler
-    from synthesis.runner import StrategyRunner
     from synthesis.feedback_loop import SynthesisPipeline, SynthesisExhaustionError
     
     # Create components
@@ -176,13 +146,13 @@ Examples:
     verifier = DafnyVerifier(dafny_path=args.dafny_path)
     # Compiler output dir is set per-run inside the pipeline (so runs don't overwrite each other).
     compiler = DafnyCompiler(dafny_path=args.dafny_path, output_dir=args.output_dir)
-    runner = StrategyRunner()
+    # Runner is created by the pipeline with task-appropriate parser mode
     
     pipeline = SynthesisPipeline(
         generator=generator,
         verifier=verifier,
         compiler=compiler,
-        runner=runner,
+        runner=None,  # Let pipeline create task-appropriate runner
         max_iterations=args.max_iterations,
         output_dir=args.output_dir,
         save_reports=not args.no_save_reports
@@ -205,33 +175,6 @@ Examples:
             print(f"Run directory: {result.run_dir}")
         print(f"Total attempts: {len(result.attempts)}")
         print(f"Total time: {result.total_time_ms:.1f}ms")
-        
-        # Run Evaluation if requested
-        if args.evaluate and getattr(result, "run_dir", None):
-            try:
-                # Unload synthesis model to free memory for evaluation
-                print("\nUnloading synthesis model to free memory for evaluation...")
-                del generator
-                del pipeline
-                import gc
-                import torch
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-
-                from scripts.evaluate_csd_performance import run_evaluation
-                run_evaluation(
-                    run_dir=result.run_dir,
-                    task=args.eval_task,
-                    model_name=args.eval_model,
-                    device=device or "cuda", # Default to cuda if available
-                    vocab_size=args.eval_vocab_size,
-                    max_steps=args.max_tokens
-                )
-            except Exception as e:
-                print(f"\nWarning: Evaluation failed to start: {e}")
-                import traceback
-                traceback.print_exc()
 
         sys.exit(0)
         

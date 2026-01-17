@@ -1,6 +1,6 @@
 # CSD Generation: Constrained Decoding Strategy Synthesis Pipeline
 
-A synthesis pipeline for generating **Constrained Decoding Strategies (CSD)** using LLMs (Qwen) with formal verification via Dafny. The pipeline automatically generates, verifies, compiles, and tests constrained decoding strategies that guarantee valid output from language models according to specified grammars (JSON, SQL, Math, etc.).
+A synthesis pipeline for generating **Constrained Decoding Strategies (CSD)** using LLMs (Qwen) with formal verification via Dafny. The pipeline automatically generates, verifies, compiles, and tests constrained decoding strategies that guarantee valid output from language models according to specified grammars (JSON, Math, etc.).
 
 ## Overview
 
@@ -114,38 +114,49 @@ csd-generation/
 │   ├── prompts.py            # LLM prompt templates for strategy generation
 │   └── rationale.py          # Strategy rationale extraction from LLM output
 │
+├── evaluations/              # Evaluation framework (modular design)
+│   ├── __init__.py           # Package exports
+│   ├── common/               # Shared utilities across evaluations
+│   │   ├── __init__.py
+│   │   ├── model_utils.py    # HuggingFace model loading with Dafny interface
+│   │   ├── parser_utils.py   # Lark grammar parser creation utilities
+│   │   └── token_selection.py # Token vocabulary selection for constrained decoding
+│   │
+│   └── gsm_symbolic/         # GSM-Symbolic math reasoning evaluation
+│       ├── __init__.py       # Package exports
+│       ├── dataset.py        # Dataset loading from HuggingFace
+│       ├── prompts.py        # CRANE-style prompt formatting
+│       ├── answer_extraction.py # Answer extraction and evaluation
+│       ├── grammar.py        # Dynamic grammar construction
+│       ├── generation.py     # Generation methods (standard, CRANE, CSD)
+│       ├── environment.py    # Dafny environment setup
+│       ├── metrics.py        # Evaluation metrics
+│       └── cli.py            # Command-line interface
+│
+├── scripts/                  # CLI entry points and utilities
+│   ├── run_csd_with_grammar.py    # Run CSD strategies with custom grammars
+│   ├── validate_json_csd.py       # Validate JSON-oriented strategies
+│   └── generate_gsm_csd.sh        # Helper script for GSM CSD generation
+│
 ├── dafny/                    # Dafny source files
 │   ├── GeneratedCSD.dfy      # Template for generated strategies (injection point)
 │   └── VerifiedAgentSynthesis.dfy  # Core Dafny verification module (LM/parser specs)
 │
-├── runtime/                  # Python runtime for compiled strategies
-│   └── runtime_stubs.py      # Extern implementations for Dafny code (LM/parser interfaces)
+├── dafny_externs/            # Python implementations of Dafny {:extern} functions
+│   └── extern_functions.py   # LM, Parser, and decoding primitives for strategy execution
 │
 ├── parsers/                  # Grammar and parsing utilities
 │   ├── json_prefix.py        # Hand-optimized JSON prefix validator (fast incremental)
-│   ├── lark_parser.py       # Generic Lark-based grammar parser (character-level)
+│   ├── lark_parser.py        # Generic Lark-based grammar parser (character-level)
 │   ├── model_token_parser.py # Token-level parsing for LMs (vocabulary-aware)
-│   └── schema_to_grammar.py # JSON Schema → Lark grammar converter (for dynamic schemas)
+│   └── schema_to_grammar.py  # JSON Schema → Lark grammar converter (for dynamic schemas)
 │
 ├── grammars/                 # Lark grammar files for various formats
 │   ├── json.lark             # JSON syntax (ECMA-404 compliant)
 │   ├── json_charwise.lark    # Character-level JSON grammar
-│   ├── sql.lark              # Basic SQL SELECT statements
-│   ├── sql_syncode.lark      # SQL grammar matching Syncode paper format
-│   ├── sql_no_subquery.lark  # SQL without subqueries (simplified)
 │   ├── math.lark             # Mathematical expressions
 │   ├── gsm.lark              # Math expressions for GSM-Symbolic (arithmetic operations)
 │   └── gsm_math.lark         # Extended math grammar for GSM calculations
-│
-├── scripts/                  # Evaluation and utility scripts
-│   ├── run_csd_with_grammar.py    # Run compiled CSD strategies with custom grammars
-│   ├── evaluate_json_mode_eval.py # Evaluate on JSON-Mode-Eval dataset (schema validation)
-│   ├── evaluate_spider_sql.py     # Evaluate on Spider SQL dataset (execution accuracy)
-│   ├── evaluate_gsm_symbolic.py  # Evaluate on GSM-Symbolic math dataset (CRANE-style CSD)
-│   ├── evaluate_csd_performance.py # Performance benchmarking utilities
-│   ├── validate_json_csd.py        # Validate JSON-oriented strategies
-│   ├── generate_gsm_csd.sh        # Helper script for GSM CSD generation
-│   └── generate_sql_csd.sh         # Helper script for SQL CSD generation
 │
 ├── tests/                    # Unit tests
 │   └── test_json_prefix.py   # Tests for JSON prefix validation
@@ -161,6 +172,60 @@ csd-generation/
 │
 └── docs/                     # Research paper and documentation
     └── papers/               # Academic paper LaTeX source
+```
+
+---
+
+## Evaluations Package (`evaluations/`)
+
+The `evaluations/` package provides a modular, well-organized structure for benchmark evaluations. Each evaluation task is organized as a sub-package with clear separation of concerns.
+
+### Common Utilities (`evaluations/common/`)
+
+Shared utilities used across all evaluations:
+
+```python
+from evaluations.common import (
+    # Model loading
+    create_huggingface_lm,      # Create Dafny-compatible LM wrapper
+    get_model_input_device,     # Get correct device for multi-GPU models
+    get_max_input_length,       # Get safe max input length
+    
+    # Parser creation
+    create_lark_dafny_parser,   # Create Dafny-compatible grammar parser
+    
+    # Token selection
+    select_math_token_ids,      # Build math-optimized token vocabulary
+)
+```
+
+### GSM-Symbolic Evaluation (`evaluations/gsm_symbolic/`)
+
+Complete evaluation for CRANE-style CSD on grade school math problems:
+
+```python
+from evaluations.gsm_symbolic import (
+    # Dataset
+    load_gsm_symbolic,           # Load dataset from HuggingFace
+    
+    # Prompts
+    make_gsm_prompt,             # Format CRANE-style prompts
+    make_chatml_instruction,     # Wrap for Qwen models
+    symbolize_question,          # Replace numbers with variables
+    
+    # Answer extraction
+    extract_answer,              # Extract and evaluate answers
+    extract_gold_answer,         # Extract ground truth
+    
+    # Generation
+    run_crane_csd,               # CRANE with CSD strategy (default)
+    
+    # Environment
+    setup_dafny_environment,     # Load Dafny modules
+    
+    # Metrics
+    GSMMetrics,                  # Track evaluation metrics
+)
 ```
 
 ---
@@ -263,9 +328,22 @@ except SynthesisExhaustionError as e:
 
 ## Evaluation Scripts
 
-### GSM-Symbolic Math Reasoning (`scripts/evaluate_gsm_symbolic.py`)
+### GSM-Symbolic Math Reasoning (`evaluations/gsm_symbolic/`)
 
 **Purpose**: Evaluates CRANE-style CSD on GSM-Symbolic dataset (grade school math word problems).
+
+**Architecture**: The evaluation is organized as a modular package:
+
+| Module | Description |
+|--------|-------------|
+| `dataset.py` | Dataset loading from HuggingFace |
+| `prompts.py` | CRANE-style prompt formatting, variable extraction |
+| `answer_extraction.py` | Answer extraction with multiple fallback strategies |
+| `grammar.py` | Dynamic grammar construction for specific variables |
+| `generation.py` | CSD generation method (CRANE-CSD) |
+| `environment.py` | Dafny environment setup and module loading |
+| `metrics.py` | Evaluation metrics (accuracy, format validity, etc.) |
+| `cli.py` | Command-line interface |
 
 **Key Features**:
 - **CRANE-style dynamic switching**: Unconstrained reasoning until `<<` delimiter detected, then CSD-constrained math generation, resume unconstrained until `####`
@@ -280,9 +358,8 @@ except SynthesisExhaustionError as e:
 
 **Usage**:
 ```bash
-# CRANE-style CSD evaluation
-python scripts/evaluate_gsm_symbolic.py \
-  --method crane-csd \
+# Using the module directly (recommended)
+python -m evaluations.gsm_symbolic.cli \
   --run-dir outputs/generated-csd/runs/20260110_180926_52ce55 \
   --model Qwen/Qwen2.5-Coder-7B-Instruct \
   --device cuda \
@@ -292,12 +369,38 @@ python scripts/evaluate_gsm_symbolic.py \
   --grammar grammars/gsm.lark \
   --debug-delimiters
 
-# Baseline (unconstrained)
+# Or using the backward-compatible script
 python scripts/evaluate_gsm_symbolic.py \
-  --method standard \
+  --run-dir outputs/generated-csd/runs/20260110_180926_52ce55 \
   --model Qwen/Qwen2.5-Coder-7B-Instruct \
   --device cuda \
   --limit 10
+```
+
+**Python API**:
+```python
+from evaluations.gsm_symbolic import (
+    load_gsm_symbolic,
+    symbolize_question,
+    make_gsm_prompt,
+    extract_answer,
+    GSMMetrics,
+    setup_dafny_environment,
+)
+
+# Load dataset
+ds = load_gsm_symbolic(config="main", limit=10, random_sample=True)
+
+# Process a question
+question = ds[0]["question"]
+symbolic_question, variable_mapping = symbolize_question(question)
+prompt = make_gsm_prompt(question, symbolic_question=symbolic_question)
+
+# Extract answer from generated text
+pred_answer, valid_format, symbolic_expr = extract_answer(
+    generated_text,
+    variable_mapping=variable_mapping,
+)
 ```
 
 **Implementation Details**:
@@ -305,64 +408,6 @@ python scripts/evaluate_gsm_symbolic.py \
 - **Delimiter Cooldown**: 25-step cooldown (longer than 20-token window) prevents re-detecting same `<<`
 - **Number Extraction**: Waits for complete numbers after `####` (handles multi-token numbers like "20" = "2" + "0")
 - **Grammar Validation**: Uses `grammars/gsm.lark` or `grammars/gsm_math.lark` for math expression validation
-
-### JSON-Mode-Eval (`scripts/evaluate_json_mode_eval.py`)
-
-**Purpose**: Evaluates JSON generation on JSON-Mode-Eval dataset with schema validation accuracy.
-
-**Usage**:
-```bash
-# Standard (unconstrained)
-python scripts/evaluate_json_mode_eval.py \
-  --method standard \
-  --model Qwen/Qwen2.5-Coder-1.5B-Instruct \
-  --device cuda \
-  --split train \
-  --limit 100
-
-# CSD / constrained
-python scripts/evaluate_json_mode_eval.py \
-  --method csd \
-  --run-dir outputs/generated-csd/runs/20260105_215059_4ee3a0 \
-  --model Qwen/Qwen2.5-Coder-1.5B-Instruct \
-  --device cuda \
-  --split train \
-  --limit 100
-```
-
-**Notes**:
-- Uses `grammars/json.lark` for syntactic validity
-- Uses `jsonschema` library for schema validation
-- Does not run official Syncode library; evaluates your method on same dataset/metric
-
-### Spider SQL (`scripts/evaluate_spider_sql.py`)
-
-**Purpose**: Evaluates SQL generation on Spider dataset with execution accuracy.
-
-**Prerequisites**: Requires local Spider checkout (for SQLite databases)
-```bash
-git clone https://github.com/taoyds/spider
-```
-
-**Usage**:
-```bash
-python scripts/evaluate_spider_sql.py \
-  --spider-root /path/to/spider \
-  --split dev \
-  --method csd \
-  --run-dir outputs/generated-csd/runs/20260105_215059_4ee3a0 \
-  --model Qwen/Qwen2.5-Coder-1.5B-Instruct \
-  --device cuda \
-  --limit 100 \
-  --grammar grammars/sql_syncode.lark
-```
-
-**Notes**:
-- Prompt format matches papers' examples (`db_id`, `db_info`, `question`, `SQL:`)
-- Uses best-effort result-set equality check (not Spider's full official evaluator)
-- Uses `grammars/sql_syncode.lark` for SQL syntax validation
-
----
 
 ## Running with Custom Grammars
 
@@ -388,7 +433,7 @@ python scripts/run_csd_with_grammar.py \
 # Custom options
 python scripts/run_csd_with_grammar.py \
     --run-dir outputs/generated-csd/runs/XXXXX \
-    --grammar grammars/sql.lark \
+    --grammar grammars/math.lark \
     --max-steps 100 \
     --vocab-size 1000 \
     --seed 42
@@ -397,7 +442,6 @@ python scripts/run_csd_with_grammar.py \
 ### Built-in Formats
 
 - `json` - JSON according to ECMA-404
-- `sql` - Basic SELECT statements
 - `math` - Mathematical expressions
 
 ---
