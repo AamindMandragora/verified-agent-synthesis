@@ -1,0 +1,5 @@
+\begin{restatable}{theorem}{Sound}
+\label{thm:sound}
+Let $\partialcode \in \lang_p(G)$ be the partial output and any integer $d \geq 1$, let $\accepts_d \subseteq \allterminals^{d}$ contain all possible accept terminal sequences of length $d$ and $r \in \alphabets^*$ denote the remainder. 
+If $m = \text{GrammarMask}(\accepts, r)$ then for any $t \in \vocab$, if $\partialcode . t \in \lang_p(G)$ then $t \in \set(m)$
+\end{restatable}

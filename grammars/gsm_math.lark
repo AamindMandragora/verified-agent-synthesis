@@ -1,0 +1,23 @@
+// Math expression grammar for GSM-Symbolic (without delimiters)
+// Used for validating content inside << >> delimiters
+// Supports both numbers and variables for symbolic expressions
+
+start: expr
+
+?expr: term
+     | expr "+" term  -> add
+     | expr "-" term  -> subtract
+
+?term: factor
+     | term "*" factor  -> multiply
+     | term "/" factor  -> divide
+
+?factor: NUMBER        -> number
+       | VARIABLE      -> variable
+       | "(" expr ")"
+
+VARIABLE: /[a-z][a-z0-9_]*/
+NUMBER: /-?\d+(\.\d+)?/
+
+%import common.WS
+%ignore WS

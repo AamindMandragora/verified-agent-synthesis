@@ -1,0 +1,101 @@
+%---------------
+
+% \begin{table}[t] 
+%     \tablesize
+%     \centering
+%     % \vspace{-0.1in}
+%     \caption{Effectiveness of \Tool{} in generating syntactic Python code}
+%     \begin{tabular}{l l c c c c c c}%{@{}lll rrr@{}}
+%         \toprule
+%         Architecture & Error Type & \multicolumn{3}{c}{HumanEval} & \multicolumn{3}{c}{MBXP}\\
+        
+%         & & \Baseline{} & \Tool{} & $\downarrow$ & \Baseline{} & \Tool{} & $\downarrow$ \\
+%         \midrule
+%         CodeGen-350M & Syntax & 230 & 7 & 97\% & 68 & 0 & 100\% \\
+%         & Indentation & 41 & 8 & 80\% & 10  & 4 & 60\% \\
+%         WizardCoder-1B & Syntax & 32 & 3 & 91\% & 8 & 1 & 88\% \\
+%         & Indentation & 4 & 0 & 100\% & 20 & 1 & 95\% \\
+%         Llama-7B & Syntax & 230 & 2 & 99\% & 108 & 1 & 99\% \\
+%         & Indentation & 61 & 0 & 100\% & 40 & 4 & 90\% \\
+%         % \hline
+%         % CodeGen-350M & Syntax &  &  & 97\% \\
+%         % & Indentation &  &  & 80\% \\
+%         % WizardLM-1B & Syntax & 8 & 2 & 75\% \\
+%         % & Indentation & 20 & 1 & 95\% \\
+%         % Llama-7B & Syntax & 108 & 1 & 99\% \\
+%         % & Indentation & 40 & 4 & 90\%\\
+        
+        
+
+%         \bottomrule
+%     \end{tabular}
+%     \vspace{-0.1in}
+%     \label{tab:main_eval_python}
+% \end{table}
+
+
+% \begin{wraptable}{r}{.55\textwidth} 
+%     % \tablesize
+%     \centering
+%     \vspace{-0.15in}
+%     \caption{Effectiveness of \Tool{} in generating syntactic Python code}
+%     \begin{tabular}{@{}lll rr@{}}
+%         \toprule
+%         Dataset & Architecture & Mode & \multicolumn{2}{c}{Error Type} \\
+%         & & & Syntax & Indentation \\
+%         \hline
+%          & CodeGen-350M & Baseline & 0.070 & 0.0125 \\
+%         & & \Tool{} & 0.002 & 0.002 \\
+%         HumanEval & WizardLM-1B & Baseline & 0.01 & 0.001 \\
+%         & & \Tool{} & 0.002 & 0 \\
+%         & Llama-7B & Baseline & 0.14 & 0.037 \\
+%         & & \Tool{} & 0.001 & 0 \\
+%         \hline
+%          & CodeGen-350M & Baseline & 230 & 41 \\
+%         & & \Tool{} & 7 & 8 \\
+%         MBXP & WizardLM-1B & Baseline & 0.008 & 0.002 \\
+%         & & \Tool{} & 0.002 & 0.001 \\
+%         & Llama-7B & Baseline & 0.111 & 0.041 \\
+%         & & \Tool{} & 0.001 & 0.004 \\
+
+%         \bottomrule
+%     \end{tabular}
+%     % \vspace{-0.4in}
+%     \label{tab:main_eval_python}
+% \end{wraptable}
+
+%----------------------
+
+% \begin{wraptable}{r}{.6\textwidth} 
+
+
+\begin{table}[tbh]
+    \tablesize
+    \centering
+    % \vspace{-0.15in}
+    \caption{Number of programs with syntax errors for \baseline{} and \Tool{} generation ($\downarrow$ shows how much \Tool{} reduces the occurrence of the syntax errors compared to Standard generation.}
+    % \begin{tabular}{@{}ll ccc@{}}
+    \begin{tabular}{@{}l l r r r r r r@{}}
+        \toprule
+        % Dataset & Architecture & \Baseline{} & \Tool{} & $\downarrow$ \\
+        Dataset & Model & \multicolumn{3}{c}{Python} & \multicolumn{3}{c}{Go}\\
+        & & \Baseline{} & \Tool{} & $\downarrow$ & \Baseline{} & \Tool{} & $\downarrow$ \\
+        % \hline
+        \midrule
+        
+         & CodeGen-350M  & 271 & \textbf{15} & 95\% & 573 & \textbf{49} & 91\% \\
+        HumanEval & WizardCoder-1B  & 36 & \textbf{3} & 92\% & 1031 & \textbf{50} & 95\% \\
+        & \llama{}  & 291 & \textbf{2} & 99\% & 725 & \textbf{10} & 99\% \\
+        \hline
+        & CodeGen-350M  & 78 & \textbf{4} & 95\% & 212 & \textbf{2} & 99\% \\
+        MBXP & WizardCoder-1B  & 28 & \textbf{2} & 93\% & 243 & \textbf{14} & 94\% \\
+        & \llama{} & 148 & \textbf{5} & 97\% & 414 & \textbf{1} & 99\% \\
+        
+        \bottomrule
+    \end{tabular}
+    % \vspace{-0.1in}
+    \label{tab:main_eval_python}
+% \end{wraptable}
+\end{table}
+
+%----------------------

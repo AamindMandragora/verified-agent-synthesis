@@ -1,0 +1,37 @@
+\begin{wrapfigure}{R}{0.53\textwidth}
+\vspace{-.1in}
+\begin{minipage}{0.55\textwidth}
+\begin{algorithm}[H]
+\small
+\caption{Masked LLM Generation}
+\label{alg:masked}
+%
+\begin{flushleft}
+\textbf{Inputs:} $M$: LLM, $\tokenizer$: tokenizer, $C_0$: input prompt string, \\
+$f_m$: function that generates mask, $n_\textit{max}$: maximum generated tokens, $D$: any decoding algorithm \\
+\textbf{Output:} string $C_n$
+\end{flushleft}
+
+\begin{algorithmic}[1]
+\Function{MaskedGenerate}{$M$, $\tokenizer$, $f_m$, $C_0$}
+\State $\curtokens \gets \text{Tokenize}(\tokenizer, C_0)$
+\For{$i \in \{1, \dots n_\textit{max} \}$}
+\State $\textit{scores} \gets M(\curtokens)$
+\State $m \gets f_{m}(\curtokens, \tokenizer)$
+\State $\textit{scores} \gets m \odot \textit{scores}$
+\State $t_i \gets D(\textit{scores})$
+\If{$t_i =$ \str{EOS}}
+\State break
+\EndIf
+\State $\curtokens \gets \text{append}(\curtokens, t_i)$
+\EndFor
+\State $C_n \gets \text{Detokenize}(\tokenizer, \curtokens)$
+\State \Return $C_n$
+\EndFunction
+%\item[]
+\end{algorithmic}
+\end{algorithm}
+
+\end{minipage}
+\vspace{-0.1in}
+\end{wrapfigure}

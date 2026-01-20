@@ -1,0 +1,119 @@
+
+Our work focuses on enhancing the syntactical accuracy LLMs by using a constrained decoding algorithm.
+Prior research has explored two other primary directions to enhance LLMs' accuracy in generating formal language: 
+1) Fine-tuning or prompt engineering \cite{bassamzadeh2024comparativestudydslcode, weyssow2024exploringparameterefficientfinetuningtechniques}, which demands substantial data, compute resources, and time, often without any formal guarantees. 
+2) Modifications to the LLM's architecture or tokenization \cite{murty2023pushdown, 10.1145/3597926.3598048, 10.1145/3597503.3639125}, although these techniques have not yet achieved performance comparable to the current state-of-the-art standard LLMs.
+However, both fine-tuning and architectural changes are complementary to the grammar-guided decoding approach that we focus on in our work, and any gains through those techniques will improve the overall quality of LLM generation.
+
+
+There are several recent works on constrained LLM generation~\cite{Wei_2023, 10.1145/3591300, guidance, willard2023efficient, scholak-etal-2021-picard, poesia2022synchromesh, llamacpp, geng2023grammar, beurerkellner2024guiding, agrawal2023guiding, melcer2024constraineddecodingfillinthemiddlecode}.
+This includes recent works that have used language-server (tools built for communication between IDEs and programming language-specific tools like static analyzers and compilers) suggestions to enforce language-specific semantic constraints during decoding \cite{agrawal2023guiding, Wei_2023}.
+These techniques do not guarantee syntactical accuracy and rely on the availability and efficiency of language servers.
+
+\noindent{\bf Structured LLM Generation.} 
+\add{
+We focus our further discussion on comparison to the techniques that constrain LLM for structured generation according to a formal language. 
+We compare \Tool{} with prior works in terms of precision and efficiency of the algorithms and generality and scalability of frameworks.
+}
+Table~\ref{tab:constrained_decoding_methods} presents the various recent techniques for structured LLM generation.
+The columns "Regex" and "CFG" indicate regular expression and CFG constraining features, respectively. 
+The "Precomputed" column denotes techniques that precompute certain structures to enhance generation efficiency. 
+% "Sound" indicates whether these techniques provide soundness guarantees. 
+The "GPL" column specifies if the tools support general-purpose PLs. 
+"Max CFG" displays the number of production rules in the largest supported Grammar by these techniques.
+\add{
+We obtained these numbers by examining the built-in grammars that were provided in the corresponding libraries. 
+}
+Finally, the "Input Format" column indicates the format used to specify generation constraints.
+In addition to the improvement over the baselines presented in the evaluation, our work focuses on rigorously formalizing the correctness of our CFG-guided generation approach.
+
+% Regex guided
+Recent works such as \guidance{}~\cite{guidance} and \lmql{}~\cite{10.1145/3591300} mitigate the unpredictability of LLM responses by using template or constraint-based controlled generation techniques. 
+These libraries feature a templating engine where prompts are expressed with holes for the generation to fill. 
+\lmql{}~\cite{10.1145/3591300} supports general regular expression constraints, but not CFG constraints.
+\guidance{}~\cite{guidance} supports CFG-guided generation. 
+It uses Earley parsing~\cite{10.1145/362007.362035} for constrained decoding. 
+Similar to other related works, it incurs high inference overhead as it checks the syntactical validity of the entire model vocabulary at each step. 
+It uses a trie similar to \cite{poesia2022synchromesh, willard2023efficient, beurerkellner2024guiding}. 
+As shown in our evaluation it incurs higher overhead for JSON generation than \Tool{}. 
+It iterates over the vocabulary in order of the next token probability to efficiently compute the next token. 
+However, this leads to a lack of generality and it cannot be directly combined with an arbitrary decoding strategy. 
+% Further, due to the non-standard input format for the grammar of the framework, it is difficult to introduce a new grammar. 
+
+
+\input{tables/comparison}
+
+
+% Grammar guided
+\outlines{}~\cite{willard2023efficient} is a library originally focused on regular expression-guided generation and recently extended to support grammar-guided generation. 
+During LLM generation, \outlines{} employs an incremental Lark-based LALR parser to determine the next acceptable terminals based on the grammar. 
+It constructs a larger regular expression by computing the union of regular expressions from all terminals, which is then converted into a DFA during inference. 
+It then iterates over all LLM tokens and collects the set of tokens that lead to a valid path through this combined DFA. 
+As shown in our evaluation, \Tool{} performs better than \outlines{} on generating with JSON grammar and it currently lacks support for large GPL grammars.
+% The approach needs iterating over the vocabulary during inference and performing DFA-based matches across the entire vocabulary. 
+% Despite optimizations such as DFA caching and a recent introduction of tensor-based caching, \outlines{} is slower than \Tool{}. 
+
+\llamacpp{}~\cite{llamacpp}, has also recently introduced support for grammar-guided generation. 
+This approach models a nondeterministic pushdown automaton with $N$ stacks to maintain possible parse states. 
+\llamacpp{} defines a new grammar syntax and implements a simplified basic parser in C++. 
+While this implementation in C++ reduces some parsing overhead compared to heavier LR(1) parsers implemented in Python on top of Lark for \Tool{}, it is algorithmically inefficient. 
+This inefficiency again is due to the requirement to iterate over the entire vocabulary and update stack states during inference. 
+Moreover, the non-standard grammar syntax and limited support for general grammar features restrict its evaluation to simpler grammars such as JSON. 
+We anticipate that \llamacpp{} and \outlines{} would perform even slower on grammars with more rules, terminals, and complex regular expressions, such as those found in Python and Go.
+As shown in our evaluation, \Tool{} is more efficient and results in fewer syntax errors.
+
+\synchromesh{}~\cite{poesia2022synchromesh} is a proprietary
+% ~\footnote{While there exists a publicly available unofficial reimplementation of Synchromesh~\cite{synchromesh_github} that operates on a non-incremental Lark parser, it has bugs and did not work with our grammar despite reasonable efforts to fix the issues.} 
+a tool from Microsoft that supports CFG-guided syntactic decoding of LLMs.
+Similar to \outlines{}, it creates a union of regular expressions of terminals during LLM generation.
+Further, Synchromesh uses a non-incremental parser for parsing.
+Both of which lead to lower time complexity.
+Synchromesh uses techniques like Target Similarity Tuning for semantic example selection and Constrained Semantic Decoding to enforce user-defined semantic constraints and works on DSLs.
+In contrast, our work, \Tool{} focuses exclusively on syntactic generation.
+
+\picard{}~\cite{scholak-etal-2021-picard} uses a specific decoding strategy that maintains a beam of multiple candidate outputs and promptly rejects the candidates that violate the syntax.
+It utilizes an incremental monadic parser and was developed specifically to support SQL generation. 
+Introducing a new grammar into \picard{} necessitates considerable effort, as it lacks support for a grammar-defining language to provide grammar rules.
+
+
+% Domino
+Recent work Domino~\cite{beurerkellner2024guiding} does CFG-guided LLM generation.
+It avoids traversing the whole vocabulary during inference by precomputing a prefix tree corresponding to each NFA state of the terminals of the grammar.
+The purpose of creating this structure is similar to \Tool{}'s DFA mask store. 
+We believe that \Tool{}'s mask store is more efficient than Domino's prefix tree since on modern machines (especially with GPUs) the union of the boolean masks from mask store can be performed quite efficiently in practice~\cite{paszke2019pytorch}.
+Domino defines the \emph{minimally invasive} property which is equivalent to \Tool{}'s soundness property.
+One key difference between \Tool{} and Domino is that Domino applies under-approximation, permitting only tokens that align with the lookahead of the parser, while \Tool{} adopts a conservative over-approximation approach, allowing tokens as long as their prefixes match the parser lookahead.
+Due to the under-approximation, they claim that it requires $\infty$ parser lookahead to get this soundness, whereas \Tool{} ensures soundness for any lookahead.
+% Further, the largest grammar that Domino can support currently is the While Programming Language grammar in C with 70 rules with roughly 25\% overhead. 
+Further, the largest grammar that Domino can support currently is highly simplified C grammar with 70 rules with roughly 25\% overhead. 
+Domino's code is not available yet to experimentally compare it with \Tool{}. 
+
+% \Comment{ 
+% Very recently, a concurrent work Domino~\cite{beurerkellner2024guiding} was released that does grammar-guided LLM generation. 
+% One key difference between \Tool{} and Domino is that Domino performs under-approximation for selecting acceptable tokens compared to \Tool{}'s over-approximation.
+% Domino defines the "minimally invasive" property which is equivalent to \Tool{}'s soundness property.
+% Due to the under-approximation, they claim that it requires $\infty$ parser lookahead to get this soundness, whereas \Tool{} ensures soundness for any lookahead.   
+% To avoid traversing the whole vocabulary during inference by precomputing a prefix tree corresponding to each NFA state. 
+% This is similar to \Tool{}'s DFA mask store. 
+% However, in the worst case assembling all acceptable tokens for Domino may require traversing the whole prefix terminal tree which can take $O(|\vocab|)$ time.
+% \Tool{}'s mask store is more efficient than Domino's prefix tree since on modern machines with GPU the union of these boolean masks can be performed in constant time. 
+% Further, the largest grammar that Domino can support currently is highly simplified C grammar with only 70 rules which leads to 25\% to 50\% overhead. 
+% Domino was released quite recently and the code for the tool is not available yet for comparison. 
+% }
+
+
+\noindent{\bf Fixed Schema Generation.}
+Many recent works perform constrained LLM decoding to ensure that the generated output follows a fixed schema of JSON or XML~\cite{sglang, beurerkellner2024guiding, willard2023efficient, jsonformer}.
+When employing a fixed schema, many intermediate points in the generation process offer either a single syntactical choice (e.g., key in the JSON schema) or present only a handful of distinct options. 
+In cases where only one choice exists, the generation of the next token through the LLM can be entirely skipped.
+ Alternatively, when there are multiple but limited choices, techniques like speculative decoding can be used to expedite the generation process~\cite{ChenBILSJ23, leviathan2023fastinferencetransformersspeculative}.
+\Tool{} does not focus on generation problems with fixed schema, it solely focuses on CFG-guided generation.
+We made the same observation as in~\cite{beurerkellner2024guiding}, techniques such as speculation are not useful for CFGs where the schema is not fixed. 
+
+% \noindent{\bf Constrained Code Generation.} 
+
+
+% \noindent{\bf LLM for Code Generation.} 
+% Recent research has advanced the development of LLMs for code generation~\cite{chen2021evaluating,nijkamp2023codegen,chowdhery2022palm,fried2023incoder,touvron2023llama,luo2023wizardcoder}. These models, including Codex~\cite{chen2021evaluating}, CodeGen~\cite{nijkamp2023codegen}, PaLM-Coder~\cite{chowdhery2022palm}, InCoder~\cite{fried2023incoder}, LLaMA~\cite{touvron2023llama}, WizardCoder~\cite{luo2023wizardcoder}, and others, have shown remarkable capabilities in understanding and generating code.
+% Many of these models utilize fine-tuning, a process where these pre-trained models are further trained on specific code datasets to enhance their task-specific performance.
+% Additionally, these models leverage in-context learning~\cite{olsson2022incontext} such as few-shot learning~\cite{brown2020language} techniques, allowing them to adapt and respond accurately with few examples in the prompt.

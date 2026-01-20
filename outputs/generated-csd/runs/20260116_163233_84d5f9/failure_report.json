@@ -1,0 +1,152 @@
+{
+  "task_description": "Generate valid JSON data structures",
+  "total_attempts": 5,
+  "timestamp": "2026-01-16T16:33:28.529004",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// I chose TryUnconstrainedThenConstrained to allow a short burst of free drafting, then guarantee validity.\n// N=5 is small to reduce waste if the parser is strict. I guard with maxSteps check to satisfy N<=maxSteps.\n// CSD_RATIONALE_END\nif maxSteps < 5 {\n  generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);\n} else {\n  generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);\n}",
+      "strategy_analysis": {
+        "strategy_name": "PureConstrainedGeneration",
+        "parameters": {},
+        "category": "fully_constrained",
+        "comparable_to": "SynCode",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// I chose TryUnconstrainedThenConstrained to allow a short burst of free drafting, then guarantee validity.\n// N=5 is small to reduce waste if the parser is strict. I guard with maxSteps check to satisfy N<=maxSteps.\n// CSD_RATIONALE_END\nif maxSteps < 5 {\n  generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);\n} else {\n  generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);\n}"
+      },
+      "timestamp": "2026-01-16T16:32:47.824061",
+      "succeeded": false,
+      "failed_at": "runtime",
+      "error_summary": "Runtime error: ValueError: could not convert string to float: '-2001505128244779/1125899906842624'\n\nTraceback:\nTraceback (most recent call last):\n  File \"/home/aadivyar/csd-generation/synthesis/runner.py\", line 416, in run\n    output = csd_strategy_method(lm, parser, test_prompt, max_steps)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd/GeneratedCSD.py\", line 26, in MyCSDStrategy\n    out1_ = VerifiedDecoderAgent.CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd/VerifiedDecoderAgent.py\", line 239, in TryUnconstrainedThenConstrained\n    out0_ = CSDHelpers.UnconstrainedGeneration(lm, prompt, unconstrainedSteps)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd/VerifiedDecoderAgent.py\", line 205, in UnconstrainedGeneration\n    out0_ = CSDHelpers.UnconstrainedStep(lm, prompt, generated)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd/VerifiedDecoderAgent.py\", line 180, in UnconstrainedStep\n    (lm).GenerateLogits((prompt) + (generated))\n  File \"/home/aadivyar/csd-generation/synthesis/runner.py\", line 246, in GenerateLogits\n    current = float(str(self.Logits[i]))\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: could not convert string to float: '-2001505128244779/1125899906842624'\n",
+      "verification": {
+        "success": true,
+        "error_count": 0
+      },
+      "compilation": {
+        "success": true,
+        "output_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd"
+      },
+      "runtime": {
+        "success": false,
+        "output_length": 0,
+        "execution_time_ms": 14.564037322998047
+      }
+    },
+    {
+      "attempt_number": 2,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The previous approach with TryUnconstrainedThenConstrained caused runtime issues due to invalid logits being generated.\n// To mitigate this, I've switched to HybridGeneration, which allows for some unconstrained steps but also guarantees validity.\n// The interval N=2 is chosen to balance between exploration and robustness, ensuring we don't spend too many steps unconstrained.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 2);",
+      "strategy_analysis": {
+        "strategy_name": "HybridGeneration",
+        "parameters": {
+          "interval": 2
+        },
+        "category": "interleaved",
+        "comparable_to": "Novel",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The previous approach with TryUnconstrainedThenConstrained caused runtime issues due to invalid logits being generated.\n// To mitigate this, I've switched to HybridGeneration, which allows for some unconstrained steps but also guarantees validity.\n// The interval N=2 is chosen to balance between exploration and robustness, ensuring we don't spend too many steps unconstrained.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 2);"
+      },
+      "timestamp": "2026-01-16T16:32:55.533589",
+      "succeeded": false,
+      "failed_at": "runtime",
+      "error_summary": "Runtime error: ValueError: could not convert string to float: '-5034109496752205/36028797018963968'\n\nTraceback:\nTraceback (most recent call last):\n  File \"/home/aadivyar/csd-generation/synthesis/runner.py\", line 416, in run\n    output = csd_strategy_method(lm, parser, test_prompt, max_steps)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd_20260116_163259_fc51e1/GeneratedCSD.py\", line 21, in MyCSDStrategy\n    out0_ = VerifiedDecoderAgent.CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 2)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd/VerifiedDecoderAgent.py\", line 328, in HybridGeneration\n    out2_ = CSDHelpers.ConstrainedStep(lm, parser, prompt, generated)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd/VerifiedDecoderAgent.py\", line 189, in ConstrainedStep\n    (lm).GenerateLogits((prompt) + (generated))\n  File \"/home/aadivyar/csd-generation/synthesis/runner.py\", line 246, in GenerateLogits\n    current = float(str(self.Logits[i]))\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: could not convert string to float: '-5034109496752205/36028797018963968'\n",
+      "verification": {
+        "success": true,
+        "error_count": 0
+      },
+      "compilation": {
+        "success": true,
+        "output_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd_20260116_163259_fc51e1"
+      },
+      "runtime": {
+        "success": false,
+        "output_length": 0,
+        "execution_time_ms": 9.116411209106445
+      }
+    },
+    {
+      "attempt_number": 3,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The previous approach with HybridGeneration encountered runtime issues due to invalid logits being generated.\n// To address this, I've moved to TryUnconstrainedThenConstrained with a smaller interval N=3. This strategy allows for\n// some unconstrained steps while still providing a safety net through constrained steps. The small N ensures we don't\n// spend too many steps unconstrained, mitigating the risk of invalid logits.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 3);",
+      "strategy_analysis": {
+        "strategy_name": "TryUnconstrainedThenConstrained",
+        "parameters": {
+          "unconstrained_steps": 3
+        },
+        "category": "optimistic_with_fallback",
+        "comparable_to": "IterGen-like",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The previous approach with HybridGeneration encountered runtime issues due to invalid logits being generated.\n// To address this, I've moved to TryUnconstrainedThenConstrained with a smaller interval N=3. This strategy allows for\n// some unconstrained steps while still providing a safety net through constrained steps. The small N ensures we don't\n// spend too many steps unconstrained, mitigating the risk of invalid logits.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 3);"
+      },
+      "timestamp": "2026-01-16T16:33:03.543268",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Verification failed with 1 error(s):\n  - Line 90: a precondition for this call could not be proved",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null
+    },
+    {
+      "attempt_number": 4,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The previous approach with HybridGeneration encountered runtime issues due to invalid logits being generated.\n// To address this, I've moved to TryUnconstrainedThenConstrained with a smaller interval N=3. This strategy allows for\n// some unconstrained steps while still providing a safety net through constrained steps. The small N ensures we don't\n// spend too many steps unconstrained, mitigating the risk of invalid logits. Additionally, I've added a check to ensure\n// that the maximum number of steps is not less than N before calling TryUnconstrainedThenConstrained.\n// CSD_RATIONALE_END\nif maxSteps >= 3 {\n  generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 3);\n} else {\n  generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);\n}",
+      "strategy_analysis": {
+        "strategy_name": "PureConstrainedGeneration",
+        "parameters": {},
+        "category": "fully_constrained",
+        "comparable_to": "SynCode",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The previous approach with HybridGeneration encountered runtime issues due to invalid logits being generated.\n// To address this, I've moved to TryUnconstrainedThenConstrained with a smaller interval N=3. This strategy allows for\n// some unconstrained steps while still providing a safety net through constrained steps. The small N ensures we don't\n// spend too many steps unconstrained, mitigating the risk of invalid logits. Additionally, I've added a check to ensure\n// that the maximum number of steps is not less than N before calling TryUnconstrainedThenConstrained.\n// CSD_RATIONALE_END\nif maxSteps >= 3 {\n  generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 3);\n} else {\n  generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);\n}"
+      },
+      "timestamp": "2026-01-16T16:33:11.078427",
+      "succeeded": false,
+      "failed_at": "runtime",
+      "error_summary": "Runtime error: ValueError: could not convert string to float: '-6409572631302397/144115188075855872'\n\nTraceback:\nTraceback (most recent call last):\n  File \"/home/aadivyar/csd-generation/synthesis/runner.py\", line 416, in run\n    output = csd_strategy_method(lm, parser, test_prompt, max_steps)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd_20260116_163315_ec43dd/GeneratedCSD.py\", line 22, in MyCSDStrategy\n    out0_ = VerifiedDecoderAgent.CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 3)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd/VerifiedDecoderAgent.py\", line 239, in TryUnconstrainedThenConstrained\n    out0_ = CSDHelpers.UnconstrainedGeneration(lm, prompt, unconstrainedSteps)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd/VerifiedDecoderAgent.py\", line 205, in UnconstrainedGeneration\n    out0_ = CSDHelpers.UnconstrainedStep(lm, prompt, generated)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd/VerifiedDecoderAgent.py\", line 180, in UnconstrainedStep\n    (lm).GenerateLogits((prompt) + (generated))\n  File \"/home/aadivyar/csd-generation/synthesis/runner.py\", line 246, in GenerateLogits\n    current = float(str(self.Logits[i]))\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: could not convert string to float: '-6409572631302397/144115188075855872'\n",
+      "verification": {
+        "success": true,
+        "error_count": 0
+      },
+      "compilation": {
+        "success": true,
+        "output_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd_20260116_163315_ec43dd"
+      },
+      "runtime": {
+        "success": false,
+        "output_length": 0,
+        "execution_time_ms": 7.463693618774414
+      }
+    },
+    {
+      "attempt_number": 5,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The previous approach with TryUnconstrainedThenConstrained failed due to invalid logits generated during unconstrained steps. \n// To mitigate this, I've switched to HybridGeneration with an interval N=5. This strategy allows for a balance between \n// exploration and exploitation, ensuring that some steps remain constrained while others can be unconstrained. The larger N \n// provides enough flexibility to explore without overwhelming the model with too many unconstrained attempts. This should help \n// avoid the issue of invalid logits and improve the robustness of the strategy.\n// CSD_RATIONALE_END\n\ngenerated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 5);",
+      "strategy_analysis": {
+        "strategy_name": "HybridGeneration",
+        "parameters": {
+          "interval": 5
+        },
+        "category": "interleaved",
+        "comparable_to": "Novel",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The previous approach with TryUnconstrainedThenConstrained failed due to invalid logits generated during unconstrained steps. \n// To mitigate this, I've switched to HybridGeneration with an interval N=5. This strategy allows for a balance between \n// exploration and exploitation, ensuring that some steps remain constrained while others can be unconstrained. The larger N \n// provides enough flexibility to explore without overwhelming the model with too many unconstrained attempts. This should help \n// avoid the issue of invalid logits and improve the robustness of the strategy.\n// CSD_RATIONALE_END\n\ngenerated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 5);"
+      },
+      "timestamp": "2026-01-16T16:33:19.617886",
+      "succeeded": false,
+      "failed_at": "runtime",
+      "error_summary": "Runtime error: ValueError: could not convert string to float: '-4607275858446121/4503599627370496'\n\nTraceback:\nTraceback (most recent call last):\n  File \"/home/aadivyar/csd-generation/synthesis/runner.py\", line 416, in run\n    output = csd_strategy_method(lm, parser, test_prompt, max_steps)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd_20260116_163323_2cfc82/GeneratedCSD.py\", line 21, in MyCSDStrategy\n    out0_ = VerifiedDecoderAgent.CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 5)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd/VerifiedDecoderAgent.py\", line 328, in HybridGeneration\n    out2_ = CSDHelpers.ConstrainedStep(lm, parser, prompt, generated)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd/VerifiedDecoderAgent.py\", line 189, in ConstrainedStep\n    (lm).GenerateLogits((prompt) + (generated))\n  File \"/home/aadivyar/csd-generation/synthesis/runner.py\", line 246, in GenerateLogits\n    current = float(str(self.Logits[i]))\n              ^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: could not convert string to float: '-4607275858446121/4503599627370496'\n",
+      "verification": {
+        "success": true,
+        "error_count": 0
+      },
+      "compilation": {
+        "success": true,
+        "output_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163233_84d5f9/generated_csd_20260116_163323_2cfc82"
+      },
+      "runtime": {
+        "success": false,
+        "output_length": 0,
+        "execution_time_ms": 7.446527481079102
+      }
+    }
+  ],
+  "failure_patterns": {
+    "verification_failures": 1,
+    "compilation_failures": 0,
+    "runtime_failures": 4,
+    "common_errors": []
+  }
+}

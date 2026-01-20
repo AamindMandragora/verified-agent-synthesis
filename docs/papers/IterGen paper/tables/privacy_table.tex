@@ -1,0 +1,51 @@
+% \begin{table}[htbp]
+%     \small
+%     \centering
+%         \caption{Comparison of models on DecodingTrust based on leakage, number of tokens, and average time.}
+%     \label{tab:model_comparison_1}
+
+%     \begin{tabular}{lcccccc}
+%         \toprule
+%         \multirow{2}{*}{\textbf{Model}} & \multicolumn{2}{c}{\textbf{Leak Rate}} & \multirow{2}{*}{\textbf{Avg. $\Delta$ Tokens}} & \multicolumn{2}{c}{\textbf{Time (s)}} \\
+%         \cmidrule(lr){2-3} \cmidrule(lr){5-6}
+%         & \textbf{\standard{}} & \textbf{\Tool{}} & & &  \textbf{\standard{}} & \textbf{\Tool{}} \\
+%         \midrule
+%         Qwen2.5-0.5B-Instruct & 46.0 & 0.0 &  21.7 & 33.69 & 43.4 \\
+%         Qwen2.5-1.5B-Instruct & 57.0 & 1.0 &   22.5 & 39.38 & 52.5 \\
+%         Phi-3-mini-128k-instruct & 57.0 & 1.0 &  23.11 & 52.9 & 86.75 \\
+%         Meta-Llama-3-8B-Instruct & 61.0 & 1.0 &  22.75 & 56.71 & 72.78 \\
+%         Llama-2-7b-chat-hf & 59.0 & 0.0 &  24.15 & 52.9 & 65.91 \\
+%         Qwen/Qwen2.5-0.5B & 45.0 & 0.0 &  21.14 & 33.98 & 38.19 \\
+%         Qwen/Qwen2.5-1.5B & 59.0 & 0.0 &  22.66 & 39.49 & 47.79 \\
+%         Meta-Llama-3-8B & 67.0 & 0.0 &   22.93 & 56.19 & 67.15 \\
+%         Llama-2-7b-hf & 59.0 & 0.0 & 23.96 & 52.92 & 65.43 \\
+%         \bottomrule
+%     \end{tabular}
+% \end{table}
+
+\begin{table}[htbp]
+    \scriptsize
+    \centering
+        \caption{Comparison of models on DecodingTrust based on leakage, tokens, perplexity, and run time.}
+    \label{tab:model_comparison_1}
+
+    \begin{tabular}{lcccccccr}
+        \toprule
+        \multirow{2}{*}{\textbf{Model}} & \multicolumn{2}{c}{\textbf{Leaks}} & \multicolumn{2}{c}{\textbf{Average Time (s)}} &  \multicolumn{2}{c}{\textbf{Perplexity}} & \multirow{2}{*}{\textbf{Avg.}} \\
+        \cmidrule(lr){2-3} \cmidrule(lr){4-5}  \cmidrule(lr){6-7}
+        & \textbf{STD} & \textbf{\Tool{}} & \textbf{STD} & \textbf{\Tool{}} & \textbf{STD} & \textbf{\Tool{}} & \textbf{$\Delta$ Tokens} \\
+        \midrule
+        Qwen2.5-0.5B & 45 & 0 & 0.34 & 0.46 & 6.22 & 6.31 & 4.14 \\
+
+        Qwen2.5-0.5B-Instruct & 46 & 0 & 0.34 & 0.47 & 6.87 & 7.0 & 4.79 \\
+        Qwen2.5-1.5B & 59 & 0 & 0.39 & 0.56 & 5.93 & 6.02 & 5.72 \\
+
+        Qwen2.5-1.5B-Instruct & 57 & 0 & 0.39 & 0.58 & 6.17 & 6.28 & 5.95 \\
+        Llama-3.2-1B & 62 & 0 & 0.24 & 0.38 & 6.14 & 6.25 & 6.87\\
+        Llama-3.2-3B & 61 & 0 & 0.40 & 0.55 & 5.91 & 6.0 & 5.59 \\
+        Llama-2-7b-chat-hf & 59 & 0 & 0.53 & 0.66 & 5.97 & 6.07 & 4.15 \\
+        Llama-3-8B & 67 & 0 & 0.56 & 0.76 & 5.66 & 5.76 & 7.15 \\
+        Llama-3-8B-Instruct & 61 & 0 & 0.57 & 0.78 & 6.18 & 6.30 & 6.02 \\
+        \bottomrule
+    \end{tabular}
+\end{table}

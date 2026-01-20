@@ -1,0 +1,196 @@
+
+\appendix
+\section{Appendix}
+
+\subsection{List of Symbols}
+\label{sec:symbols}
+\input{symbols}
+
+\newpage
+\subsection{Proofs for Theorems}
+\label{sec:proofs}
+
+\eq* 
+\input{Theorems/lemma2b.tex}
+
+\dm*
+\input{Theorems/lemma3b.tex}
+
+\Sound*
+\input{Theorems/theorem1b.tex}
+
+\Porder*
+\input{Theorems/lemma4b}
+
+\Complete*
+\input{Theorems/theorem2b.tex}
+
+\newpage
+\subsection{Incremental Parsing Algorithm}
+\label{sec:incparse}
+\input{algorithms/incremental_parsing}
+Our parsing algorithm achieves incrementality in LLM generation by utilizing a map $\psmap$ to store the parser state. 
+This map associates a list of lexical tokens with the corresponding parser state after parsing those tokens. 
+Frequently, in subsequent LLM generation iterations, the count of lexical tokens remains the same—either the next vocabulary token is appended to the final lexical token, or it increases. 
+Although uncommon, there are cases where the number of parsed lexical tokens may decrease during iterations.
+For example, in Python, an empty pair of double quotes, "", is recognized as a complete lexical token representing an empty string. 
+On the other hand, """ serves as a prefix to a docstring, constituting an incomplete parser token. 
+Consequently, the addition of a single double quote " reduces the overall count of lexical tokens in these iterations.
+We observe that while the total count of lexer tokens at the end may undergo slight changes during these iterations, the majority of prefixes of the parsed lexical tokens remain consistent. 
+Hence, we establish a mapping between lists of prefixes of lexical tokens and the corresponding parser state after parsing those tokens. 
+Subsequently, when parsing a new list of lexer tokens, we efficiently determine the maximum length prefix of the lexer token list that is already present in $\psmap$. 
+This incremental approach significantly reduces the complexity of our parsing algorithm. 
+% The pseudocode for our parsing algorithm is presented in Appendix~\ref{sec:incparsealgo}.
+
+% Lexing not incremental
+While it could be feasible to introduce incrementality in the lexing operation, our experiments revealed that lexing consumes insignificant time in comparison to parsing. 
+As a result, we opted to focus only on performing parsing incrementally.
+
+% base parser
+Our incremental parsing algorithm uses a standard non-incremental base parser $\parser$ that maintains a parser state and supports two functions \next and \follow. 
+The \next function accepts the next lexer token and then updates the parser state. 
+The \follow function returns a list of acceptable terminals at the current parser state. 
+These functions are present in common parser generator tools \cite{lark,antlr}.
+
+% Algorithm description
+The Algorithm~\ref{alg:parse} presents our incremental parsing algorithm. 
+The algorithm utilizes a lexer to tokenize the partial output.
+The function RestoreState is used to restore the state of the parser to the maximal matching prefix of lexical tokens that exist in $\psmap$.
+The main loop iterates through the tokens and maintains a parser state map. 
+For each token, it updates the parser state, stores the mapping in $\psmap$, and retrieves the next set of acceptable terminals. 
+The process continues until the end of the partial output. 
+The algorithm returns accept sequences $\accepts$ and remainder $r$.
+
+% \subsection{Handling Indentation in Python}
+% \add{
+% While the \Tool{} framework effectively decodes most of Python's syntax without additional handling, the language's indentation poses a challenge, as it cannot be expressed by CFGs. 
+% In \Tool{}, we offer users a seamless interface to extend the existing framework with additional syntactic rules. 
+% For Python, we guarantee the syntactic validity of the LLM-generated code by calculating valid indentation levels for the next token and generating a token mask based on indentation constraints.
+% }
+
+
+
+% \subsection{Evaluation Models}
+% \label{sec:models}
+% % \begin{itemize}
+% % \itemsep0em 
+% \noindent \textbf{CodeGen-350M-multi} ~\cite{nijkamp2023codegen}. It is a member of the CodeGen series.
+% With its 28-layer architecture, it has 350M parameters, a hidden state size of 4096, 16 attention heads, and a diverse vocabulary of 50400 tokens. 
+% It is pre-trained on the BigQuery dataset~\cite{nijkamp2023codegen}, which encompasses open-source code from six programming languages, including C, C++, Java, JavaScript, Go, and Python.
+
+% \noindent \textbf{WizardCoder-1B}~\cite{luo2023wizardcoder}. It is fine-tuned from StarCoder\cite{li2023starcoder}. 
+% It employs the Evol-Instruct~\cite{xu2023wizardlm} methodology for refining the training dataset, ensuring simpler and more consistent prompts. 
+% The model features 24 transformer layers, 2048-dimensional hidden states, 16 attention heads, over 1B parameters, and a vocabulary count of 49153.
+
+% \noindent \textbf{\llama{}}~\cite{touvron2023llama}. It is from the Llama model family and engineered for advanced natural language processing tasks, including code synthesis. The model is structured with 32 transformer layers, 4096-dimensional hidden states, 32 attention heads, 7 billion parameters, and a diverse vocabulary of 32000 tokens. Its pre-training regime encompasses a diverse set of data sources such as CommonCrawl, C4, Github, Wikipedia, Books, ArXiv, and StackExchange.
+% % \end{itemize}
+
+
+
+
+\subsection{Ablation Studies}
+In this section, we perform an ablation study for incremental parsing and max new tokens. 
+% In Appendix~\ref{sec:lalr_ablation} we perform ablations comparing LALR and LR parsers as a base parser.
+
+\label{sec:ablation}
+\noindent{\bf Incremental Parsing.}
+We compare the runtime efficiency of utilizing incremental parsing over re-running parsing from scratch in \Tool{}. 
+We run inference on \codegen{} with \Tool{} using incremental parsing and parsing from scratch on Python prompts from the HumanEval dataset. 
+We generate $n = 1$ samples and control the max new tokens in the code completion. 
+Our results are presented in Figure~\ref{fig:inc_parser}, where the x-axis represents the max new tokens and the y-axis represents the average generation time, in seconds, with and without incremental parsing. 
+As shown in the figure, the average generation time when re-parsing from scratch increases significantly as the maximum length of code that the LLM can generate increases. 
+On the other hand, the average generation time increases slowly with incremental parsing. 
+For max new tokens = 300, \Tool{} with incremental parsing achieves 9x speedup over running parsing from scratch. 
+Our results collectively demonstrate that augmenting \Tool{} with incremental parsing dramatically improves generation time, especially when generating longer completions.
+% \TBD{Increase the font of the labels in Fig 10! }
+%---------------------------------------------------------------%
+\begin{figure}[!htbp]
+\centering
+\vspace{-.1in}
+\begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=1.10\textwidth]{images/SynCode_vs_Standard.png}
+    \caption{Average generation time for different max new tokens}
+    \label{fig:SynCode_vs_Standard}
+\end{subfigure}
+\hspace{3mm}
+\begin{subfigure}[b]{0.48\textwidth}
+    \includegraphics[width=1.10\textwidth]{images/inc_speed_up.png}
+    \caption{Average generation time with and without incremental parser}
+    \label{fig:inc_parser}
+\end{subfigure}
+ \vspace{-.1in}
+\hfill
+\caption{Ablation studies on \codegen{} model.}
+\vspace{-0.05in}
+\end{figure} 
+
+%---------------------------------------------------------------%
+\noindent{\bf Max New Tokens.} 
+%
+We conduct an ablation study into the relationship between the maximum length of code that the LLMs can generate and generation times. 
+We used Python prompts from the HumanEval dataset and leveraged \codegen{} to generate the code completions, both with and without the augmentation of the \Tool{}.
+%We compute the average generation time, which is measured by dividing the total generation time for the dataset by the total number of problems. 
+As shown in Figure~\ref{fig:SynCode_vs_Standard}, as we increase the max new tokens, we observe a corresponding increase in generation time. 
+
+% \input{tables/parsers_runtime}
+% \noindent{\bf LR(1) and LALR(1).} 
+% % \subsection{LR(1) and LALR(1)}
+% \label{sec:lalr_ablation}
+% We compare the runtime efficiency of utilizing LR(1) and LALR(1) parsing in \Tool{}.
+% We run inference on \codegen{}, \wizard{}, and \llama{} with \Tool{} with LALR(1) parser and with LR(1) parser for Python and Go on the HumanEval dataset. 
+% We generate a single sample $(n = 1)$ per prompt with the max new tokens parameter set to 200. 
+% Table~\ref{table:parsers_runtime} reports the average time taken to generate each prompt from the datasets. 
+% As shown in Table~\ref{table:parsers_runtime}, we observe that \Tool{} with LR(1) parser outperforms the LALR(1) parser with respective overheads of 1.22x on average and 1.76x on average compared to the \baseline{} generation result from~\ref{table:runtime}.
+
+\subsection{Few-Shot Prompting}
+\label{sec:few_shot}
+\input{tables/few_shot}
+Few-shot prompting \cite{ren2018metalearning} refers to the idea that language models do not need to be specifically
+trained for a downstream task such as classification or question answering. Rather, it is sufficient to train them on broad text-sequence prediction datasets and to provide context in the form of examples when invoking them. We study the performance of utilizing \Tool{} on few-shot prompting code generation tasks. We selected Python few-shot examples from the MBXP dataset and generated code completions with \codegen{}, \llama{}, and \wizard{} with \Tool{} and the \baseline{} no-masking generation. We present our results in Table \ref{tab:few_shot}. The columns standard and SynCode represent the total number of errors of a particular Error Type of LLM-generated code completions to problems in a particular dataset when utilizing that respective generation approach. The column ↓ represents the percentage reduction from the standard column to the SynCode column. As shown in the table, \Tool{} exhibits effectiveness not only in zero-shot but also in the context of few-shot prompting tasks. This signifies the versatility of \Tool{} in enhancing code generation across different prompt engineering techniques.
+
+\subsection{\Tool{} Syntax Errors}
+\label{sec:syncode_error}
+\begin{figure}[tbh]
+    \centering
+    \includegraphics[width=\textwidth]{images/syncode_fail.png}
+    \caption{Syntactically Incorrect \Tool{} Program}
+    \label{fig:syncode_error}
+\end{figure}
+
+Figure \ref{fig:syncode_error} presents an example of when the \Tool{} augmented LLM fails to generate a complete program within the maximum token limit for a problem from the HumanEval dataset. 
+While the code is a syntactically correct partial program, it is not a syntactically correct complete program.  
+Recall, that \Tool{} guarantees completeness for syntactically correct partial programs but does not guarantee termination with a syntactically correct complete program.
+
+\newpage
+\subsection{Prompts Used in the Evaluation}
+\label{sec:prompts}
+\input{prompts/json_prompts_original.tex}
+\input{prompts/json_prompts_explicit.tex}
+\input{prompts/sql_prompt}
+\input{prompts/python_prompts.tex}
+\input{prompts/go_prompts.tex}
+
+
+\subsection{Grammars Used in the Evaluation}
+\label{sec:grammar}
+
+\subsubsection{JSON Grammar}
+\  
+
+\input{grammars/json_grammar.tex}
+
+\subsubsection{SQL Grammar}
+\  
+
+\input{grammars/sql_grammar}
+
+\subsubsection{Python Grammar}
+\  
+
+\input{grammars/python_grammar.tex}
+
+\newpage
+\subsubsection{Go Grammar}
+\  
+
+\input{grammars/go_grammar.tex}

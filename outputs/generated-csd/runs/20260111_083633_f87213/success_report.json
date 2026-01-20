@@ -1,0 +1,8 @@
+{
+  "strategy_code": "// CSD_RATIONALE_BEGIN\n// I chose PureConstrainedGeneration because the SQL grammar is very strict and every prefix must remain valid.\n// The typical query length of 30-100 tokens requires full constraint adherence to avoid rejection waste.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);",
+  "tool_choice_rationale": "I chose PureConstrainedGeneration because the SQL grammar is very strict and every prefix must remain valid.\nThe typical query length of 30-100 tokens requires full constraint adherence to avoid rejection waste.",
+  "dafny_file": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260111_083633_f87213/sql_csd.dfy",
+  "compiled_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260111_083633_f87213/sql_csd",
+  "total_attempts": 1,
+  "timestamp": "2026-01-11T08:39:04.673110"
+}

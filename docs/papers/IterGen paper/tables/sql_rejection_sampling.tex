@@ -1,0 +1,19 @@
+\begin{table}[h]
+    \centering
+    \scriptsize
+    \caption{Rejection Sampling Results for the SQL Case Study using Qwen2.5-0.5B. Values are \texttt{pass@1/2/3/5}.}
+    \begin{tabular}{lc}
+        \toprule
+        \textbf{Method} & \textbf{pass@1/2/3/5} \\
+        \midrule 
+        \standard{} (Greedy) & 27.5 \\
+        \syncode{} (Greedy) & 28.1 \\
+        \Tool{} (Greedy) & 34.5 \\
+        \standard{} ($t=0.1$) & 25.63 / 29.34 / 31.37 / 33.77 \\
+        \syncode{} ($t=0.1$) & 26.58 / 30.63 / 32.74 / 35.25 \\
+        \standard{} ($t=0.2$) & 21.70 / 27.78 / 31.32 / 35.73 \\
+        \syncode{} ($t=0.2$) & 24.25 / 30.52 / 34.38 / 38.97 \\
+        \bottomrule
+    \end{tabular}
+    \label{tab:sql_case_study_rej}
+\end{table}

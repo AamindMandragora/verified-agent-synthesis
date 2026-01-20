@@ -1,0 +1,32 @@
+// Math Expression Grammar for Constrained Decoding
+// Supports basic arithmetic with proper precedence
+
+start: expr
+
+?expr: term
+     | expr "+" term   -> add
+     | expr "-" term   -> subtract
+
+?term: factor
+     | term "*" factor -> multiply
+     | term "/" factor -> divide
+
+?factor: power
+
+?power: atom
+      | atom "^" factor -> power
+
+?atom: NUMBER          -> number
+     | NAME            -> variable
+     | "(" expr ")"    -> group
+     | "-" atom        -> negate
+     | function_call
+
+function_call: NAME "(" [args] ")"
+args: expr ("," expr)*
+
+%import common.NUMBER
+%import common.CNAME -> NAME
+%import common.WS
+%ignore WS
+

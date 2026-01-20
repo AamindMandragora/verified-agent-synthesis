@@ -1,0 +1,35 @@
+\lstdefinestyle{myGrammarStyle}{
+    basicstyle=\scriptsize\ttfamily, % Reduce font size
+    commentstyle=\color{green},
+    keywordstyle=\color{blue},
+    stringstyle=\color{orange},
+    numbers=left, % Line numbers on left
+    numberstyle=\tiny\color{gray}, % Line numbers styling
+    breaklines=true, % Wrap long lines
+    frame=single, % Frame around the code
+    framesep=3pt, % Adjust frame separation
+    xleftmargin=5pt, % Adjust left margin
+    xrightmargin=5pt, % Adjust right margin
+    backgroundcolor=\color{yellow!0}, % Background color
+    tabsize=2, % Tab size
+    captionpos=b, % Caption position bottom
+    aboveskip=5pt, % Reduce space above the listing
+    belowskip=5pt, % Reduce space below the listing
+    linewidth=0.9\linewidth, % Set custom line width to less than text width
+    escapeinside={(*@}{@*)}, % for escaping to LaTeX
+    % morekeywords={Output, JSON}, % Add specific words to be highlighted
+    % keywordstyle=\color{red}\bfseries, % Style for additional keywords
+}
+
+\begin{lstlisting}[style=myGrammarStyle, caption= Example Python prompt from the HumanEval dataset ~\cite{athiwaratkun2023multilingual}]
+def has_close_elements(numbers: List[float], threshold: float) -> bool:
+        """ Check if in given list of numbers, are any two numbers closer to each other than
+        given threshold.
+        >>> has_close_elements([1.0, 2.0, 3.0], 0.5)
+        False
+        >>> has_close_elements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)
+        True
+        """
+
+\end{lstlisting}
+\label{prompt:python_prompt}

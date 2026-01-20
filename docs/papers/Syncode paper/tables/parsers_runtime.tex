@@ -1,0 +1,54 @@
+\begin{table}[h]
+\centering
+\tablesize
+% \vspace{-0.32in}
+
+\caption{Avg. time taken for a single prompt generation with LR(1) and LALR(1)}
+\begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    Model & \multicolumn{2}{c}{Python(s)} & \multicolumn{2}{c}{Go(s)} \\
+    
+    & LALR(1) & LR(1) & LALR(1) & LR(1) \\
+    \midrule
+    CodeGen-350M & 6.06 & \textbf{4.88} & 6.79 & \textbf{5.12} \\
+    WizardCoder-1B & 3.00 & \textbf{1.74} & 3.69 & \textbf{1.99} \\
+    \llama{} & 7.26  & \textbf{6.07} & 7.97 & \textbf{6.67} \\
+    
+    \bottomrule
+\end{tabular}
+\vspace{-0.1in}
+
+\label{table:parsers_runtime}
+\end{table}
+
+    % CodeGen-350M & 6.06 & 6.79 & 4.88 & 5.12 \\
+    % WizardCoder-1B & 3.00 & 3.69 & 1.74 &  1.99 \\
+    % Llama-7B & 7.26  & 7.97  & 6.07 & 6.67 \\
+
+% \begin{table}
+% \centering
+% \tablesize
+% % \vspace{-0.32in}
+
+% \caption{Avg. time taken for a single prompt generation}
+% \begin{tabular}{lllll}
+%     \toprule
+%     Model & Language & \Baseline{}(s) & \multicolumn{2}{c}{\Tool{}(s)} \\
+    
+%     & & & LALR(1) & LR(1) \\
+%     \midrule
+%     CodeGen-350M & Python & 4.36  & 6.06 & 4.88\\
+%     & Go & 4.35  & 6.79 & 5.12\\
+%     \hline
+%     WizardCoder-1B & Python & 1.49  & 3.00 & 1.74\\
+%     & Go & 1.42  & 3.69 & 1.99\\
+%     \hline
+%     Llama-7B & Python & 4.88  & 7.26 & 6.07\\
+%     & Go & 5.35  & 7.97 & 6.67\\
+    
+%     \bottomrule
+% \end{tabular}
+% \vspace{-0.1in}
+
+% \label{table:runtime}
+% \end{table}

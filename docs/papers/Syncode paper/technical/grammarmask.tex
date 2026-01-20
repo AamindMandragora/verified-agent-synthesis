@@ -1,0 +1,143 @@
+\subsection{Grammar Mask}
+\label{sec:mask}
+This section outlines the utilization of the set of acceptable terminal sequences $\accepts$ and the remainder $r$ in the creation of a boolean mask using the DFA mask store which is subsequently used for constraining the LLM output. 
+The DFA mask store is constructed offline and makes \Tool{} efficient during the LLM generation. 
+%
+Given partial output $\partialcode$, our objective is to identify tokens $t \in \vocab$ such that appending them to $\partialcode$ leads to syntactical completion. 
+% We approach this problem by utilizing the remainder $r$ and sequences $\accepts$. 
+Given remainder $r$ and set of sequences $\accepts$, the goal is to determine whether $r.t$ partially matches the regular expression derived from any of the sequences in $\accepts$.
+To characterize the notion of strings partially matching a regular expression, we next introduce the function $\pmatch$.
+
+\begin{definition}[\pmatch]
+\label{def:pmatch}
+The function $\pmatch$ takes a word $w \in \alphabets^*$, a regular expression $\regex$ and returns a boolean. $\pmatch(w, \regex) = \true$ if either of the following conditions holds:
+\begin{enumerate}
+    \item $\exists w_1 \in \alphabets^*, w_2 \in \alphabets^+$ such that $w = w_1.w_2 $ and $w_1 \in \lang(\regex)$ or
+    \item $\exists w_1 \in \alphabets^*$ such that $w.w_1 \in \lang(\regex)$
+\end{enumerate}
+\end{definition}
+
+\noindent Thus $\pmatch(w, \regex)$ is true when either a prefix of $w$ matches $\regex$ or $w$ can be extended to match $\regex$.
+The consequence of allowing $\pmatch$ to be defined such that it is true even when prefix matches, is that \Tool{} will conservatively accept all tokens for which the prefix matches the accept sequence.
+Hence, we overapproximate the precise set of syntactically valid tokens.
+We make this choice to ensure that \Tool{} is sound for any length of accept sequences.
+Next, we give definitions related to DFAs. 
+These definitions are useful for describing the construction of the DFA mask store and proving properties related to its correctness in the \Tool{} algorithm. 
+In particular, we first define the live states of DFA. 
+We say state $q$ is live if there is a path from $q$ to any final states in $\dfafinal$. Formally,
+
+\begin{definition} [DFA $\live$ states]
+\label{def:live}
+% Define live states
+Given a DFA $\dfa(\dfastates, \alphabets, \transitions, \dfastart, \dfafinal)$, let \mbox{$\live(\dfastates) \subseteq \dfastates$} denote the set of live states such that  
+\[
+    q \in \live(\dfastates) \text{ iff } \exists w \in \alphabets^* \text{ s.t. } \compute(w, q) \in \dfafinal
+\]
+\end{definition}
+
+% Define and describe the mask store
+\noindent We use $\dfa_\terminal(\dfastates_\terminal, \alphabets_\terminal, \transitions_\terminal, q_0^{\terminal}, \dfafinal_\terminal)$ to denote a DFA corresponding to a terminal $\terminal \in \allterminals$. 
+%
+Next, we establish the definition of $\dmatch$ for DFA, which is an equivalent concept to $\pmatch$ with regular expressions.
+$\dmatch$ is recursively defined such that its computation can be performed by walking over the DFAs of a sequence of terminals.
+
+% Define valid token at a state
+\begin{definition} [\dmatch]
+\label{def:dmatch}
+Given a DFA $\dfa(\dfastates, \alphabets, \transitions, \dfastart, \dfafinal)$, a string $w \in \alphabets^*$, a DFA state $q \in Q$ and any sequence of terminals $\sequence= \{\terminal_{f+1}, \terminal_{f+2} \dots \terminal_{f+d}\}$, $\dmatch(w, q, \sequence) = \true$, if either of the following conditions hold:
+\begin{enumerate}
+\item $\compute(w, q) \in \live(Q)$ or
+\item $\exists w_1 \in \alphabets^*, w_2 \in \alphabets^+$ such that $w_1.w_2 = w$, $\compute(w_1, q) \in F \text{ and } \sequence= \{\} $ or
+\item $\exists w_1 \in \alphabets^*, w_2 \in \alphabets^*$ such that $w_1.w_2 = w$, $\compute(w_1, q) \in F$, \\ 
+and $\text{\dmatch}(w_2, q_{0}^{\terminal_{f+1}}, \{\terminal_{f+2} \dots \terminal_{f+d}\}) = \true$ where $q_{0}^{\terminal_{f+1}}$ is the start state corresponding to the DFA for $\terminal_{f+1}$
+% $w_2$ is valid with respect to $q_{0, \terminal_1}$ and the follow sequence $\{\terminal_2 \dots \terminal_\alpha\}$
+\end{enumerate}
+\end{definition}
+
+\sloppypar
+\noindent Given an accept sequence $\sequence = \{\terminal_{f+1}, \terminal_{f+2} \dots \terminal_{f+d}\} \in \accepts$, our objective is to compute the set of tokens $t \in \vocab$ such that $\pmatch(r.t, \regex_\sequence)$ holds, where $\regex_\sequence = (\regex_{f+1}. \regex_{f+2}. \ldots.\regex_{f+d})$ is the regular expression obtained by concatenating regular expressions for terminals. 
+If $\sequence^p$ denotes the sequence $\{\terminal_{f+2}, \dots \terminal_{f+d}\}$, Lemma~\ref{lemma:eq} simplifies this problem to finding $\dmatch(r.t, \dfastart^{\terminal_1}, \sequence^p)$. 
+Furthermore, utilizing Lemma~\ref{lemma:dmatch}, this can be further reduced to computing $q = \compute_{\terminal_1}(r, \dfastart^{\terminal_1})$ and $\dmatch(t, q, \sequence^p)$. 
+It's important to note that $\dmatch(t, q, \sequence^p)$ does not depend on $\partialcode$ and can be computed offline. 
+While the computation of $q$ for $\dmatch(t, q, \sequence^p)$ is relatively inexpensive, evaluating $\dmatch(t, q, \sequence^p)$ can be computationally expensive both offline and online, as it requires considering numerous potential accept sequences offline, and where it needs to iterate over all tokens in $\vocab$ online.
+We observe that if we consider sequences of smaller lengths, we can efficiently precompute the set of tokens satisfying $\dmatch(t, q, \sequence^p)$ for all $q, t$ and $\sequence^p$ offline.
+We later establish the soundness of \Tool{} when using accept sequences of length at least $1$ (Theorem~\ref{thm:sound}) and completeness for accept sequences of the length greater than maximum length of tokens in the vocabulary (Theorem~\ref{thm:complete}). 
+Typically, LLM tokens are small in size, allowing us to obtain these guarantees.
+% Building upon these definitions, we establish a crucial lemma that draws a connection between $\pmatch$ and $\dmatch$.
+
+\input{Theorems/lemma2a.tex}
+\input{Theorems/lemma3a.tex}
+The proofs of both the lemmas are in Appendix~\ref{sec:proofs}.
+
+\begin{figure}[b]
+\centering
+\includegraphics[width=10cm]{images/dfa_example.png}
+\vspace{-.1in}
+\caption{DFAs in accept sequence $\sequence = \{\textit{name}, \textit{lpar}, \textit{rpar}\}$ for example. 
+The start state, final states, and dead states are in gray, green, and red respectively.
+The dashed arrows link the final states of one DFA to the starting state of the next DFA, adhering to condition 3 in Definition~\ref{def:dmatch}. This illustrates the sequential traversal across DFAs during the computation of \dmatch.
+} 
+\label{fig:dfa}
+\vspace{-.1in}
+\end{figure}
+
+\noindent \textbf{Illustrative Example:} 
+Consider the scenario with $\partialcode =$ \str{def is}, $r=$\str{is}, and an accept sequence $\sequence = \{\textit{name}, \textit{lpar}, \textit{rpar}\}$ in $\accepts$, where $\textit{name}$, $\textit{lpar}$, and $\textit{rpar}$ are terminals in $\allterminals$. 
+Our objective is to determine all $t \in \vocab$ such that \str{def is}.t forms a valid partial program. 
+This can be achieved by finding tokens $t$ that satisfy $\pmatch(\text{\str{is}}.t, \regex_\sequence)$, where $\regex_\sequence = [a\text{-}z,A\text{-}Z,\_]^*()$.
+Let's consider a token $t = \text{\str{\_prime():}}$. We observe that $r.t=$\str{is\_prime():} can be decomposed into \str{is\_prime} ($\textit{name}$), \str{(} ($\textit{lpar}$), \str{)} ($\textit{rpar}$), and \str{:}. 
+Consequently, it partially matches $\regex_\sequence$ as defined by $\pmatch$. 
+In Figure~\ref{fig:dfa}, we present the DFAs for $\sequence$ used in computing $\dmatch$. 
+The reduction $\dmatch(r.t, \dfastart^\textit{name}, {\textit{lpar}, \textit{rpar}}) = \dmatch(\text{\str{is\_prime():}}, \dfastart^\textit{name}, {\textit{lpar}, \textit{rpar}})$ simplifies successively to $\dmatch(\text{\str{():}}, \dfastart^\textit{lpar}, {\textit{rpar}})$, then to $\dmatch(\text{\str{):}}, \dfastart^\textit{rpar}, {})$, and finally to $\dmatch(\text{\str{:}}, q_1^\textit{rpar}, {})$.
+As $q_1^\textit{rpar}$ is a final state, according to condition 2 of Definition~\ref{def:dmatch}, $\dmatch(\text{\str{:}}, q_1^\textit{rpar}, {})$ holds true.
+% This equivalence arises as we traverse the $\dfa_\textit{name}$ first, consuming \str{is\_prime} and reaching a final state in $F_\textit{name}$. 
+Next, we define a mask over vocabulary
+
+\begin{definition}[Vocabulary mask]
+\label{def:mask}
+Given vocabulary $\vocab \subseteq \alphabets^*$, $m \in \{0, 1\}^{|\vocab|}$ is a mask over the vocabulary. We also use $\set(m) \subseteq \vocab$ to denote the subset represented by $m$.
+\end{definition}
+
+\noindent {\bf DFA Mask Store}
+% Discuss \alpha
+\noindent For an integer $\alpha$, we define a DFA table $\dmap{\alpha}$ as the mask store over the DFA states with $\alpha$ lookahead. 
+Given the set of all DFA states $\dfastates_\Omega = \bigcup_{\terminal \in \allterminals} \dfastates_\terminal$, the table stores binary masks of size $|\vocab|$, indicating for token string $t$, for any DFA state $q \in \dfastates_\Omega$ and a sequence of $\alpha$ terminals $\sequence_\alpha$ if $\dmatch(t, q, \sequence_\alpha) = \true$. 
+The lookahead parameter $\alpha$ signifies the number of subsequent terminals considered when generating the mask stored in the table.
+Choosing a larger value for $\alpha$ enhances the precision of \Tool{} algorithm, but it comes at the cost of computing and storing a larger table. 
+We next formally define the DFA mask store,
+\begin{definition}[DFA mask store]
+\label{def:lookup}
+For an integer $\alpha$, the DFA mask store $\dmap{\alpha}$ is a function defined as $\dmap{\alpha}: \dfastates_\Omega \times \allterminals^{\alpha} \to \{0, 1\}^{|\vocab|}$, where $\dfastates_\Omega = \bigcup_{\terminal \in \allterminals} \dfastates_\terminal$ represents the set of all DFA states and $\allterminals^{\alpha}$ is a set of $\alpha$-length terminal sequences. 
+% Let $\textit{id}(t)$ denote the enumerated index of a token $t \in \vocab$. 
+Then $\dmap{\alpha}(q, \sequence) = m$ is a binary mask such that $t \in \set(m)$ if $\dmatch(t, q, \sequence)$
+\end{definition}
+
+% \input{algorithms/main}
+
+For our illustrative example if $m = \dmap{2}(q_1^\textit{name}, \{\textit{lpar}, \textit{rpar}\})$ then $t=$\str{\_prime():} should be contained in $\set(m)$.
+The grammar mask for a set of accept sequences $\accepts$ can be computed by combining masks for each $\sequence \in \accepts$. 
+% We describe the grammar mask computation algorithm in Appendix~\ref{sec:compmask}.
+The DFA mask store $\dmap{0}$ maps each DFA state to all tokens such that they  $\pmatch$ without considering any following accept sequence (0-length sequence). 
+In this case, the table maps each state with a single mask denoting the tokens that match the regular expression of the corresponding DFA. 
+
+\noindent {\bf Computing Grammar Mask}
+\label{sec:compmask}
+\input{algorithms/grammar_mask}
+% Example \dmap{0}
+% This approach is equivalent to the one used by \cite{willard2023efficient} for regular expression guided generation. 
+% The current parsers can easily compute acceptable sequences of terminals with a length of 2 from partial output. 
+% We note that $\pmatch$ $r.t$ with a 2-length sequence is equivalent to $\dmatch$ with a 1-length sequence, as stated in Lemma~\ref{lemma:eq}. 
+% Consequently, in our work, we opt for $\dmap{0}$ and $\dmap{1}$ since we have observed empirically that this combination is sufficient for producing syntactically valid outputs.
+%
+The mask store is constructed offline by enumerating all DFA states $\dfastates_\Omega $, considering all possible terminals in $\allterminals$, and all tokens in $\vocab$. 
+The DFA mask store depends on the set of terminals $\allterminals$ and the model's vocabulary $\vocab$. 
+As a result, a unique mask store is created for each grammar and tokenizer combination, and to enhance efficiency, we cache and reuse this table for future inferences. 
+
+% \noindent{\bf Computing Grammar Mask.}
+Algorithm~\ref{alg:grammar} presents our approach for computing the grammar mask during LLM generation.
+It computes a grammar mask based on the sets of current accept sequences $\accepts$, and the remainder string ($r$). 
+It iterates over $\accepts$, considering each sequence $\sequence$.
+The algorithm initializes an empty mask $m$. 
+It iterates over each acceptable sequence, considering the first terminal $\terminal_1$ in each. 
+It computes the resulting state $q_r$ by processing $\terminal_1$ from an initial state $q_0^{\terminal_1}$ and the remainder string $r$. 
+If $q_r$ is in a live state, the algorithm updates the grammar mask by unifying the mask cached in $\dmap{\alpha}$. 

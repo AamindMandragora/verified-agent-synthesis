@@ -1,0 +1,38 @@
+\begin{proof}
+\begin{enumerate}[label=(\alph*)]
+    \item First, we prove $\dmatch(t, q, \sequence) \implies \dmatch(r.t, \dfastart^{\terminal}, \sequence)$. \\
+    From Definition~\ref{def:dmatch}, either of the 3 conditions hold true for $\dmatch(t, q, \sequence)$. \\
+    
+    If condition 1 is true then 
+\[\compute_{\terminal_1}(t, q) \in \live(Q_{\terminal}) \implies \compute_{\terminal}(r.t, \dfastart^{\terminal}) \in \live(Q_{\terminal}) \implies \dmatch(r.t, \dfastart^{\terminal}, \sequence)\]
+
+    If condition 2 is true,  $\exists w_1, w_2$ such that $w_1.w_2 = t$, $\compute_{\terminal}(w_1, q) \in F \text{ and } \sequence= \{\}$. Therefore,  
+\[\compute_{\terminal}(r.w_1, q) \in F \implies \dmatch(r.t, \dfastart^{\terminal}, \sequence)\]
+
+    If condition 3 is true, $\exists w_1, w_2$ such that $w_1.w_2 = t$, $\compute_{\terminal}(w_1, q) \in F$ \\ and $\dmatch(w_2, q_{0}^{\terminal_1}, \{\terminal_2 \dots \terminal_d\}) = \true$. Therefore, \[\compute_{\terminal}(r.w_1, q) \in F \implies \dmatch(r.t, \dfastart^{\terminal}, \sequence)\]
+
+Therefore, in all cases, $\dmatch(rt, \dfastart^{\terminal}, \sequence)$ must hold. 
+
+    \item Now, we prove $\dmatch(rt, \dfastart^{\terminal}, \sequence)  \implies \dmatch(t, q, \sequence)$.
+
+     From Definition~\ref{def:dmatch}, either of the 3 conditions hold true for $\dmatch(r.t, \dfastart^{\terminal}, \sequence)$. \\
+
+     If condition 1 is true then 
+    \[
+    \compute_{\terminal_1}(r.t, \dfastart^{\terminal}) \in \live(Q_{\terminal}) \implies \compute_{\terminal}(t, q) \in \live(Q_{\terminal}) \implies \dmatch(t, q, \sequence)
+    \]
+
+    If condition 2 is true,  $\exists w_1, w_2$ such that $w_1.w_2 = r.t$, $\compute_{\terminal}(w_1, \dfastart^{\terminal}) \in F \text{ and } \sequence= \{\}$. Since no prefix of $r$ is accepted by $\lang(\terminal)$, $\exists w_3 \text{ s.t. } w_3 w_4 = t$ and
+    \[
+    \compute_{\terminal}(w_3, q) \in F \implies \dmatch(t, q, \sequence)
+    \]
+
+    If condition 3 is true, $\exists w_1, w_2$ such that $w_1.w_2 = r.t$, $\compute_{\terminal}(w_1, \dfastart^{\terminal}) \in F$ \\ 
+    and $\dmatch(w_2, q_{0}^{\terminal_1}, \{\terminal_2 \dots \terminal_d\}) = \true$. Since no prefix of $r$ is accepted by $\lang(\terminal)$, $\exists w_3 \text{ s.t. } w_3 w_4 = t$ and  
+    \[\compute_{\terminal}(w_3, q) \in F \implies \dmatch(t, q, \sequence)\]
+
+    Therefore, in all cases, $\dmatch(t, q, \sequence)$ must hold. 
+    
+\end{enumerate}
+
+\end{proof}

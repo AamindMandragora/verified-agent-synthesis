@@ -1,0 +1,23 @@
+\begin{table}[t]
+\centering
+\tablesize
+
+% \begin{wraptable}{r}{.6\textwidth} \centering
+% \
+% \vspace{-.1in}
+\caption{DFA Mask store creation time and memory} % Change 
+\begin{tabular}
+    {@{}l|c| r r r r@{}}
+    \toprule
+    & & \multicolumn{2}{c}{Python} & \multicolumn{2}{c}{Go}\\
+    Model & $|\vocab|$ & Time(s) & Memory & Time(s) & Memory \\
+    \midrule
+    \codegen{} &  51200 & 602.26 & 1.87GB & 603.03 & 1.58GB \\
+    \wizard{}  & 49153 & 588.28 & 1.83GB & 588.84 & 1.54GB \\
+    \llama{}  & 32000 & 382.26 & 1.17GB & 380.49 & 1.06GB\\
+    \bottomrule
+\end{tabular}
+
+\label{table:memory_overhead}
+% \end{wraptable}
+\end{table}

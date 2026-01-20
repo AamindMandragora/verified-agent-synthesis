@@ -1,0 +1,73 @@
+\subsection{Parsing Partial Output}
+\label{sec:parse}
+In this section, we describe the remainder $r$ and accept sequences $\accepts$ returned by the parsing step.
+
+% remainder
+\noindent{\bf Remainder.}
+\Tool{} uses a lexer to convert $\partialcode$ to sequence of lexical tokens $l_1, l_2 \dots l_f \in \alphabets^*$.  
+Each lexical token $l_i$ is associated with a terminal type $\terminal_i$, where $l_i \in \lang(\regex_{\terminal_i})$ ($\regex_{\terminal_i}$ is the regular expression for terminal $\terminal_i$).
+\add{
+We assume our lexer uses a 1-character lookahead without backtracking. 
+This ensures that the lexical types of previous tokens in $\partialcode$ remain unchanged, except for the final token. 
+The remainder $r$ represents the suffix of $\partialcode$ that could potentially change its lexical type in future iterations.
+Thus the remainder $r$ is assigned such that it is either unlexed because it does not match any terminal, or has been lexed but might undergo a different lexing in subsequent iterations when $\partialcode$ is extended by the LLM by appending tokens.
+This assumption is crucial for enabling incremental parsing and ensures that the remainder $r$ remains small, which contributes to reducing overall time complexity.
+}
+\Tool{} assigns the remainder according to the following two cases:
+
+\begin{description}
+    \itemsep0em
+    \item \textbf{Case 1: $\partialcode = l_1.l_2 \dots l_f$} 
+    Assuming a standard lexer with 1-character lookahead and no backtracking, all lexical tokens $l_1, l_2, \dots, l_{f-1}$ remain unchanged upon extending $\partialcode$. However, the final lexical token $l_f$ may change. 
+    For example, in Python partial output in the $k$-th LLM iteration, if the final lexical token is $l_f=$\str{ret} and the language model generates the token \str{urn} in the next iteration, the updated code results in the final lexical token becoming $l_f=$\str{return}. 
+    This transition reflects a transformation from an identifier name to a Python keyword in the subsequent iterations. 
+    Thus, $r$ is assigned the value $l_f$, i.e., $r=$\str{ret} for k-th iteration in our example.
+    
+    \item \textbf{Case 2: $\partialcode = l_1.l_2 \dots l_f.u$:} 
+    Here, $u \in \alphabets^*$ is the unlexed remainder of $\partialcode$. 
+    In this case, considering the 1-character lookahead of the lexer, the types of $l_1, l_2, \dots, l_{f}$ do not change upon extending $\partialcode$. 
+    Consequently, $r$ is assigned value $u$ of the suffix that remains unlexed.
+\end{description}
+
+\noindent 
+\add{
+\Tool{} parsing step partitions partial output $\partialcode$ into lexically fixed part $\fixpartialcode$ and remainder $r$.}
+Given a sequence $\sequence = \terminal_0, \terminal_1, \dots, \terminal_f$, we simplify notation by using $\lang(\sequence) = \lang(\regex_{\terminal_0} \cdot \regex_{\terminal_1} \dots \regex_{\terminal_f})$ throughout the rest of the paper. 
+
+% Partial parse
+\begin{definition}[Partial Parse]
+\label{def:pparse}
+Given the partial output $\partialcode \in \alphabets^*$, the partial parse function $\partialparse: \alphabets^* \to \allterminals^* \times \alphabets^*$ returns a terminal sequence $\sequence^{\square}$ and remainder $r$ such that $\partialcode = \fixpartialcode.r$ and $\fixpartialcode$ is parsed as $\sequence^{\square}$. i.e. $\fixpartialcode \in \lang(\sequence^{\square})$. 
+\end{definition}
+
+
+% accept sequences
+\noindent{\bf Accept Sequences.}
+A sentence is a sequence of terminals. 
+A grammar $G$ describes a (possibly infinite) set of sentences, that can be derived by using the production rules of the grammar. 
+We use $\lang^\allterminals(G) \subseteq \allterminals^*$ to denote the valid sequences of terminals that can be derived from the rules of $G$.
+Further, $\lang^\allterminals_p(G)$ denotes all syntactically valid partial sentences of terminals.
+Formally, 
+
+\begin{definition}[Partial Sentences]
+\label{def:psentence}
+We define a set of all syntactically valid partial sentences 
+ $\lang^\allterminals_p(G) \subseteq \allterminals^*$ such that $\sequence \in \lang^\allterminals_p(G)$ if and only if $\exists \sequence_1 \in \allterminals^*$ such that $\sequence.\sequence_1 \in \lang^\allterminals(G)$.
+\end{definition}
+Note that $\lang(G)$ and $\lang_p(G)$ are defined over alphabet $\alphabets$, whereas $\lang^\allterminals(G)$ and $\lang^\allterminals_p(G)$ over terminals $\allterminals$.
+Nevertheless, if a program $C$ is parsed to obtain terminal sequence $\sequence$, then $C \in \lang(G)$ is equivalent to $\sequence \in \lang^\allterminals(G)$.
+The \Tool{} parsing algorithm obtains $\sequence^{\square} = \terminal_1, \terminal_2 \dots \terminal_f$ by parsing $\partialcode$ \add{corresponding to the parserd part of partial output $\fixpartialcode$.} 
+Given a partial sentence $\sequence_{\square}$, an accept sequence is a sequence over $\allterminals$ such that when appended to $\sequence^{\square}$ the result is still a partial sentence.
+
+\begin{definition} [Accept Sequence]
+\label{def:acc}
+Given partial output $\partialcode \in \lang_p(G)$, and $\sequence^{\square}, r = \partialparse(\partialcode)$,  $\sequence_1 \in \allterminals^*$ is an accept sequence if $\sequence^{\square}.\sequence_1 \in \lang_p^\allterminals(G)$.
+\end{definition}
+%
+Consider a Python partial program $\partialcode =$ \str{def is} and let $\textit{def}, \textit{name}, \textit{lpar}$ and $ \textit{rpar}$ be the terminals in Python grammar. 
+we get $\{\textit{def}\},$\str{is} $=\partialparse($\str{def is}$)$, where $\sequence^{\square}=\{\textit{def}\}$ and $r=$\str{is}.
+$\sequence_1 = \{\textit{name}, \textit{lpar}, \textit{rpar}\}$ is an accept sequence in this case as the sequence of terminals $\sequence^{\square}.\sequence_1 = \{\textit{def}, \textit{name}, \textit{lpar}, \textit{rpar}\}$ is a valid partial sentence.
+The parser state on parsing the partial output $\partialcode$ can be utilized to compute a set of accept sequences denoted as $\accepts$.
+The soundness and completeness of the \Tool{} algorithm depend on the length of these accept sequences in $\accepts$.
+In theory, using longer accept sequences enhances the precision of the \Tool{} algorithm at the cost of increased computational complexity. 
+In Section~\ref{sec:implementation}, we show our method for obtaining 1 and 2-length accept sequences that are efficient and precise in practice.

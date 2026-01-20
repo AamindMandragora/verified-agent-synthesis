@@ -1,0 +1,43 @@
+\subsection{\Tool{} Implementation}
+\label{sec:implementation}
+\add{
+\noindent \textbf{Base LR parser: }
+Bottom-up LR parsers, including LR(1) and LALR(1) parsers, process terminals generated from the lexical analysis of the code sequentially and perform shift or reduce operations~\cite{aho86}. 
+LR($\kappa$) parsers have the immediate error detection property, ensuring they do not perform shift or reduce operations if the next input $\kappa$ terminals on the input tape is erroneous~\cite{10.1145/356628.356629}.
+Consequently, every entry in the parsing table corresponding to $\kappa$ terminals that maps to a shift or reduce operation indicates that the terminal is acceptable. 
+This property allows us to use LR(1) parsing tables to efficiently compute accept sequences at any intermediate point, making them preferable for \Tool{} applications. 
+Thus, computing acceptable terminals with LR(1) parsers has a complexity of $O(|\allterminals|)$.
+Although LALR(1) parsers are more commonly used due to their smaller memory requirements and faster construction, computing acceptable terminals with them requires iterating over all terminals leading to a complexity of $O(T_\parser \cdot |\allterminals|)$ due to the need for multiple reduce operations before confirming the validity of each terminal. 
+Furthermore, while for $\kappa > 1$, LR($\kappa$) parsers can compute accept sequences of length $\kappa$ immediately, they incur extremely high memory requirements. 
+Additionally, while we can use LL($\kappa$) parsing tables to compute the next $\kappa$ accept terminals, LR($\kappa$) parsers offer a higher degree of parsing power. 
+Therefore, we employ LR parsers in \Tool{}.
+Our evaluation indicates that LR(1) parsers suffice for eliminating most syntax errors, making them a practical choice for \Tool{}. 
+}
+We discuss how the implementation of how parsing is performed \emph{incrementally} to obtain the accept sequences and remainder in the Appendix~\ref{sec:incparse}.
+
+\noindent \textbf{Accept Sequences:}
+In our implementation, we focus on generating accept sequences of length 1 or 2, as they can be efficiently obtained from LR(1) parser. 
+While this approach incurs some loss of precision, it leads to sound but incomplete syntactical decoding. 
+Further, our evaluation demonstrates that this strategy is efficient and precise in practical scenarios.
+We note that $\pmatch$ $r.t$ with a 2-length sequence is equivalent to $\dmatch$ with a 1-length sequence, as stated in Lemma~\ref{lemma:eq}. 
+Consequently, in our work, we precompute mask stores $\dmap{0}$ and $\dmap{1}$.
+On parsing the partial output $\partialcode$, the parser state \add{of LR(1) parsers} can be used to directly obtain syntactically acceptable terminals for the current completion ($\curaccepts$) and the next completion ($\nextaccepts$). 
+We utilize $\curaccepts$ and $\nextaccepts$ to construct the accept sequences $\accepts$, considering two cases:
+
+% \begin{description}
+%     \itemsep0em
+%     \item 
+    
+    \textbf{Case 1: $\partialcode = l_1.l_2 \dots l_f$:} Let $\terminal_f$ represent the type of the final lexical token. 
+    In many instances, a token may be extended in the subsequent generation step, such as when an identifier name grows longer or additional words are appended to a comment. 
+    In those cases if $\nextaccepts = {\terminal_1^1, \terminal_2^1, \dots, \terminal_n^1}$, we include all 2-length sequences $\{\terminal_f, \terminal_i^1\}$ for each $i$. 
+    As previously discussed, the type of the final lexical token may change from $\terminal_f$. 
+    Consequently, when $\curaccepts = \{\terminal_1^0, \terminal_2^0, \dots, \terminal_n^0\}$, we add 1-length sequences $\sequence_i$ for each terminal sequence $\{\terminal_i\}$ from $\curaccepts$, excluding $\terminal_f$. 
+    This method ensures the generation of sequences accounting for potential extensions of the same token and changes in the type of the final lexical token.
+
+    % \item 
+    \textbf{Case 2 $\partialcode = l_1.l_2 \dots l_f.u$:} In this scenario, the current terminal is incomplete, leading to a lack of information about subsequent terminals. 
+    Consequently, when $\nextaccepts = \{\terminal_1, \terminal_2, \dots, \terminal_n\}$, we define $\accepts$ as a set of sequences: $\{\sequence_1, \sequence_2, \dots, \sequence_n\}$, where each $\sequence_i$ corresponds to a single terminal sequence $\{\terminal_i\}$ from $\nextaccepts$. 
+    Specifically, $\sequence_1 = \{\terminal_1\}$, $\sequence_2 = \{\terminal_2\}$, and so forth. 
+    % This approach ensures the generation of accept sequences based on the available information for subsequent terminals when the current one is incomplete.
+% \end{description}

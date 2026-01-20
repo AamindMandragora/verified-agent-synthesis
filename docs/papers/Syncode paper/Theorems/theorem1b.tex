@@ -1,0 +1,79 @@
+\begin{proof}
+% Since $\partialcode.t \in \lang_p(G)$, $\exists w \text{ s.t. } \partialcode.t.w \in \lang(G)$. \\
+Let $r, \sequence^{\square} = \partialparse(\partialcode)$ where $\sequence^{\square} = \terminal_1, \terminal_2 \dots \terminal_{f}$ and let $r_1, \sequence_1 = \partialparse(\partialcode.t)$ where $\sequence_1 = \terminal_1, \terminal_2 \dots \terminal_{f} \dots \terminal_{f+g}$ \\
+Hence, we can split $r.t$ such that for $w \in \alphabets^*$, $r.t = w.r_1$ and $w \in \lang(\terminal_{f+1} \dots \terminal_{f+g})$ \\
+There are two possible cases: \\
+\noindent\textbf{Case 1:} $g < d$ \\
+\[
+    w \in \lang(\terminal_{f+1} \dots \terminal_{f+g})
+\]
+\[
+    \implies w \in \lang_p(\terminal_{f+1} \dots \terminal_{f+g})
+\]
+By our assumption on $\accepts_d$ there must exist $\sequence_2 = \terminal_{f+1} \dots \terminal_{f+d}$ s.t. $\terminal_{f+1} \dots \terminal_{f+g}$ is prefix of $\sequence_2$. Hence, 
+\[
+    \implies w \in \lang_p(\sequence_2)
+\]
+\[
+    \implies \pmatch(r.t, \sequence_2)
+\]
+
+
+\noindent\textbf{Case 2:} $g \geq d$ \\
+Since we assume that $\accepts_d$ contains all possible accept sequence of length $d$, $\sequence_2 = \terminal_{f+1} \dots \terminal_{f+d}$ must be contained in $\accepts_d$ \\
+Hence, $\exists w_1, w_2 \in \alphabets^*$ such that $w = w_1.w_2$ and
+\[
+    w_1 \in \lang(\sequence_2)
+\]
+\[
+    \implies w \in \lang_p(\sequence_2)
+\]
+\[
+    \implies \pmatch(r.t, \sequence_2)
+\]
+% 
+In both cases, $\pmatch(r.t, \sequence_2)$. Using Lemma~\ref{lemma:eq},
+\[
+    \implies \dmatch(r.t, \dfastart^{\terminal_{f+1}} , \{\terminal_{f+2} \dots \terminal_{f+d}\}) 
+\]
+Using Lemma~\ref{lemma:dmatch} if $q = \compute_{\terminal_{f+1}}(r, \dfastart^{\terminal_{f+1}})$
+\[
+    \dmatch(r.t, \dfastart^{\terminal_{f+1}} ,\{\terminal_{f+2} \dots \terminal_{f+d}\}) \implies \dmatch(t, q, \{\terminal_{f+2} \dots \terminal_{f+d}\})
+\]
+Here from Definition~\ref{def:lookup}, if $\dmap{d-1}(q, \{\terminal_{f+2} \dots \terminal_{f+d}\}) = m_2$ then $t \in \set(m_2)$. \\
+Since $m_2 \subseteq m$, we have our result $t \in \set(m)$.
+
+% and let $\sequence_1 = \terminal_{f+1}, \terminal_{f+2} \dots \terminal_{f+d} \in \accepts_d$\\
+
+
+% We consider 2 cases from Algorithm~\ref{alg:parse}. \\
+% \noindent\textbf{Case 1:} $r \in \lang(\regex_{\terminal_{f+1}})$ \\
+% Let $\sequence = \terminal_{f+1} \terminal_{f+2}$. Clearly, $\sequence \in \accepts$ returned by Algorithm~\ref{alg:parse} . \\
+% Since $\terminal_i, \terminal_{f+1} \dots \terminal_{q}$ denote the terminals for $r.t.w_1$, there are two possibilities. 
+% Either $\exists w_2 \text{ s.t. } r.t.w_2 \in \lang(\terminal_i.\terminal_{f+1})$ or $\exists w_3 \text{ s.t. } r.t = w_3.w_4 \text{ and } w_3 \in \lang(\terminal_i.\terminal_{i+1})$. \\
+% In both the cases, $\pmatch(rt, \{\terminal_i, \terminal_{i+1}\})$. Using Lemma~\ref{lemma:eq},
+% \[
+%     \pmatch(r.t, \{\terminal_i, \terminal_{i+1}\}) \implies \dmatch(rt, \dfastart^{\terminal_i} ,\{\terminal_{i+1}\}) 
+% \]
+% Using Lemma~\ref{lemma:dmatch} if $q = \compute_{\terminal_i}(r, \dfastart^{\terminal_i})$
+% \[
+%     \dmatch(r.t, \dfastart^{\terminal_i} ,\{\terminal_{i+1}\}) \implies \dmatch(t, q ,\{\terminal_{i+1}\})
+% \]
+% Here from Definition~\ref{def:lookup}, if $\dmap{1}(q, \{\terminal_{i+1}\}) = m_1$ then $m_1[t] = 1$. \\
+% Since $m$ includes $m_1$, we have our result $m[t] = 1$. \\
+
+% \noindent\textbf{Case 2:} $r \not\in \lang(\regex_{\terminal_{i}})$
+% Let $\sequence = \terminal_i$. Clearly, $\sequence \in \accepts$ returned by Algorithm~\ref{alg:parse} . \\
+% Since $\terminal_i, \terminal_{i+1} \dots \terminal_{q}$ denote the terminals for $r.t.w_1$, there are two possibilities. 
+% Either $\exists w_2 \text{ s.t. } r.t.w_2 \in \lang(\terminal_i)$ or $\exists w_3 \text{ s.t. } r.t = w_3.w_4 \text{ and } w_3 \in \lang(\terminal_i)$. \\
+% In both the cases, $\pmatch(r.t, \{\terminal_i\})$. Using Lemma~\ref{lemma:eq},
+% \[
+%     \pmatch(r.t, \{\terminal_i\}) \implies \dmatch(r.t, \dfastart^{\terminal_i} ,\{\}) 
+% \]
+% Using Lemma~\ref{lemma:dmatch} if $q = \compute_{\terminal_i}(r, \dfastart^{\terminal_i})$
+% \[
+%     \dmatch(r.t, \dfastart^{\terminal_i} ,\{\}) \implies \dmatch(t, q ,\{\})
+% \]
+% Here from Definition~\ref{def:lookup}, if $\dmap{0}(q, \{\}) = m_2$ then $m_2[t] = 1$. \\
+% Since $m$ includes $m_2$, we have our result $m[t] = 1$.
+\end{proof}

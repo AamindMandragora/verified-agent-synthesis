@@ -1,0 +1,29 @@
+    \begin{tcblisting}{
+        listing only, 
+        halign=left,
+        listing engine=listings,
+        title=\textbf{\small Prompt for SQL case study},
+        colbacktitle=blue!30!white, 
+        coltitle=black,
+        left=0pt,               % Left inner padding
+        right=0mm,              % Right inner padding
+        top=0mm,                % Reduce top margin
+        bottom=0mm,             % Reduce bottom margin
+        boxsep=1mm,
+        width=\textwidth,
+        listing options={style=EBNF},
+        label={fig:overview_grammar},
+    }
+    db_id: concert_singer
+    db_info: # stadium ( stadium_id , location , name , capacity , highest , lowest , average )
+    # singer ( singer_id , name , country , song_name , song_release_year , age , is_male )
+    # concert ( concert_id , concert_name , theme , stadium_id , year )
+    # singer_in_concert ( concert_id , singer_id )
+    # concert.stadium_id = stadium.stadium_id
+    # singer_in_concert.singer_id = singer.singer_id
+    # singer_in_concert.concert_id = concert.concert_id
+
+    question: How many singers do we have? Only output the SQL query. 
+    SQL:
+    \end{tcblisting}
+    \label{fig:database_schema_query}

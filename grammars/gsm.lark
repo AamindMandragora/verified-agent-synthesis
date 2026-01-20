@@ -1,0 +1,89 @@
+syncode: "<<" start ">>"
+
+start: s_expr
+
+// For CSD prefix parsing - Accepts EITHER symbolic or numeric expressions
+// This allows unit conversions like "210 * 12" alongside variable expressions like "a + b"
+// The grammar dynamically restricts VARIABLE/VAR_LETTERS to specific names per question.
+csd_start: any_expr ">>"
+
+// For expression-only parsing (without >> delimiter) - used in constrained generation
+// This prevents early termination when >> would be valid
+expr_only: any_expr
+
+// Any expression - either symbolic (contains variables) or numeric (numbers only)
+// This is a UNION rule that accepts both types for CSD termination purposes.
+?any_expr: s_expr
+         | n_expr
+
+// ============================================================================
+// NUMERIC EXPRESSIONS (N) - Contains ONLY numbers, NO variables
+// ============================================================================
+
+?n_expr: n_term
+       | n_expr "+" n_term -> add
+       | n_expr "-" n_term -> sub
+
+?n_term: n_factor
+       | n_term "*" n_factor -> mul
+       | n_term "/" n_factor -> div
+       | n_term "//" n_factor -> floordiv
+       | n_term "%" n_factor -> mod
+
+?n_factor: n_atom
+         | "(" n_expr ")"
+
+?n_atom: NUMBER
+       | "int" "(" n_expr ")"
+
+// ============================================================================
+// SYMBOLIC EXPRESSIONS (S) - MUST contain at least one variable
+// ============================================================================
+// Logic: An operation is Symbolic if AT LEAST ONE operand is Symbolic.
+
+?s_expr: s_term
+       | s_expr "+" n_term -> add  // S + N -> S
+       | n_expr "+" s_term -> add  // N + S -> S
+       | s_expr "+" s_term -> add  // S + S -> S
+       | s_expr "-" n_term -> sub
+       | n_expr "-" s_term -> sub
+       | s_expr "-" s_term -> sub
+
+?s_term: s_factor
+       | s_term "*" n_factor -> mul
+       | n_term "*" s_factor -> mul
+       | s_term "*" s_factor -> mul
+       | s_term "/" n_factor -> div
+       | n_term "/" s_factor -> div
+       | s_term "/" s_factor -> div
+       | s_term "//" n_factor -> floordiv
+       | n_term "//" s_factor -> floordiv
+       | s_term "//" s_factor -> floordiv
+       | s_term "%" n_factor -> mod
+       | n_term "%" s_factor -> mod
+       | s_term "%" s_factor -> mod
+
+?s_factor: s_atom
+         | "(" s_expr ")"
+
+?s_atom: VARIABLE
+       | VAR_LETTERS          -> var_letters
+       | VAR_LETTERS NUMBER   -> var_num
+       | VARIABLE NUMBER      -> var_num
+       | "int" "(" s_expr ")"
+
+// ============================================================================
+// TERMINALS
+// ============================================================================
+
+// Variables are SINGLE characters only to prevent "ab" or "a b" patterns
+// (two variables without an operator). The grammar structure requires operators
+// between terms, so single-char restriction enforces proper syntax.
+// Exception: n0, n1, n2... are allowed for numbered variable references.
+VARIABLE: /n[0-9]+/ | /[a-zA-Z_]/
+VAR_LETTERS: /[a-zA-Z_]/
+
+NUMBER: /-?\d+(\.\d+)?/
+
+%import common.WS
+%ignore WS

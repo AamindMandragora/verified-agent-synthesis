@@ -1,0 +1,165 @@
+%
+% \documentclass[acmsmall,screen, review, nonacm]{acmart}
+\documentclass[10pt]{article} % For LaTeX2e
+\usepackage{amsmath}
+\usepackage{amssymb} % For \mathbb and other symbols
+\usepackage{amsfonts} % For additional math fonts
+
+% \usepackage{tmlr}
+\usepackage[preprint]{tmlr}
+
+\title{\Tool{}: LLM Generation with Grammar Augmentation}
+
+% For Theorem
+\usepackage{amsthm}
+\newtheorem{definition}{Definition}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+
+\usepackage{thm-restate}
+% \declaretheorem[name=Definition]{definition}
+% \declaretheorem[name=Lemma]{lemma}
+% \declaretheorem[name=Theorem]{theorem}
+
+% \declaretheorem{theorem}
+
+\usepackage{hyperref}
+\usepackage{pifont}
+\usepackage{threeparttable} % for tablenotes
+
+% Algo related
+\usepackage{algorithm}
+
+% \usepackage{algorithmic}
+\usepackage[noend]{algpseudocode} % for some features in algorithm
+\usepackage{mathtools} % for '\smashoperator' macro
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{caption, subcaption}
+\usepackage{multirow}
+ \usepackage{setspace}
+ \usepackage[normalem]{ulem}
+ \usepackage{enumitem}
+ \usepackage{wrapfig}
+ \usepackage{bm}
+ \usepackage{xspace}
+\usepackage{multirow}
+\usepackage{enumitem}
+\usepackage{csquotes}
+%\usepackage{amssymb}
+% \usepackage{float}
+\usepackage{listings}
+\usepackage{xcolor} % For custom colors
+\usepackage{soul}
+% \usepackage{lstlinebgrd}
+
+% To switch between ICLR and Arxiv versions
+\usepackage{ifthen}
+\newboolean{anonymous}
+\setboolean{anonymous}{false}
+
+\input{defs}
+\newboolean{showcomments}
+\setboolean{showcomments}{true}
+\input{commenting}
+
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhead{} % Clears all page headers
+\renewcommand{\headrulewidth}{0pt}
+
+\begin{document}
+%
+% \title{\Tool{}: LLM Generation with Grammar Augmentation}
+%
+
+\ifthenelse{\boolean{anonymous}}
+{
+}
+{
+\author{\name Shubham Ugare \\
+       \addr University of Illinois Urbana-Champaign, USA
+       \AND
+       \name Tarun Suresh \\
+       \addr University of Illinois Urbana-Champaign, USA
+       \AND
+       \name Hangoo Kang \\
+       \addr University of Illinois Urbana-Champaign, USA
+       \AND
+       \name Sasa Misailovic \\
+       \addr University of Illinois Urbana-Champaign, USA
+       \AND
+       \name Gagandeep Singh \\
+       \addr University of Illinois Urbana-Champaign and VMware Research, USA
+}
+}
+
+\maketitle              
+
+\begin{abstract}
+LLMs are widely used in complex AI applications.
+These applications underscore the need for LLM outputs to adhere to a specific format, for their integration with other components in the systems.
+Typically the format rules -- e.g., data serialization formats such as JSON, YAML, or Code in Programming Language -- are expressed as context-free grammar (CFG).
+Due to the hallucinations and unreliability of LLMs, instructing LLMs to adhere to specified syntax becomes an increasingly important challenge.
+
+
+We present \Tool{}, a novel framework for efficient and general syntactical decoding with LLMs, to address this challenge. 
+% precision
+\Tool{} ensures soundness and completeness with respect to the CFG of a formal language, effectively retaining valid tokens while filtering out invalid ones.
+% effciency
+\Tool{} uses an offline-constructed, efficient lookup table, the \textit{DFA mask store}, created from the DFA (Deterministic Finite Automaton) of the language’s grammar for efficient generation.
+% framework
+\Tool{} seamlessly integrates with any language defined by CFG, as evidenced by experiments focusing on generating JSON, SQL, Python, and Go outputs. 
+Our experiments evaluating the effectiveness of \Tool{} for JSON generation demonstrate that \Tool{} eliminates all syntax errors and significantly outperforms state-of-the-art baselines.
+Furthermore, our results underscore how \Tool{} significantly reduces \average{} of syntax errors in generated Python and Go code, showcasing its substantial impact on enhancing syntactical precision in LLM generation.
+
+\ifthenelse{\boolean{anonymous}}{
+
+}
+{
+% \vspace{0.1in}
+Our code is available at {\color{blue}\url{https://github.com/uiuc-focal-lab/syncode}}
+}
+
+
+
+% \keywords{Large\,Language\,Model \and\! Syntax\,Error \and{}Context-free\,Grammar}
+\end{abstract}
+
+
+\section{Introduction}
+\label{sec:intro}
+\input{intro}
+
+\section{Background}
+\label{sec:background}
+\input{background}
+
+\section{Overview}
+\label{sec:overview}
+\input{overview}
+
+\section{\mbox{Syntactically Correct Generation}}
+\label{sec:technical}
+\input{technical/technical}
+
+\section{Experimental Methodology}
+\input{eval}
+
+\section{Related Work}
+\label{sec:related}
+\input{related}
+
+\section{Conclusion}
+\input{conclusion}
+
+% \input{limitations}
+%
+% ---- Bibliography ----
+%
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{ref}
+
+\include{Appendix}
+\end{document}

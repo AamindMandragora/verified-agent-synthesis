@@ -1,0 +1,30 @@
+\begin{wrapfigure}{R}{0.53\textwidth}
+\vspace{-.34in}
+\begin{minipage}{0.55\textwidth}
+
+\begin{algorithm}[H]
+\caption{Computing Grammar Mask}
+\label{alg:grammar}
+%
+\textbf{Inputs:} $\accepts$: set of accept sequences, $r$: remainder
+\begin{algorithmic}[1]
+\Function{GrammarMask}{$\accepts, r$}
+\State $m \gets \{\}$
+\For{$\sequence \in \accepts$}
+\State $\terminal_1 \gets \sequence[0]$
+\State $q_r \gets \compute(q_0^{\terminal_1}, r)$
+% \For{$q \in \dfastates_{\terminal_1}$}
+\If{$q_r \in \live(\dfastates_{\terminal_1})$}
+\State $\Pi \gets \textit{len}(\sequence)-1$
+\State $m \gets m \cup \big( \dmap{\Pi}(q_r, \sequence[1:])\big)$
+\EndIf
+% \EndFor
+\EndFor
+\State \Return $m$
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+\end{minipage}
+\vspace{-0.2in}
+\end{wrapfigure}

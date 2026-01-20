@@ -1,0 +1,7 @@
+Existing methods for guiding LLMs to produce syntactically correct output have been notably slow and restrictive. 
+In this paper, we present \Tool{}, an efficient and general framework to enhance LLMs' ability to generate syntactical output for various formal languages. 
+During decoding, \Tool{} incrementally parses the partially generated output, computes the unparsed remainder and acceptable terminal sequences, and then leverages the remainder, accept sequences, and pre-computed DFA mask store to compute a mask to constrain the LLM's vocabulary to only syntactically valid tokens. 
+We evaluated \Tool{} on generating syntactically correct JSON, SQL, Python, and Go code with different combinations of datasets, models, and tasks. 
+\Tool{} eliminates syntax errors in JSON completions and significantly improves JSON schema validation over the baselines. 
+Furthermore, \Tool{} reduces the number of syntax errors in generated Python and Go code by \average{} on average compared to \baseline{} generation.
+We believe that our approach will pave the way for more efficient and higher-quality structured LLM generation in real-world applications.

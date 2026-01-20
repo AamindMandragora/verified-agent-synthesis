@@ -1,0 +1,66 @@
+// FOLIO First-Order Logic Grammar for Constrained Decoding
+// This grammar supports the Prover9-style FOL syntax used in FOLIO evaluation
+
+start: fol_statement
+
+// A complete FOL statement
+fol_statement: quantified_expr
+             | formula
+
+// Quantified expressions
+quantified_expr: quantifier VARIABLE formula
+               | quantifier VARIABLE quantified_expr
+
+quantifier: FORALL
+          | EXISTS
+
+// Main formula structure with operator precedence (lowest to highest)
+?formula: iff_expr
+
+?iff_expr: implies_expr (IFF implies_expr)*
+
+?implies_expr: xor_expr (IMPLIES xor_expr)*
+
+?xor_expr: or_expr (XOR or_expr)*
+
+?or_expr: and_expr (OR and_expr)*
+
+?and_expr: not_expr (AND not_expr)*
+
+?not_expr: NOT not_expr
+         | atom
+
+// Atomic formulas
+?atom: predicate
+     | "(" formula ")"
+
+// Predicate: PredicateName(arg1, arg2, ...)
+predicate: PREDICATE_NAME "(" arguments ")"
+
+arguments: argument ("," argument)*
+
+argument: VARIABLE
+        | CONSTANT
+
+// Terminals - Logical operators using {keyword} syntax
+FORALL: "{forall}"
+EXISTS: "{exists}"
+AND: "{and}"
+OR: "{or}"
+XOR: "{xor}"
+NOT: "{not}"
+IMPLIES: "{implies}"
+IFF: "{iff}"
+
+// Predicate names start with uppercase
+PREDICATE_NAME: /[A-Z][a-zA-Z0-9]*/
+
+// Constants are lowercase identifiers with 2+ characters (proper nouns like "miroslav")
+CONSTANT: /[a-z][a-zA-Z0-9]+/
+
+// Variables are single lowercase letters (x, y, z)
+VARIABLE: /[a-z]/
+
+// Whitespace handling
+%import common.WS
+%ignore WS

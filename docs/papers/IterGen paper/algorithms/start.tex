@@ -1,0 +1,33 @@
+% \begin{wrapfigure}{R}{0.53\textwidth}
+% \vspace{-.1in}
+% \begin{minipage}{0.55\textwidth}
+
+\begin{algorithm}
+\footnotesize
+\caption{Start function that initiates \Tool{} session}
+\label{alg:start}
+
+\begin{flushleft}
+\textbf{Inputs:} $\textit{itergen}$: object containing model, tokenizer, \\
+$O_0$: input prompt string \\
+% \textbf{Output:} $\textit{itergen}$: updated object with initialized state
+\end{flushleft}
+
+\begin{algorithmic}[1]
+\Function{start}{$\textit{itergen}, O_0$}
+    \State $\mathcal{H} \gets \text{initialize\_decoding\_trace}()$ \Comment{Initialize decoding trace}
+    \State $KV \gets \text{initialize\_kv\_cache}()$ \Comment{Initialize key-value cache}
+    \State $\mathcal{D} \gets \text{initialize\_symbol\_position\_map}()$ \Comment{Initialize symbol position map}
+    \State $\textit{itergen.parser}  \gets \text{initialize\_parser}()$ \Comment{Initialize symbol position map}
+
+    \State $\textit{itergen.prompt} \gets O_0$ 
+    \Comment{Store the input prompt}
+
+    \State $\textit{cur\_tokens} \gets \text{tokenize}(\mathcal{T}, O_0)$
+    \EndFunction
+\end{algorithmic}
+\end{algorithm}
+
+% \end{minipage}
+% \vspace{-0.1in}
+% \end{wrapfigure}

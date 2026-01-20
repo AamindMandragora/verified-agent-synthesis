@@ -1,0 +1,18 @@
+\begin{table}[ht]
+    \centering
+    \scriptsize
+    \caption{Rejection Sampling Results for the Privacy Leakage Task. Values are \texttt{pass@3/5/10} (no leak is considered as a pass)}
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Method} & \textbf{Llama 3.2 3B} & \textbf{Llama 3 8B}  \\
+        \midrule
+        \standard{}  & 39 & 33  \\
+        \Tool{}   & 100 & 100  \\
+        Sampling ($t=0.7$)  & 52.68 / 57.02 / 61.65 & 46.09 / 49.20 / 53.12 \\
+        Sampling ($t=0.7, rp=0.2$) & 83.99 / 84.69 / 84.99 & 79.02 / 79.78 / 80.64  \\
+        Contrastive Search & 49.13 / 52.92 / 56.24 & 42.43 / 44.77 / 47.21  \\
+        Diverse Beam Search  & 94.56 / 97.74 / 98.9 	& 95.63 / 98.56 / 99.71 \\
+        \bottomrule
+    \end{tabular}
+    \label{tab:privacy_rej_sampling}
+\end{table}

@@ -1,0 +1,23 @@
+\begin{table}[htbp]
+    \scriptsize
+    \centering
+    \begin{tabular}{lcccccc}
+        \toprule
+        \multirow{2}{*}{\textbf{Model}} & \multicolumn{2}{c}{\textbf{Leak Rate CT}} & \multicolumn{2}{c}{\textbf{Avg. Tokens \% CT}} & \multicolumn{2}{c}{\textbf{Time s CT}} \\
+        \cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}
+        & \textbf{Original} & \textbf{\Tool{}} & \textbf{Original} & \textbf{\Tool{}} & \textbf{Original} & \textbf{\Tool{}} \\
+        \midrule
+        Qwen2.5-0.5B-Instruct & - & 0.0 & - & 16.0 & - & 33.5 \\
+        Qwen2.5-1.5B-Instruct & - & 9.0 & - & 15.45 & - & 39.08 \\
+        Phi-3-mini-128k-instruct & - & 6.0 & - & 16.47 & - & 66.45 \\
+        Meta-Llama-3-8B-Instruct & - & 10.0 & - & 14.95 & - & 46.42 \\
+        Llama-2-7b-chat-hf & - & 0.0 & - & 16.0 & - & 45.64 \\
+        Qwen/Qwen2.5-0.5B & - & - & - & - & - & - \\
+        Qwen/Qwen2.5-1.5B & - & - & - & - & - & - \\
+        Meta-Llama-3-8B & - & - & - & - & - & - \\
+        Llama-2-7b-hf & - & - & - & - & - & - \\
+        \bottomrule
+    \end{tabular}
+    \caption{Comparison of models on DecodingTrust based on leakage, number of tokens, and average time values in parentheses.}
+    \label{tab:model_comparison_2}
+\end{table}

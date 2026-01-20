@@ -1,0 +1,8 @@
+Our current work has the following areas for improvement:
+\Tool{} is currently limited to single LLM generation and does not support multiple sequence generation in batch. 
+This requires careful synchronization of grammar when handling multiple outputs, especially if a user wants to backtrack on just one of many sequences.
+Further, our recurrence penalty heuristic is functional but can skew the LLM distribution to diverge from previous generations at the first token. 
+We leave improvement over this heuristic to future work. 
+% Additionally, our implementation assumes a dynamic KV cache and does not work with sliding window KV caches~\cite{duanmu2024skvq} used in recent models like Gemma and Mistral. Addressing this will require some engineering effort, but it's not an inherent limitation of the technique.
+%
+% \sasa{Should we say we work with open source LLMs and why we can't use fully black box ones like openai rn?}

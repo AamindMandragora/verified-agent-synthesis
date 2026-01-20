@@ -1,0 +1,8 @@
+{
+  "strategy_code": "// CSD_RATIONALE_BEGIN\n// I chose a multi-step approach to balance between exploration and constraint adherence. \n// For smaller maxSteps, we use pure constrained generation to ensure immediate validity. \n// For larger maxSteps, we use speculative generation to allow for faster exploration while still maintaining some level of validation.\n// CSD_RATIONALE_END\n\nif maxSteps < 8 {\n  generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);\n} else {\n  generated := CSDHelpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, 4);\n}",
+  "tool_choice_rationale": "I chose a multi-step approach to balance between exploration and constraint adherence.\nFor smaller maxSteps, we use pure constrained generation to ensure immediate validity.\nFor larger maxSteps, we use speculative generation to allow for faster exploration while still maintaining some level of validation.",
+  "dafny_file": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260118_164545_1e6457/folio_csd.dfy",
+  "compiled_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260118_164545_1e6457/folio_csd",
+  "total_attempts": 1,
+  "timestamp": "2026-01-18T16:48:57.151547"
+}

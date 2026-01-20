@@ -1,0 +1,37 @@
+
+\begin{algorithm}
+\small
+\caption{\Tool{} Backward Function}
+\label{alg:backward}
+
+\begin{flushleft}
+\textbf{Inputs:} $\textit{itergen}$: object containing model, tokenizer, symbol position map $\mathcal{D}$, \\
+$\textit{stop\_symbol}$: symbol to backtrack to, $\textit{num}$: number of symbols to backtrack \\
+\textbf{Output:} string $O_m$
+\end{flushleft}
+
+\begin{algorithmic}[1]
+\Function{backward}{$\textit{itergen}$, $\textit{stop\_symbol}$, $\textit{num}$}
+    \State $\textit{total\_count} \gets \text{symbol\_position}(\mathcal{D}, \textit{stop\_symbol})$
+    
+    % \State $\textit{last\_char\_position} \gets \textit{current\_positions}[\text{last index}]$  \Comment{Get last occurrence character position}
+
+    \State $\textit{backtrack\_char\_pos} \gets  \text{get\_symbol\_pos}(\textit{total\_count}-\textit{num})$  \Comment{Calculate backtrack character position}
+
+    \State $O_m \gets \text{detokenize}(\textit{itergen.tokenizer}, \textit{new\_tokens})$
+    \State $O_m \gets O_m[:\textit{backtrack\_char\_pos}]$
+    
+    \State $\textit{backtrack\_token\_pos}, \textit{ remainder\_string} \gets \text{find\_token\_index}(\mathcal{H}, \textit{backtrack\_char\_pos})$ \Comment{Find corresponding token index}
+    
+    \State $\textit{new\_tokens} \gets \textit{cur\_tokens}[:\textit{backtrack\_token\_pos}]$  \Comment{Slice tokens to new position}
+
+    \State $KV \gets KV.\text{crop}(\textit{backtrack\_token\_pos})$  \Comment{Update KV cache}
+
+    \State $\mathcal{D} \gets \text{update\_position\_map}(\mathcal{D}, \textit{backtrack\_char\_pos})$
+
+    \State $\textit{cur\_tokens} \gets \text{update}(\textit{new\_tokens}, \textit{remainder\_string})$
+    
+    \State \Return $O_m$
+\EndFunction
+\end{algorithmic}
+\end{algorithm}

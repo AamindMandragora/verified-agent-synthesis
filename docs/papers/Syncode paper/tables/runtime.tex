@@ -1,0 +1,77 @@
+% \begin{wraptable}{r}{.5\textwidth} \centering
+% \tablesize
+% \vspace{-0.32in}
+
+% \caption{Avg. time taken for a single prompt generation}
+% \begin{tabular}{lll}
+%     \toprule
+%     Model & \Baseline{}(s) & \Tool{}(s) \\
+%     \midrule
+%     CodeGen-350M & 4.36  & 9.35\\
+%     WizardCoder-1B & 1.58 & 7.30\\
+%     Llama-7B & 4.85 & 10.94 \\
+%     \bottomrule
+% \end{tabular}
+% \vspace{-0.1in}
+
+% \label{table:runtime}
+% \end{wraptable}
+
+
+
+\begin{table}
+\centering
+\tablesize
+% \vspace{-0.32in}
+
+\caption{Avg. time taken for a single prompt generation}
+\begin{tabular}{@{}lrrrr@{}}
+    \toprule
+    % Model & \multicolumn{3}{c}{\Baseline{}(s)} & \multicolumn{3}{c}{\Tool{}(s)} \\
+    Model & \multicolumn{2}{c}{Python(s)} & \multicolumn{2}{c}{Go(s)} \\
+    
+    & \Baseline{} & \Tool{} & \Baseline{} & \Tool{} \\
+    \midrule
+    CodeGen-350M & 4.36 & 4.88 & 4.35 & 5.12 \\
+    WizardCoder-1B & 1.49 &  1.74 & 1.42 & 1.99\\
+    \llama{} & 4.88 & 6.07 & 5.35 & 6.67\\
+    
+    \bottomrule
+\end{tabular}
+\vspace{-0.1in}
+
+\label{table:runtime}
+\end{table}
+    %               python  go   json  python  go   json
+    % CodeGen-350M & 4.36 & 4.35 & - & 4.88 & 5.12 & -\\
+    % WizardCoder-1B & 1.49 & 1.42 & - & 1.74 &  1.99 & -\\
+    % Llama-7B & 4.88  & 5.35  & - & 6.07 & 6.67 & -\\
+
+% \begin{table}
+% \centering
+% \tablesize
+% % \vspace{-0.32in}
+
+% \caption{Avg. time taken for a single prompt generation}
+% \begin{tabular}{lllll}
+%     \toprule
+%     Model & Language & \Baseline{}(s) & \multicolumn{2}{c}{\Tool{}(s)} \\
+    
+%     & & & LALR(1) & LR(1) \\
+%     \midrule
+%     CodeGen-350M & Python & 4.36  & 6.06 & 4.88\\
+%     & Go & 4.35  & 6.79 & 5.12\\
+%     \hline
+%     WizardCoder-1B & Python & 1.49  & 3.00 & 1.74\\
+%     & Go & 1.42  & 3.69 & 1.99\\
+%     \hline
+%     Llama-7B & Python & 4.88  & 7.26 & 6.07\\
+%     & Go & 5.35  & 7.97 & 6.67\\
+    
+%     \bottomrule
+% \end{tabular}
+% \vspace{-0.1in}
+
+% \label{table:runtime}
+% \end{table}
+

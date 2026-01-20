@@ -1,0 +1,63 @@
+
+\begin{table}[t]
+\centering
+\footnotesize
+\caption{Overview of various constrained decoding methods}
+\begin{threeparttable}
+\begin{tabular}{@{}lcccccc@{}}
+\toprule  & Regex              & CFG               & \shortstack{Precomputed} & GPL & Max CFG  & Input format \\
+\midrule
+\lmql~\cite{10.1145/3591300}   & \yes & \no        & \no    & \no & 50-100 & LMQL DSL \\
+\guidance~\cite{guidance}  & \yes  & \yes    & \no      & \no & 50-100 & Python DSL \\
+\outlines~\cite{willard2023efficient}  & \yes & \yes   & \yes & \no & 50-100 & Lark EBNF \\
+\picard~\cite{scholak-etal-2021-picard}        & \yes  & \yes & \no  & \no & 50-100 & Haskell \\
+\synchromesh~\cite{poesia2022synchromesh}   & \yes  & \yes  & \no & \no & $\ddag$ & ANTLR \\
+\llamacpp~\cite{llamacpp}       & \yes & \yes        & \no & \no & 50-100 & GBNF DSL \\
+\tgcd~\cite{geng2023grammar} & \yes  & \yes        & \no & \no & 50-100 & GF  \\ 
+\domino~\cite{beurerkellner2024guiding}         & \yes & \yes & \yes & \no & 50-100 & GBNF DSL \\ 
+\midrule
+\Tool{} (ours)  & \yes & \yes & \yes & \yes & 500+ & Lark EBNF \\ 
+\bottomrule
+\end{tabular}
+\begin{tablenotes}
+    \footnotesize
+    \item $\dag$ Implementation issues
+    $\ddag$ Synchromesh is closed-source and the information about DSL grammars is unavailable
+    \item GF: Grammatical Framework, GBNF is a DSL defined by LLAMA.CPP 
+\end{tablenotes}
+\end{threeparttable}
+\normalsize
+\label{tab:constrained_decoding_methods}
+\end{table}
+
+% \begin{table}[t]
+% \centering
+% \footnotesize
+% \caption{Overview of various constrained decoding methods}
+% \begin{threeparttable}
+% \begin{tabular}{@{}lccccccc@{}}
+% \toprule  & Regex              & CFG               & \shortstack{Precomputed} & \shortstack{Sound} & GPL & Max CFG  & Input format \\
+% \midrule
+% \lmql~\cite{10.1145/3591300}   & \yes & \no        & \no    & \no & \no & \no & LMQL DSL \\
+% \guidance~\cite{guidance}  & \yes  & \yes    & \no      & \yes & \no & 50-100 & Python DSL \\
+% \outlines~\cite{willard2023efficient}  & \yes & \yes   & \yes & \no & \no & 50-100 & Lark EBNF \\
+% \picard~\cite{scholak-etal-2021-picard}        & \yes  & \yes & \no  & \no & \no & 50-100 & Haskell \\
+% \synchromesh~\cite{poesia2022synchromesh}   & \yes  & \yes  & \no   & \yes & \no & $\ddag$ & ANTLR \\
+% \llamacpp~\cite{llamacpp}       & \yes & \yes        & \no & $\dag$ & \no & 50-100 & GBNF DSL \\
+% \tgcd~\cite{geng2023grammar} & \yes  & \yes        & \no & \yes & \no & 20-50 & GF  \\ 
+% % GF: https://www.grammaticalframework.org/doc/tutorial/gf-tutorial.html
+% \domino~\cite{beurerkellner2024guiding}         & \yes & \yes & \yes & \yes & \no & 50-100 & GBNF DSL \\ 
+% \midrule
+% \Tool{} (ours)  & \yes & \yes & \yes & \yes & \yes & 500+ & Lark EBNF \\ 
+% \bottomrule
+% \end{tabular}
+% \begin{tablenotes}
+%     \footnotesize
+%     \item $\dag$ Implementation issues
+%     $\ddag$ Synchromesh is closed-source and the information about DSL grammars is unavailable
+%     \item GF: Grammatical Framework, GBNF is a DSL defined by LLAMA.CPP 
+% \end{tablenotes}
+% \end{threeparttable}
+% \normalsize
+% \label{tab:constrained_decoding_methods}
+% \end{table}

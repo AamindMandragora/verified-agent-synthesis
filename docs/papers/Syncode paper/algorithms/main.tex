@@ -1,0 +1,37 @@
+\begin{wrapfigure}{R}{0.5\textwidth}
+\begin{minipage}{0.5\textwidth}
+% \vspace{-.55in}
+
+\begin{algorithm}[H] 
+\small
+\caption{\Tool{} Generation}
+\label{alg:main}
+% %
+\textbf{Inputs:} $M$: LLM, $\tokenizer$: tokenizer, $C_0$: input prompt, $n_\textit{max}$: maximum generated tokens, $D$: decoding strategy
+\begin{algorithmic}[1]
+\Function{MaskedGenerate}{$M$, $\tokenizer$, $C_0$, $n_\textit{max}$, $D$}
+\State $\curtokens \gets \text{Tokenize}(\tokenizer, C_0)$
+\For{$i \in \{1, \dots n_\textit{max} \}$}
+\State $\textit{scores} \gets M(\curtokens)$
+\State $C_k \gets \text{decode}(\tokenizer, \curtokens)$
+\State $\accepts, r \gets \text{Parse}(C_k)$
+\label{line:acc}
+\State $m \gets \text{GrammarMask}(\accepts, r)$
+\label{line:gm}
+\State $\textit{scores} \gets m \odot \textit{scores}$
+\State $t_i \gets D(\textit{scores})$
+\If{$t_i = EOS$}
+\State break
+\EndIf
+\State $T_\textit{cur} \gets \text{append}(T_\textit{cur}, t_i)$
+% \State $\curtokens \gets \text{append}(\curtokens, t_i)$
+\EndFor
+\State $\text{output} \gets \text{decode}(\tokenizer, \curtokens)$
+\State \Return output
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+\vspace{-0.4in}
+
+\end{minipage}
+\end{wrapfigure}

@@ -1,0 +1,47 @@
+\begin{wrapfigure}{R}{0.53\textwidth}
+\vspace{-.2in}
+\begin{minipage}{0.55\textwidth}
+
+\begin{algorithm}[H]
+\caption{Incremental Parsing}
+\label{alg:parse}
+%
+\textbf{Inputs:} $\partialcode$: partial output, $\psmap$: state map
+\begin{algorithmic}[1]
+\Function{Parse}{$\partialcode$}
+\State $l_1, l_2 \dots l_f \gets \text{\lex}(\partialcode)$
+% \State $j \gets \text{Len}(L)$
+\State $\gamma, S_{\gamma} \gets \text{RestoreState}(\psmap, L)$
+\State $\parser \gets \text{Initialize}(S_\gamma)$
+\State $\textit{parsed} \gets l_1.l_2\dots l_{\gamma-1}$
+\For{$l_i \in l_\gamma, l_{\gamma+1} \dots l_f$}
+\State $\text{\next}(\parser, l_i)$
+\If{$\parser.state = Error$}
+\State break
+\EndIf
+\State $\textit{parsed} \gets \textit{parsed} + l_i$
+\State $\curaccepts \gets \nextaccepts$
+\State $\nextaccepts \gets \text{\follow}(\parser)$
+\State $S_i \gets \parser.state$
+\State $\text{Store}(\psmap, \textit{parsed}, S_i)$
+\EndFor
+% \State $\text{output} \gets \text{decode}(T, \curtokens)$
+% \State $r \gets \partialcode[\textit{parsed}:]$
+\If{$\partialcode = \textit{parsed}$}
+\State $r = l_f$
+\State $\accepts \gets \{\terminal_f, \nextaccepts[0]\}, \{\terminal_f, \nextaccepts[1]\} \dots \}$
+\State \qquad $\cup \{\curaccepts[0]\}, \{\curaccepts[1]\} \dots \}$
+\Else
+\State $r = \partialcode - \textit{parsed}$
+\State $\accepts \gets \{\nextaccepts[0]\}, \{\nextaccepts[1]\} \dots $
+\EndIf
+
+\State \Return $\accepts, r$
+\EndFunction
+%\item[]
+\end{algorithmic}
+\end{algorithm}
+
+\end{minipage}
+\vspace{-0.2in}
+\end{wrapfigure}

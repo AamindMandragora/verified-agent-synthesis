@@ -1,0 +1,4 @@
+\begin{restatable}{lemma}{dm}
+\label{lemma:dmatch}
+If $q = \compute_{\terminal}(r, \dfastart^{\terminal})$ and no prefix of $r$ is in $\lang(\terminal)$ i.e. $\nexists w_1 \in \alphabets^*, w_2 \in \alphabets^* \text{ such that } w_1.w_2 = r \text{ and } \compute_\terminal(w_1, \dfastart^{\terminal}) \in F_{\terminal}  $ then $\dmatch(t, q, \sequence) \iff \dmatch(r.t, \dfastart^{\terminal}, \sequence)$.
+\end{restatable}

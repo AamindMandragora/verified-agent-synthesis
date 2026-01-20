@@ -1,0 +1,54 @@
+\lstdefinestyle{myGrammarStyle}{
+    basicstyle=\scriptsize\ttfamily, % Reduce font size
+    commentstyle=\color{gray},
+    keywordstyle=\color{blue},
+    stringstyle=\color{orange},
+    numbers=left, % Line numbers on left
+    numberstyle=\tiny\color{gray}, % Line numbers styling
+    breaklines=true, % Wrap long lines
+    frame=single, % Frame around the code
+    framesep=3pt, % Adjust frame separation
+    xleftmargin=5pt, % Adjust left margin
+    xrightmargin=5pt, % Adjust right margin
+    backgroundcolor=\color{yellow!4}, % Background color
+    tabsize=2, % Tab size
+    captionpos=b, % Caption position bottom
+    aboveskip=5pt, % Reduce space above the listing
+    belowskip=5pt, % Reduce space below the listing
+    linewidth=0.9\linewidth, % Set custom line width to less than text width
+    escapeinside={(*@}{@*)}, % for escaping to LaTeX
+}
+
+\begin{lstlisting}[style=myGrammarStyle, caption=JSON Grammar]
+?start: value
+
+?value: object
+| array
+| UNESCAPED_STRING
+| SIGNED_NUMBER      -> number
+| "true"             -> true
+| "false"            -> false
+| "null"             -> null
+
+array  : "[" [value ("," value)*] "]"
+object : "{" [pair ("," pair)*] "}"
+pair   : UNESCAPED_STRING ":" value
+
+UNESCAPED_STRING: /\"[^"]*\"/
+
+DIGIT: "0".."9"
+HEXDIGIT: "a".."f"|"A".."F"|DIGIT
+INT: DIGIT+
+SIGNED_INT: ["+"|"-"] INT
+DECIMAL: INT "." INT? | "." INT
+
+
+_EXP: ("e"|"E") SIGNED_INT
+FLOAT: INT _EXP | DECIMAL _EXP?
+NUMBER: FLOAT | INT
+SIGNED_NUMBER: ["+"|"-"] NUMBER
+WS: /[ \t\f\r\n]/+
+
+%ignore WS
+\end{lstlisting}
+\label{gram:json_grammar}

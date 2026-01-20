@@ -1,0 +1,264 @@
+% Talk about the workflow
+\subsection{Illustrative Example}
+
+\begin{wrapfigure}{r}{.5\textwidth}
+    \vspace{-0.55in}
+    \centering
+    \includegraphics[width=0.5\textwidth]{images/overview_grammar.png}
+    \caption{Example grammar for illustration.}
+    \label{fig:overview_grammar}
+     \vspace{-0.1in}
+\end{wrapfigure}
+
+% {\bf Grammar.}
+Consider an example grammar in Figure~\ref{fig:overview_grammar} that uses the Lark EBNF syntax for defining the grammar production rules.
+The grammar represents a Domain-Specific Language (DSL) consisting of arithmetic expressions with basic operations like addition, subtraction, multiplication, and division over integers and floating point numbers. 
+It also includes support for parentheses to specify precedence and allows functions like exponential (math\_exp), square root (math\_sqrt), sine (math\_sin), and cosine (math\_cos) to be applied to expressions. 
+
+\begin{sloppypar}
+The symbols in the grammar such as $\textit{expr}$ and $\textit{factor}$ that can expand into other symbols through the application of production rules are called non-terminals.
+Symbols such as ( or INT cannot be further expanded and are called terminals.
+Let the set $\allterminals = \{\textit{lpar, rpar, add, sub, mult, div, int, float, math\_exp, math\_sqrt, math\_sin, math\_cos} \}$ represent the set of all terminals of the grammar.
+The terminal $\textit{int}$ is defined by the regular expression $[0\text{-}9]^+$, and $\textit{float}$ is defined by the regular expression $[0\text{-}9]^+.[0\text{-}9]^+$. 
+We use terminals $\textit{lpar, rpar, add, sub, mult, div, math\_exp, math\_sqrt, math\_sin, math\_cos}$, to denote the strings \str{(}, \str{)}, \str{+}, \str{*}, \str{/}, \str{math\_exp}, \str{math\_sqrt}, \str{math\_sin}, \str{math\_cos} respectively.
+% 
+\end{sloppypar}
+
+\begin{wrapfigure}{r}{.5\textwidth}
+    \vspace{-0.1in}
+    \centering
+    \includegraphics[width=0.5\textwidth]{images/overview_prompt.png}
+    \caption{Prompt for the example which is provided as input to the LLM.}
+    \label{fig:overview_prompt}
+     \vspace{-0.15in}
+\end{wrapfigure}
+
+\noindent {\bf Task.} 
+Consider an LLM that is used to translate a natural language text to an expression in the DSL defined above.
+Since LLMs are typically not good at mathematical calculations,
+it is common to instead let the LLM generate intermediate outputs in a certain syntax, and an interpreter of the DSL then computes the LLM's output into accurate results \cite{mialon2023augmented}.
+Figure~\ref{fig:overview_prompt} presents the prompt we use for our illustrative example,
+containing 2 question-answer pairs before the actual question that we want the LLM to answer.
+Providing question-answer examples before asking the actual questions
+is called few-shot prompting (2-shot in this case)
+and significantly improves the model's \mbox{accuracy \cite{brown2020language}.}
+
+\begin{wrapfigure}{r}{.35\textwidth}
+    \vspace{-0.1in}
+    \centering
+    \includegraphics[width=0.35\textwidth]{images/overview_outputs.png}
+    \caption{Output from LLM without and with \Tool{}. The colors represent the tokenization of the output.}
+    \label{fig:overview_standard}
+     \vspace{-0.2in}
+\end{wrapfigure}
+\noindent {\bf Standard LLM Generation.}
+As described in Section~\ref{sec:background}, the standard LLM first tokenizes the input and then iteratively predicts the next token from its vocabulary $\vocab$.
+Figure~\ref{fig:overview_standard} presents the output from the \llama{} model
+and our \Tool{} when given the Fig.~\ref{fig:overview_prompt} prompt.
+The output of the model is not a valid program in the DSL;
+it uses functions math\_area and math\_side that do not exist in the grammar.
+Further, \llama{} does not stop after generating the answer to our question and continues to generate more irrelevant question-answer pairs.
+% \Tool{}, can enhance the syntactic accuracy of LLM outputs, offering guarantees over their validity.
+\Tool{} on the other hand guarantees the syntactic validity of the LLM's output
+by excluding syntactically invalid choices when generating each token.
+For example, after generating \str{math}, \Tool{} excludes \str{\_area} and other choices from the LLM's vocabulary.
+The LLM opts for \str{\_sqrt} which is the top syntactically valid choice and continues
+the generation from \str{math\_sqrt}.
+
+\noindent {\bf Constrained Decoding.}
+Let $G$ denote the grammar in our example and $\lang(G) \subseteq \alphabets^*$ denote all syntactically valid strings in the grammar.
+Ideally, we want the final LLM output $C_n$ to be in $\lang(G)$.
+Strings such as \str{math\_exp(2 + 3 + 5 + 7 + 11)} and \str{math\_sin(30) + math\_cos(60)} belong to $\lang(G)$ as they are syntactically valid.
+Let $\partialcode$ denote the LLM's partial output during the $k$-th iteration of LLM generation. 
+Suppose $\lang_p(G)$ denotes all prefixes of $\lang(G)$, i.e., all strings that can be extended to a syntactically valid output.
+\str{math\_sin(30} and \str{math\_sin(30) + math} are in $\lang_p(G)$ as they can be extended to be syntactically valid. 
+ By ensuring that at each intermediate step, \add{the invariant} that the LLM partial generation $\partialcode$ is in the set $\lang_p(G)$ is maintained, we can guarantee that upon completion of the generation process, $C_n$ will indeed be syntactically valid, i.e., $C_n \in \lang(G)$. 
+This ensures that an intermediate output such as \str{math\_area} which is not in $\lang_p(G)$ is never generated by the model.
+
+
+\subsection{\Tool{} Algorithm}
+A key challenge in syntactic generation is token misalignment, where LLM tokens do not directly correspond to lexical tokens from the grammar.
+The main reason for the high error rate in syntactic generation in prior works is the lack of formalization in their approaches (Section~\ref{sec:exp_main}).
+Our work addresses this challenge by providing an algorithm that is provably sound — retains all syntactically valid tokens and is complete under specific conditions—rejecting every syntactically invalid token at every generation step.
+
+Another significant challenge for efficiency is developing a novel algorithm that facilitates offline computations that minimize the overhead during inference.
+\Tool{} tackles this challenge by creating a novel structure called the DFA mask store offline. 
+For a given grammar $G$ and vocabulary $\vocab$, this mask store is constructed once and can be used across all generations. 
+DFA mask store maps states of DFAs (corresponding to terminals in the grammar $G$) to boolean masks $m \in \{0, 1\}^{|\vocab|}$ over the vocabulary. 
+This approach also benefits from parallelizing a substantial portion of the syntactical LLM generation computations by offloading them to a GPU during inference.
+
+
+% \Tool{} addresses the syntactic decoding problem by creating a novel structure which we call \emph{DFA mask store} offline (Definition~\ref{def:lookup}). 
+% The precomputed mask store allows more efficient computation of set $\vocab_k$ at $k$-th iteration of LLM generation such that the intermediate generation $\partialcode.t \in \lang_p(G)$ for any $t\in\vocab_k$.
+\add{
+Furthermore, it is challenging to ensure generality with efficiency.
+Many prior works are restricted to syntactic generation with a specific type of decoding~\cite{scholak-etal-2021-picard, guidance}.
+At $k$-th LLM iteration, for partial LLM output  $\partialcode$, let $\vocab_k \subseteq \vocab$ denotes the subset of vocabulary such that for any token $t\in\vocab_k$ the intermediate generation continues to maintain the invariant $\partialcode.t \in \lang_p(G)$.
+Our formulation for computing $\vocab_k$ from $\vocab$ is highly general and can be integrated with any decoding algorithm, such as greedy, sampling, or beam-search. 
+Any algorithm that could potentially be applied to $\vocab$ can instead be applied to $\vocab_k$.
+The mask store allows more efficient computation of a subset of \mbox{tokens $\vocab_k$}.
+}
+
+\Tool{} works in two steps: 
+first, it parses $\partialcode$ and computes the unparsed remainder $r \in \alphabets^*$ along with the acceptable terminal sequences $\accepts$ (formally defined in Section~\ref{sec:parse}). 
+In the second step, \Tool{} utilizes $r$, $\accepts$, and the mask store. 
+This step involves traversing the DFA and performing a few lookups within the DFA mask store to obtain a subset of tokens $\vocab_k$. 
+\add{
+In the following sections, we elaborate on these steps using our illustrative example.
+}
+
+\noindent {\bf Parsing Partial Output.}
+\add{
+\Tool{}'s parsing of partial output $\partialcode$ begins with lexing $\partialcode$. 
+We assume our lexer has a 1-character lookahead and no backtracking. 
+This assumption ensures that LLM's future generations do not alter the lexical types of any previous lexical tokens except for the final lexical token.
+The remainder $r$ denotes the suffix of $\partialcode$ that may still change its lexical type in subsequent iterations.
+We define two cases for assigning $r$:
+}
+
+\begin{itemize}[leftmargin=*]
+    \item 
+Case 1 is when $\partialcode$ contains an unlexed suffix $u$, and here we assign $r = u$. For example, $\partialcode =$\str{math\_sqrt(3) * (2.} is lexed as \str{math\_sqrt}, \str{(}, \str{3}, \str{)}, \str{*}, \str{(}, \str{2.}, where \str{math\_sqrt}, \str{(}, \str{3}, \str{)}, \str{*}, \str{(} are lexical tokens of type $\textit{math\_sqrt, lpar, int, rpar, mult, lpar}$, respectively. Here \str{2.} (\str{2} followed by a \str{.}) is unlexed suffix which we assign as the \mbox{remainder $r$.}
+\item
+Case 2 is when $\partialcode$ ends with a complete lexical token, where $r$ is assigned the value of the final lexical token. 
+Hence, $\partialcode =$\str{math\_sqrt(3) * (2} is lexed as \str{math\_sqrt}, \str{(}, \str{3}, \str{)}, \str{*}, \str{(}, \str{2}.
+Where \str{math\_sqrt}, \str{(}, \str{3}, \str{)}, \str{*}, \str{(} are lexical tokens of type $\textit{math\_sqrt, lpar, int, rpar, mult, lpar}$, respectively. 
+Although \str{2} is the complete final lexical token with type $\textit{int}$, it is assigned as the remainder since in the subsequent iteration it may even change its lexical type to  $\textit{float}$.
+\end{itemize}
+\add{
+In both cases, our lexer assumption ensures that the portion of $\partialcode$ excluding the remainder $r$ will retain its lexical tokenization in subsequent LLM iterations.
+The assumption is crucial to enable incremental parsing and ensures that that the remainder $r$ is always small, both of which contribute to reducing time complexity.  
+% Note that the parsing in \Tool{} is performed incrementally throughout LLM generation to ensure small overhead.
+}
+
+\noindent {\bf Accept Sequences.}
+% This section may need a lot of polishing
+% Define the partially parsed code
+Given a sequence of lexical tokens $l_1, \dots l_f$, we use a \add{bottom-up LR} parser to compute what types of lexical tokens are acceptable next according to the grammar.
+If at a certain point in the generation, we have lexical tokens \str{math\_sqrt}, \str{(}, \str{3}, \str{)}, \str{*}, \str{(}, \str{2.27} then the immediate next lexical token can be of type $\textit{rpar}$, $\textit{add}$ or $\textit{mult}$.
+We define an accept sequence as a function of the parsed partial output (excluding the remainder) as a sequence of terminals such that those terminals can follow the currently parsed output (Definition~\ref{def:acc}).
+For instance, in the case $\partialcode =$ \str{math\_sqrt(3) * (2.27}, $\{\textit{rpar}\}$, $\{\textit{add}\}$ and $\{\textit{mult}\}$ all are 1-length accept sequences.
+$\{\textit{add}, \textit{int}\}$ and $\{\textit{add}, \textit{float}\}$ are some of the 2-length accept sequences for this example that can follow the current partial output.
+\add{
+In Section~\ref{sec:parse}, we show how we efficiently compute accept sequences of length 1 and 2 using an LR(1) parser, leveraging its immediate error detection property~\cite{10.1145/356628.356629}.
+}
+Further, we discuss how an LR($\kappa$) parser can be used to compute accept sequences of length $\kappa$ efficiently.
+% But in practice, \Tool{} can work quite effectively using accept the sequences of smaller lengths and still guarantees the soundness of syntactical generation (Theorem~\ref{thm:sound}) and thus avoid the high memory requirement for $LR(k)$ parsers for large $k$. 
+\add{
+However, in practice, \Tool{} can effectively operate with shorter accept sequences while still ensuring the soundness of syntactical generation (see Theorem~\ref{thm:sound}), thereby avoiding the high memory needed for LR($\kappa$) parsers for large values of $\kappa$.
+}
+
+%%%%%%%%%%% DFA Mask store %%%%%%%%%%%%%%%%%
+\noindent {\bf DFA Mask Store.}
+\add{
+\Tool{} parsing step partitions partial output $\partialcode$ into lexically fixed part $\fixpartialcode$ and remainder $r$.
+The accept sequences $\accepts$ are computed using the parser state on parsing $\fixpartialcode$ and denote the terminals that can follow $\fixpartialcode$.
+Thus the problem of obtaining subset $\vocab_k$ of tokens that will lead to syntactical continuation can be reduced to aligning accept sequence $\sequence \in \accepts$ with the string $r.t$ obtained by concatenating remainder $r$ and LLM token $t$ in the vocabulary.
+One approach is to iterate through LLM vocabulary $\vocab$ and verify this alignment for each token $t$ individually.
+However, this method is inefficient due to the need for matching $|V|$ tokens with $|\accepts|$ terminal sequences.
+}
+In \Tool{} algorithm, the precomputed DFA mask store is crucial for allowing efficient computation of acceptable tokens $\vocab_k$.
+% \add{
+% The mask store reduces this entire process to $|\accepts|$ lookups and tensor union operations. 
+% }
+Next, we show how the mask store maps the states of DFAs of the terminals and a sequence of terminals to masks over the vocabulary to enable this process. 
+
+Given a remainder $r$ and any accept sequence $\sequence \in \accepts$, we want to check for a token $t \in \vocab$, if $r.t$ \add{aligns} or partially matches with $\sequence$.
+We formally define this notion of partial match in Definition~\ref{def:pmatch}.
+We establish a connection between the match of a terminal sequence and a string through the DFAs corresponding to the terminals. 
+
+\begin{wrapfigure}{l}{.25\textwidth}
+    % \vspace{-0.1in}
+    \centering
+    \includegraphics[width=0.25\textwidth]{images/overview_int.png}
+    \caption{DFA for terminal $\textit{int}$.}
+    \label{fig:overview_int}
+     \vspace{-0.1in}
+\end{wrapfigure}
+Figure~\ref{fig:overview_int} presents a DFA for the terminal int.
+In this DFA, $q_0^\textit{int}$ is the start state, and $q_1^\textit{int}$ is an accept state.
+Further, we say that $q_0^\textit{int}, q_1^\textit{int}$ are \live{} states since there is a path from those states to an accept state and the state $q_2^\textit{int}$ is not a \live{} state. 
+
+Consider the partial output $\partialcode =$ \str{math\_sqrt(3) * (2}. 
+As described above, in this case, the output is split in the parsed part \str{math\_sqrt(3) * (} and the last lexical token \str{2} which is the remainder. 
+$\{\textit{int}, \textit{add}\}$, $\{\textit{int}, \textit{rpar}\}$, $\{\textit{float}\}$ are some of the accept sequences.
+For each of these accept sequences, we want to compute tokens $t \in \vocab$ such that appending \str{2} and $t$ i.e. \str{2}$.t$ partially matches the accept sequence.
+% For instance, considering the accept sequence $\{\textit{float}, \textit{add}\}$, the tokens $t=$\str{123}, \str{4+} and \str{+} are all such that $r.t=$\str{2123}, \str{24+} and \str{2+} partially matches $\{\textit{int}, \textit{add}\}$. 
+% We show that $\dmatch$ defined formally in 
+
+
+\begin{figure}[b]
+\centering
+\includegraphics[width=9cm]{images/overview_dmatch.png}
+\vspace{-.1in}
+\caption{DFAs for accept sequence $\sequence = \{\textit{float}, \textit{rpar}\}$.}
+\label{fig:overview_dmatch}
+\vspace{-0.1in}
+\vspace{-.1in}
+\end{figure}
+
+Consider an accept sequence $\sequence = \{\textit{float}, \textit{rpar}\}$. 
+Figure~\ref{fig:overview_dmatch} displays the DFAs corresponding to the terminals in $\sequence$. 
+If we begin from the initial state $q_0^\textit{float}$ of $D_\textit{float}$ and change the current DFA state according to the characters in $r$, in our example with $r =$\str{2}, the resulting state of the DFA is $q_1^\textit{float}$.
+We observe that any token $t \in \vocab$ is acceptable if continuing the DFA walk from $q_1^\textit{float}$ ends on a live state.
+We also allow a transition from the end state and start state of DFAs of subsequent terminals in the accept sequence as shown by the dotted arrow.
+\add{
+The partial match of $r.t$ and $\sequence$ can thus be equivalently checked by doing a walk over the DFAs.
+}
+Tokens such as \str{11}, \str{.}, \str{.1}, and \str{.27)} are some of the tokens where initiating a walk from $q_1^\textit{float}$ leads to reaching one of the live states. 
+For example, by consuming \str{.27)}, we reach $q_1^\textit{rpar}$, which is a live state.
+Consequently, \Tool{} approves \str{.27)} as a valid continuation from $\partialcode =$ \str{math\_sqrt(3) * (2}.
+
+\add{
+Our key insight for achieving efficiency is that for each DFA state, we can precompute LLM tokens that will lead to a transition to a live state starting from that state.
+Precomputing these sets can significantly reduce the computation required during inference.
+Further, these precomputed set of LLM tokens can be stored as boolean masks for efficiently combining them during inference.
+}
+Given a DFA state $q$ and any sequence terminals of length $\alpha$, the mask store maps $\dmap{\alpha}(q, \sequence) = m$, where $m \in \{0,1\}^{|\vocab|}$ is the mask over vocabulary.
+During the inference time, for each accept sequence $\sequence \in \accepts$, we first consume $r$ and walk over the first DFA in the accept sequence.
+We then use the map $\dmap{\alpha}$ on the current DFA state to get the \add{mask $m_\sequence$ of valid tokens for $\sequence$.
+\add{
+Hence, for each accept sequence $\sequence \in \accepts$, we require a walk over a DFA and a lookup in the mask store to obtain $m_\sequence$. 
+}
+
+Finally, we combine these masks \add{obtained} for each acccept sequence to get the masks of all syntactically valid tokens by computing their union $\bigcup_{\sequence \in \accepts} m_{\sequence}$.
+In practice, these masks can be stored as tensors and can be combined efficiently using a small number of tensor union operations. 
+We show in Theorem~\ref{thm:sound} that this combined mask overapproximates the set $\vocab_k$, ensuring the soundness of our approach.
+Further, we show that for the LR parser with larger lookahead, our approach is complete and ensures the combined mask is exactly $\vocab_k$~(Theorem~\ref{thm:complete}).
+}
+
+\noindent {\bf Bringing It All Together.}
+In our example, \Tool{} improves the LLM's output by guiding the generation. 
+Initially, the LLM produces \str{math} as $C_1$. 
+Next, \Tool{} excludes LLMs top choices such as \str{\_area}, \str{\_tri}, and \str{\_p} from the vocabulary, leading the decoding algorithm to select \str{\_sqrt}. 
+Further, even in the 12th iteration where the LLM outputs $C_{11}=$\str{math\_sqrt(3)/4 * (2.27}, \Tool{} filters out the LLM's preferred choice \str{\^} from the vocabulary. 
+Instead, the LLM opts for $*$, eventually generating $C_n =$ \str{math\_sqrt(3)/4 * (2.27) * (2.27)}, which is syntactically correct i.e. $C_n \in \lang(G)$ and also semantically accurate.
+
+\subsection {\textbf{Time Complexity}}
+At each decoding step in \Tool{}, the most resource-intensive tasks are computing accept sequences and generating the mask using $r$ and $\accepts$. 
+In Section~\ref{sec:time}, we demonstrate that our implementation, leveraging LR(1) parsing, efficiently constructs 1 and 2-length accept sequences. 
+We show that the complexity of \Tool{} at each decoding step is $O(T_\cup \cdot |\accepts|)$, where $T_\cup$ represents the time needed for boolean mask union operations. 
+\add{
+Typically, $|\accepts|$ is small (<10 on average in our experiments) and in the worst case, it equals the size of set of all terminals $|\allterminals|$ in the grammar.
+For our largest Python grammar, $|\allterminals|$ is 94.
+}
+Modern hardware, especially with GPUs, can perform these vectorized union operations efficiently~\cite{paszke2019pytorch}, making the \Tool{} algorithm efficient in practice.
+
+% \noindent {\bf Limitations of Prior Works.}
+% % \yifan{The following cmp with fine-tuning makes sense but doesn't quite belong here.}
+% Recent works~\cite{poesia2022synchromesh, geng2023grammar, willard2023efficient} solve the syntactic decoding problem by creating a technique that solves the decision problem for inclusion in the prefix language $\lang_p(G)$ by iterating over the whole vocabulary.
+% % If in $k$-th iteration the LLM has so far generated partial output $\partialcode$, the decision procedure is used to find all tokens $t$ in the vocabulary $\vocab$ such that $\partialcode.t \in \lang_p(G)$.
+% % If $\vocab_k \subseteq \vocab$ denote this subset of tokens that follow this condition then the LLM samples the next token from $\vocab_k$ instead of $\vocab$ and ensures that $C_{k+1} \in \lang_p(G)$.
+% % For our current example consider the LLM has generated $C_2 =$ \str{math} at the start of the second iteration.
+% % Then the decision procedure can be used to filter out tokens such as $t=$\str{\_area} as the string $C_2.t =$\str{math\_area} does not belong to $\lang_p(G)$. 
+% Typically $|V|$ is large ($>30,000$) and applying the decision procedure over the whole vocabulary at each generation step can be expensive, and thus these techniques do a preorder traversal over a trie built on $\vocab$ and optimizes this step.
+% \add{
+% Despite these optimizations, these approaches have high overhead as they have to perform the decision procedure on the entire vocabulary at each step.
+% These decision procedures involve expensive operations such as building a DFA corresponding to a union of regular expressions of subset of terminals~\cite{willard2023efficient} or updating a state of non-deterministic pushdown automata~\cite{llamacpp}.
+% Furthermore, all of these additional operations need to be performed sequentially on a CPU, limiting the scalability of these approaches.
+% We discuss the algorithmic details and the cost of decision procedure specific to each tool with more details in Section~\ref{sec:related}.
+% }
+% A similar technique of using a prefix trie over the vocabulary is also used by more recent tools~\cite{geng2023grammar, willard2023efficient}.
+% Fine-tuning on a dataset with examples from the language or prompt engineering can be used to improve the accuracy of the model on a specific language.
+% However, these techniques do not provide any guarantees in terms of syntactical accuracy.
+% Nevertheless, \Tool{} is complementary to them and any gains by these techniques will only improve the overall syntactical accuracy of the output.

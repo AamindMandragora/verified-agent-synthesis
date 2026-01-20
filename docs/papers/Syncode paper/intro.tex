@@ -1,0 +1,126 @@
+% \TBD{Sasa: Not really motivated by the first two paragraphs. The problem statement is too short and not direct.  Too much emphasis on the existing work already in para 2, hinting that possibly this work is incremental (if it does not provide the last word on the problem).}
+
+Recent research has shown that \add{transformer-based large language models} (LLMs) can play a pivotal role within compound AI systems, where they integrate with other software tools~\cite{compound-ai-blog, mialon2023augmented}.  
+% Write more about specific tool usage 
+For example, OpenAI's code interpreter~\cite{openai_tools} generates and executes Python programs automatically while responding to user prompts. 
+Similarly, Wolfram Alpha~\cite{Wolfram} translates user queries about mathematical questions into a domain-specific language (DSL) for utilizing various tools.
+\add{
+LLMs are utilized in various other applications to translate natural language text into formal languages, such as inputs to logic solvers \cite{pan2023logiclmempoweringlargelanguage, Olausson_2023} and theorem provers \cite{wu2022autoformalization, yang2023leandojotheoremprovingretrievalaugmented}, among others.
+}
+In all these applications, the LLM output is expected to follow a certain syntactic structure. 
+However, challenges such as hallucination and non-robustness make LLMs unreliable for such automated systems~\cite{liang2023holistic}.
+Moreover, recent theoretical \cite{Hahn_2020, yang2024maskedhardattentiontransformersrecognize} and empirical \cite{ebrahimi, bhattamishra2020, delétang2023neural} research suggests that language models based on transformers show difficulty in learning basic formal grammars.
+% - such as Dyck-$k$, the language consisting of well-nested parentheses of $k$ types.
+
+
+% Grammar-guided generation more motivation
+The interaction between software tools and LLMs commonly occurs through data serialization formats like JSON or YAML, or code in domain-specific or general-purpose programming languages, \add{such as Python or Go}. 
+Despite advancements in techniques such as fine-tuning and prompt engineering, which enhance the model's ability, these approaches fall short of fully addressing the challenge of syntactical accuracy in generated output.
+\add{
+This problem is especially prominent in two common scenarios: (1)~using open-source models, which are typically relatively small, and (2)~generating text for formal languages with relatively modest representation in \mbox{the LLM's training data.}
+
+
+% grammar-guided generation methods
+Modern LLMs generate text sequentially, from left to right, one token at a time. 
+For each prefix, the model computes a probability distribution over a predefined vocabulary to predict the next token. 
+The LLM's decoding algorithm dictates how these probabilities are used to generate the token sequence.
+Very recently, researchers have proposed new techniques for grammar-guided generation to enhance the syntactical accuracy of LLMs by modifying the decoding algorithm.
+Although they ensure that the model consistently selects tokens that adhere to a specified formal language~\cite{scholak-etal-2021-picard, poesia2022synchromesh, llamacpp, willard2023efficient}, the existing approaches for grammar-guided generation either suffer from high error rates, resulting in syntactically incorrect output or impose significant \mbox{run time overhead in the inference:}
+ 
+% Better transition?
+% Challenge 1
+\begin{itemize}[leftmargin=*]\itemsep 1pt \parskip 2pt
+\item {\bf Issues with syntactical accuracy:}
+The language grammar consists of \emph{the terminals}, fundamental building blocks of the language (e.g., keywords, operators). 
+Typically, a lexer creates lexical tokens from the input, each token associated with a terminal from the grammar. 
+% Current autoregressive LLMs operate iteratively, generating tokens sequentially. 
+The LLM tokens form part of the model's fixed vocabulary, defined before training, and do not directly correspond to lexical tokens associated with any specific grammar.
+This discrepancy, known as \emph{token misalignment}, presents a significant challenge in ensuring precise grammar-guided generation \cite{poesia2022synchromesh}.
+% Grammar-guided generation should in theory always improve the model's accuracy for the particular task. 
+% Due to the lack of formalization, existing works on grammar-guided generation have intricate issues that lead to higher error rates than even unconstrained generation~\cite{willard2023efficient} (Section~\ref{sec:exp_errors}). 
+Thus, formally showing the soundness of the algorithm poses a challenge for ensuring the precision of the approach.
+
+% Challenge 2 
+\item {\bf Issues with high computational overhead:} 
+Typically, the computational complexity of additional operations performed for syntactical generation is lower than the standard LLM generation operations needed for propagating the input through LLM layers. 
+However, these syntactical generation operations are typically executed sequentially on a CPU, in contrast to the GPU-accelerated LLM generation, adding to the run time.
+Achieving low inference overhead faces two primary challenges for syntactical LLM generation.
+First, the algorithm should facilitate offline computations that minimize the overhead during inference.
+Second, it should effectively utilize available hardware resources and offload additional computations to modern hardware, such as GPUs, to enable parallel computation.
+
+% Challenge 2 
+\item {\bf Issues with generality:} 
+Prior works are restricted to specific LLM decoding schemes~\cite{scholak-etal-2021-picard, guidance}.
+ A major challenge for generality is designing a composable algorithm that can integrate with any decoding strategy such as greedy, beam search, and different types of temperature sampling.
+ \end{itemize}
+
+%
+%To address these issues, we present a technique for precise and efficient grammar-guided generation. Our work illustrates the feasibility of efficiently imposing formal grammar constraints on LLM generations, while also assuring that the output adheres strictly to predefined syntax.
+%
+Our goal is to make grammar-guided generation precise and efficient by imposing formal grammar constraints on LLM generations, ensuring the output adheres {strictly to the predefined syntax.}
+}
+
+\vspace{.05in}
+\noindent \textbf{\Tool{}.}
+\Tool{} is an efficient and general approach for generating syntactically correct output.
+\Tool{} takes a context-free grammar (CFG) represented with extended Backus–Naur form (EBNF) rules and ensures that the LLM output follows the provided grammar.
+% generality
+\Tool{} algorithm is general and can be composed with any existing LLM decoding algorithm, including greedy, beam search, and sampling.
+
+
+% Go deeper
+During the LLM decoding stage, where LLM selects the next token, \Tool{} employs a strategic two-step approach.
+In the initial step, it leverages partial output to generate sequences of terminals that can follow the partial output called \textit{accept sequences}. 
+This reduction to the level of terminals—a closer abstraction to language grammar than LLM tokens—simplifies the problem. 
+Simultaneously, \Tool{} computes a remainder from the partial output, representing the suffix that may change its terminal type in subsequent generations.
+In the second step, \Tool{} algorithm walks over the DFA using the remainder and uses the mask store to compute the mask (a boolean array to filter the vocabulary) specific to each accept sequence.
+By unifying masks for each accept sequence \Tool{} gets the set of \mbox{syntactically valid tokens.}
+
+% Efficiency
+To ensure the efficiency of \Tool{}'s syntactic generation, we propose a novel data structure called \emph{DFA mask store} which is pre-computed offline.
+DFA mask store is a lookup table derived from Deterministic Finite Automata (DFA) representing the terminals of the language grammar.
+\Tool{} algorithm can efficiently compute the syntactically valid next LLM tokens by leveraging this mask store.
+Moreover, the \Tool{} algorithm offers the additional benefit of parallelizing a substantial portion of the syntactical LLM generation computations by offloading them to a GPU.
+
+% error rate
+We demonstrate that the \Tool{} algorithm is \textit{sound} -- ensuring it retains all syntactically valid tokens at every generation step. \Tool{} is also \textit{complete} under specific conditions --  affirming it rejects every syntactically invalid token.
+
+
+% framework is scalable
+The \Tool{} framework seamlessly integrates with any language defined by deterministic CFGs and scales efficiently to generate code for general-purpose programming languages (GPLs).
+% our eval
+We evaluate \Tool{}'s ability to guide the Llama-2-7B-chat and Gemma2-2B-it models with the JSON grammar to generate valid JSON completions to prompts from the JSONModeEval~\cite{jsoneval} dataset. 
+We empirically show that LLMs augmented with \Tool{} do not generate any syntax errors for JSON and that guiding Gemma2-2B-it generation with \Tool{} achieves 100\% JSON schema validation accuracy.
+We evaluate \Tool{} on generating SQL queries from the text in Spider~\cite{yu-etal-2018-spider} and show that \Tool{} improves both compilation rate and execution accuracy.
+Further, we evaluate the augmentation of \Tool{} with a diverse set of state-of-the-art LLMs
+% , including \codegen{}, \wizard{}, and \llama{}, from the BigCode Models Leaderboard~\cite{nijkamp2023codegen,luo2023wizardcoder,touvron2023llama} 
+for the code completion tasks using problems from the HumanEval and MBXP datasets~\cite{athiwaratkun2023multilingual}.
+Our experiments, conducted with CFGs for a substantial subset of Python and Go, demonstrate that \Tool{} reduces \average{} of the syntax errors for Python and Go on average. 
+The remaining syntax errors persist because the LLM fails to halt generation before reaching the maximum generation limit defined in our experiments.
+% Furthermore, our evaluation considers both LALR(1) and LR(1) as base parsers, showing that the LR(1) parsers are more efficient for generating accept sequences.
+
+
+\vspace{.10in}
+\noindent{\bf Contributions.} The main {contributions} of this paper are:
+% One more about the concept of incremental RS
+
+\vspace{-.01in}
+\begin{itemize}[leftmargin=*]\itemsep 1pt \parskip 2pt
+    \item[$\star$] We present a \add{parsing-based} technique for decoding of LLMs by designing novel algorithms that allow us to efficiently generate syntactically correct output.  
+    \item[$\star$] We implement our approach into a \add{scalable and general} framework named \Tool{} that can work with any formal language with user-provided context-free grammar. 
+    \item[$\star$] We present an extensive evaluation of the performance of \Tool{} in generating syntactically correct output for JSON, SQL and two general-purpose programming languages Python and Go. 
+\end{itemize}
+
+% Anonymize this
+% \noindent\add{
+% Our code is available publicly <link removed for double-blind reviewing> and is currently being used in open-source and industry projects.
+% }
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=13cm]{images/workflow.png}
+\vspace{-.1in}
+\caption{In the \Tool{} workflow, the LLM takes partial output $C_k$ and generates a distribution for the next token $t_{k+1}$. The parser processes $C_k$ to produce accept sequences $\accepts$ and remainder $r$. These values are used by the DFA mask store to create a token mask, eliminating syntactically invalid tokens. The LLM iteratively generates a token $t_{k+1}$ using the distribution and the mask, appending it to $C_k$ to create the updated code $C_{k+1}$. The process continues until the LLM returns the final code $C_n$ based on the defined stop condition.} 
+\label{fig:workflow}
+\vspace{-.1in}
+\end{figure}

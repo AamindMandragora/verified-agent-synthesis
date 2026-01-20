@@ -1,0 +1,147 @@
+{
+  "task_description": "Generate valid JSON data structures",
+  "total_attempts": 5,
+  "timestamp": "2026-01-16T17:10:15.673852",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// I chose HybridGeneration to balance exploration with constraint adherence. For JSON generation, there's often room for creative tokens that don't strictly adhere to a strict parser, so we interleave constrained and unconstrained generations to maximize efficiency without sacrificing validity too much. The interval N=5 allows for some variability while ensuring most tokens are still constrained.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 5);",
+      "strategy_analysis": {
+        "strategy_name": "HybridGeneration",
+        "parameters": {
+          "interval": 5
+        },
+        "category": "interleaved",
+        "comparable_to": "Novel",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// I chose HybridGeneration to balance exploration with constraint adherence. For JSON generation, there's often room for creative tokens that don't strictly adhere to a strict parser, so we interleave constrained and unconstrained generations to maximize efficiency without sacrificing validity too much. The interval N=5 allows for some variability while ensuring most tokens are still constrained.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 5);"
+      },
+      "timestamp": "2026-01-16T17:03:21.929303",
+      "succeeded": false,
+      "failed_at": "runtime",
+      "error_summary": "Runtime error: InvalidJSONPrefix: Strategy produced invalid JSON prefix: 4EEeeeEeeeeeeEeeeEeeEEeEeeeEEeEEeeEeeeEeEEEEeeEEEEeeEEEeEeEeEeEeeeEeeeEeEEeeeEeEEEEeeeeEeEeEEeEEeeEe...",
+      "verification": {
+        "success": true,
+        "error_count": 0
+      },
+      "compilation": {
+        "success": true,
+        "output_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_170307_73e69d/generated_csd"
+      },
+      "runtime": {
+        "success": false,
+        "output_length": 100,
+        "execution_time_ms": 124023.86927604675
+      }
+    },
+    {
+      "attempt_number": 2,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The previous HybridGeneration approach led to an invalid JSON prefix due to too many unconstrained tokens. To mitigate this, I will switch to TryUnconstrainedThenConstrained with a smaller N=3. This strategy attempts an unconstrained generation first and falls back to a constrained generation if the result is invalid. The smaller N ensures that the fallback path is taken more frequently, reducing the likelihood of producing invalid prefixes.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 3);",
+      "strategy_analysis": {
+        "strategy_name": "TryUnconstrainedThenConstrained",
+        "parameters": {
+          "unconstrained_steps": 3
+        },
+        "category": "optimistic_with_fallback",
+        "comparable_to": "IterGen-like",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The previous HybridGeneration approach led to an invalid JSON prefix due to too many unconstrained tokens. To mitigate this, I will switch to TryUnconstrainedThenConstrained with a smaller N=3. This strategy attempts an unconstrained generation first and falls back to a constrained generation if the result is invalid. The smaller N ensures that the fallback path is taken more frequently, reducing the likelihood of producing invalid prefixes.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 3);"
+      },
+      "timestamp": "2026-01-16T17:05:33.902356",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Verification failed with 1 error(s):\n  - Line 87: a precondition for this call could not be proved",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null
+    },
+    {
+      "attempt_number": 3,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The previous HybridGeneration approach led to an invalid JSON prefix due to too many unconstrained tokens. To mitigate this, I will switch to TryUnconstrainedThenConstrained with a smaller N=3. This strategy attempts an unconstrained generation first and falls back to a constrained generation if the result is invalid. The smaller N ensures that the fallback path is taken more frequently, reducing the likelihood of producing invalid prefixes.\n// CSD_RATIONALE_END\nif maxSteps < 3 {\n  generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);\n} else {\n  generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 3);\n}",
+      "strategy_analysis": {
+        "strategy_name": "PureConstrainedGeneration",
+        "parameters": {},
+        "category": "fully_constrained",
+        "comparable_to": "SynCode",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The previous HybridGeneration approach led to an invalid JSON prefix due to too many unconstrained tokens. To mitigate this, I will switch to TryUnconstrainedThenConstrained with a smaller N=3. This strategy attempts an unconstrained generation first and falls back to a constrained generation if the result is invalid. The smaller N ensures that the fallback path is taken more frequently, reducing the likelihood of producing invalid prefixes.\n// CSD_RATIONALE_END\nif maxSteps < 3 {\n  generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);\n} else {\n  generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 3);\n}"
+      },
+      "timestamp": "2026-01-16T17:05:40.437966",
+      "succeeded": false,
+      "failed_at": "runtime",
+      "error_summary": "Runtime error: InvalidJSONPrefix: Strategy produced invalid JSON prefix: {eeeeeEEeEEeEeEEEeeeEEeeEeeeEEeEeEeEeeeEeEeEEEEeEEeEEeEEEeEEEeEeEeeEeEEeeeEeEEEeeeEeeEEEEeEeEEEEEEee...",
+      "verification": {
+        "success": true,
+        "error_count": 0
+      },
+      "compilation": {
+        "success": true,
+        "output_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_170307_73e69d/generated_csd_20260116_170544_2ebe3e"
+      },
+      "runtime": {
+        "success": false,
+        "output_length": 100,
+        "execution_time_ms": 125676.44691467285
+      }
+    },
+    {
+      "attempt_number": 4,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The previous TryUnconstrainedThenConstrained approach with N=3 still occasionally produced invalid prefixes. To further reduce the risk of invalid output, we will switch to HybridGeneration with N=2. This strategy allows for occasional unconstrained attempts but generally follows a constrained approach, balancing between exploration and exploitation. The smaller N ensures that the model stays closer to the parser's expectations more often, reducing the likelihood of producing invalid prefixes.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 2);",
+      "strategy_analysis": {
+        "strategy_name": "HybridGeneration",
+        "parameters": {
+          "interval": 2
+        },
+        "category": "interleaved",
+        "comparable_to": "Novel",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The previous TryUnconstrainedThenConstrained approach with N=3 still occasionally produced invalid prefixes. To further reduce the risk of invalid output, we will switch to HybridGeneration with N=2. This strategy allows for occasional unconstrained attempts but generally follows a constrained approach, balancing between exploration and exploitation. The smaller N ensures that the model stays closer to the parser's expectations more often, reducing the likelihood of producing invalid prefixes.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 2);"
+      },
+      "timestamp": "2026-01-16T17:07:54.242939",
+      "succeeded": false,
+      "failed_at": "runtime",
+      "error_summary": "Runtime error: InvalidJSONPrefix: Strategy produced invalid JSON prefix: {eEEeEeeeEeeEEeeEeEEeeEeeeeEeeeeEEEEEEeEeeeEeeeeEEEEeEeeeEEEEEEeEeeEEEEEeEEeeeeEEeeeEeEEeEEeeEEEeeeE...",
+      "verification": {
+        "success": true,
+        "error_count": 0
+      },
+      "compilation": {
+        "success": true,
+        "output_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_170307_73e69d/generated_csd_20260116_170758_6eac10"
+      },
+      "runtime": {
+        "success": false,
+        "output_length": 100,
+        "execution_time_ms": 125726.46260261536
+      }
+    },
+    {
+      "attempt_number": 5,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The previous HybridGeneration with N=2 occasionally produced invalid prefixes. Given the runtime error indicating stricter validation, we will switch to TryUnconstrainedThenConstrained with N=3. This strategy allows for more frequent unconstrained attempts, providing better exploration while maintaining robustness against invalid outputs. The N=3 balance minimizes the risk of producing invalid prefixes without compromising the generative quality too much.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 3);",
+      "strategy_analysis": {
+        "strategy_name": "TryUnconstrainedThenConstrained",
+        "parameters": {
+          "unconstrained_steps": 3
+        },
+        "category": "optimistic_with_fallback",
+        "comparable_to": "IterGen-like",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The previous HybridGeneration with N=2 occasionally produced invalid prefixes. Given the runtime error indicating stricter validation, we will switch to TryUnconstrainedThenConstrained with N=3. This strategy allows for more frequent unconstrained attempts, providing better exploration while maintaining robustness against invalid outputs. The N=3 balance minimizes the risk of producing invalid prefixes without compromising the generative quality too much.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 3);"
+      },
+      "timestamp": "2026-01-16T17:10:07.865082",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Verification failed with 1 error(s):\n  - Line 87: a precondition for this call could not be proved",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null
+    }
+  ],
+  "failure_patterns": {
+    "verification_failures": 2,
+    "compilation_failures": 0,
+    "runtime_failures": 3,
+    "common_errors": []
+  }
+}

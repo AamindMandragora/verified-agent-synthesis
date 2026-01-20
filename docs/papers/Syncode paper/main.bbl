@@ -1,0 +1,614 @@
+%%% -*-BibTeX-*-
+%%% Do NOT edit. File created by BibTeX with style
+%%% ACM-Reference-Format-Journals [18-Jan-2012].
+
+\begin{thebibliography}{54}
+
+%%% ====================================================================
+%%% NOTE TO THE USER: you can override these defaults by providing
+%%% customized versions of any of these macros before the \bibliography
+%%% command.  Each of them MUST provide its own final punctuation,
+%%% except for \shownote{}, \showDOI{}, and \showURL{}.  The latter two
+%%% do not use final punctuation, in order to avoid confusing it with
+%%% the Web address.
+%%%
+%%% To suppress output of a particular field, define its macro to expand
+%%% to an empty string, or better, \unskip, like this:
+%%%
+%%% \newcommand{\showDOI}[1]{\unskip}   % LaTeX syntax
+%%%
+%%% \def \showDOI #1{\unskip}           % plain TeX syntax
+%%%
+%%% ====================================================================
+
+\ifx \showCODEN    \undefined \def \showCODEN     #1{\unskip}     \fi
+\ifx \showDOI      \undefined \def \showDOI       #1{#1}\fi
+\ifx \showISBNx    \undefined \def \showISBNx     #1{\unskip}     \fi
+\ifx \showISBNxiii \undefined \def \showISBNxiii  #1{\unskip}     \fi
+\ifx \showISSN     \undefined \def \showISSN      #1{\unskip}     \fi
+\ifx \showLCCN     \undefined \def \showLCCN      #1{\unskip}     \fi
+\ifx \shownote     \undefined \def \shownote      #1{#1}          \fi
+\ifx \showarticletitle \undefined \def \showarticletitle #1{#1}   \fi
+\ifx \showURL      \undefined \def \showURL       {\relax}        \fi
+% The following commands are used for tagged output and should be
+% invisible to TeX
+\providecommand\bibfield[2]{#2}
+\providecommand\bibinfo[2]{#2}
+\providecommand\natexlab[1]{#1}
+\providecommand\showeprint[2][]{arXiv:#2}
+
+\bibitem[\protect\citeauthoryear{Agrawal, Kanade, Goyal, Lahiri, and Rajamani}{Agrawal et~al\mbox{.}}{2023}]%
+        {agrawal2023guiding}
+\bibfield{author}{\bibinfo{person}{Lakshya~A Agrawal}, \bibinfo{person}{Aditya Kanade}, \bibinfo{person}{Navin Goyal}, \bibinfo{person}{Shuvendu~K. Lahiri}, {and} \bibinfo{person}{Sriram~K. Rajamani}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \bibinfo{title}{Guiding Language Models of Code with Global Context using Monitors}.
+\newblock
+\newblock
+\showeprint[arxiv]{2306.10763}~[cs.CL]
+
+
+\bibitem[\protect\citeauthoryear{Aho and Johnson}{Aho and Johnson}{1974}]%
+        {10.1145/356628.356629}
+\bibfield{author}{\bibinfo{person}{A.~V. Aho} {and} \bibinfo{person}{S.~C. Johnson}.} \bibinfo{year}{1974}\natexlab{}.
+\newblock \showarticletitle{LR Parsing}.
+\newblock \bibinfo{journal}{\emph{ACM Comput. Surv.}} \bibinfo{volume}{6}, \bibinfo{number}{2} (\bibinfo{date}{jun} \bibinfo{year}{1974}), \bibinfo{pages}{99–124}.
+\newblock
+\showISSN{0360-0300}
+\urldef\tempurl%
+\url{https://doi.org/10.1145/356628.356629}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Aho, Sethi, and Ullman}{Aho et~al\mbox{.}}{1986}]%
+        {aho86}
+\bibfield{author}{\bibinfo{person}{Alfred~V. Aho}, \bibinfo{person}{Ravi Sethi}, {and} \bibinfo{person}{Jeffrey~D. Ullman}.} \bibinfo{year}{1986}\natexlab{}.
+\newblock \bibinfo{booktitle}{\emph{{Compilers, Principles, Techniques, and Tools}}}.
+\newblock \bibinfo{publisher}{Addison-Wesley}.
+\newblock
+
+
+\bibitem[\protect\citeauthoryear{{ANTLR}}{{ANTLR}}{ }]%
+        {antlr}
+\bibfield{author}{\bibinfo{person}{{ANTLR}}.} \bibinfo{year}{-}\natexlab{}.
+\newblock \bibinfo{title}{ANother Tool for Language Recognition}.
+\newblock
+\newblock
+
+
+\bibitem[\protect\citeauthoryear{Athiwaratkun, Gouda, Wang, Li, Tian, Tan, Ahmad, Wang, Sun, Shang, Gonugondla, Ding, Kumar, Fulton, Farahani, Jain, Giaquinto, Qian, Ramanathan, Nallapati, Ray, Bhatia, Sengupta, Roth, and Xiang}{Athiwaratkun et~al\mbox{.}}{2023}]%
+        {athiwaratkun2023multilingual}
+\bibfield{author}{\bibinfo{person}{Ben Athiwaratkun}, \bibinfo{person}{Sanjay~Krishna Gouda}, \bibinfo{person}{Zijian Wang}, \bibinfo{person}{Xiaopeng Li}, \bibinfo{person}{Yuchen Tian}, \bibinfo{person}{Ming Tan}, \bibinfo{person}{Wasi~Uddin Ahmad}, \bibinfo{person}{Shiqi Wang}, \bibinfo{person}{Qing Sun}, \bibinfo{person}{Mingyue Shang}, \bibinfo{person}{Sujan~Kumar Gonugondla}, \bibinfo{person}{Hantian Ding}, \bibinfo{person}{Varun Kumar}, \bibinfo{person}{Nathan Fulton}, \bibinfo{person}{Arash Farahani}, \bibinfo{person}{Siddhartha Jain}, \bibinfo{person}{Robert Giaquinto}, \bibinfo{person}{Haifeng Qian}, \bibinfo{person}{Murali~Krishna Ramanathan}, \bibinfo{person}{Ramesh Nallapati}, \bibinfo{person}{Baishakhi Ray}, \bibinfo{person}{Parminder Bhatia}, \bibinfo{person}{Sudipta Sengupta}, \bibinfo{person}{Dan Roth}, {and} \bibinfo{person}{Bing Xiang}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \bibinfo{title}{Multi-lingual Evaluation of Code Generation Models}.
+\newblock
+\newblock
+\showeprint[arxiv]{2210.14868}~[cs.LG]
+
+
+\bibitem[\protect\citeauthoryear{Austin, Odena, Nye, Bosma, Michalewski, Dohan, Jiang, Cai, Terry, Le, and Sutton}{Austin et~al\mbox{.}}{2021}]%
+        {austin2021program}
+\bibfield{author}{\bibinfo{person}{Jacob Austin}, \bibinfo{person}{Augustus Odena}, \bibinfo{person}{Maxwell Nye}, \bibinfo{person}{Maarten Bosma}, \bibinfo{person}{Henryk Michalewski}, \bibinfo{person}{David Dohan}, \bibinfo{person}{Ellen Jiang}, \bibinfo{person}{Carrie Cai}, \bibinfo{person}{Michael Terry}, \bibinfo{person}{Quoc Le}, {and} \bibinfo{person}{Charles Sutton}.} \bibinfo{year}{2021}\natexlab{}.
+\newblock \bibinfo{title}{Program Synthesis with Large Language Models}.
+\newblock
+\newblock
+\showeprint[arxiv]{2108.07732}~[cs.PL]
+
+
+\bibitem[\protect\citeauthoryear{Bassamzadeh and Methani}{Bassamzadeh and Methani}{2024}]%
+        {bassamzadeh2024comparativestudydslcode}
+\bibfield{author}{\bibinfo{person}{Nastaran Bassamzadeh} {and} \bibinfo{person}{Chhaya Methani}.} \bibinfo{year}{2024}\natexlab{}.
+\newblock \bibinfo{title}{A Comparative Study of DSL Code Generation: Fine-Tuning vs. Optimized Retrieval Augmentation}.
+\newblock
+\newblock
+\showeprint[arxiv]{2407.02742}~[cs.SE]
+\urldef\tempurl%
+\url{https://arxiv.org/abs/2407.02742}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Beurer-Kellner, Fischer, and Vechev}{Beurer-Kellner et~al\mbox{.}}{2023}]%
+        {10.1145/3591300}
+\bibfield{author}{\bibinfo{person}{Luca Beurer-Kellner}, \bibinfo{person}{Marc Fischer}, {and} \bibinfo{person}{Martin Vechev}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \showarticletitle{Prompting Is Programming: A Query Language for Large Language Models}.
+\newblock \bibinfo{journal}{\emph{Proc. ACM Program. Lang.}} \bibinfo{volume}{7}, \bibinfo{number}{PLDI}, Article \bibinfo{articleno}{186} (\bibinfo{date}{jun} \bibinfo{year}{2023}), \bibinfo{numpages}{24}~pages.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/3591300}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Beurer-Kellner, Fischer, and Vechev}{Beurer-Kellner et~al\mbox{.}}{2024}]%
+        {beurerkellner2024guiding}
+\bibfield{author}{\bibinfo{person}{Luca Beurer-Kellner}, \bibinfo{person}{Marc Fischer}, {and} \bibinfo{person}{Martin Vechev}.} \bibinfo{year}{2024}\natexlab{}.
+\newblock \bibinfo{title}{Guiding LLMs The Right Way: Fast, Non-Invasive Constrained Generation}.
+\newblock
+\newblock
+\showeprint[arxiv]{2403.06988}~[cs.LG]
+
+
+\bibitem[\protect\citeauthoryear{Bhattamishra, Ahuja, and Goyal}{Bhattamishra et~al\mbox{.}}{2020}]%
+        {bhattamishra2020}
+\bibfield{author}{\bibinfo{person}{Satwik Bhattamishra}, \bibinfo{person}{Kabir Ahuja}, {and} \bibinfo{person}{Navin Goyal}.} \bibinfo{year}{2020}\natexlab{}.
+\newblock \showarticletitle{On the {A}bility and {L}imitations of {T}ransformers to {R}ecognize {F}ormal {L}anguages}. In \bibinfo{booktitle}{\emph{Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP)}}, \bibfield{editor}{\bibinfo{person}{Bonnie Webber}, \bibinfo{person}{Trevor Cohn}, \bibinfo{person}{Yulan He}, {and} \bibinfo{person}{Yang Liu}} (Eds.). \bibinfo{publisher}{Association for Computational Linguistics}, \bibinfo{address}{Online}, \bibinfo{pages}{7096--7116}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.18653/v1/2020.emnlp-main.576}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Brown, Mann, Ryder, Subbiah, Kaplan, Dhariwal, Neelakantan, Shyam, Sastry, Askell, Agarwal, Herbert-Voss, Krueger, Henighan, Child, Ramesh, Ziegler, Wu, Winter, Hesse, Chen, Sigler, Litwin, Gray, Chess, Clark, Berner, McCandlish, Radford, Sutskever, and Amodei}{Brown et~al\mbox{.}}{2020}]%
+        {brown2020language}
+\bibfield{author}{\bibinfo{person}{Tom~B. Brown}, \bibinfo{person}{Benjamin Mann}, \bibinfo{person}{Nick Ryder}, \bibinfo{person}{Melanie Subbiah}, \bibinfo{person}{Jared Kaplan}, \bibinfo{person}{Prafulla Dhariwal}, \bibinfo{person}{Arvind Neelakantan}, \bibinfo{person}{Pranav Shyam}, \bibinfo{person}{Girish Sastry}, \bibinfo{person}{Amanda Askell}, \bibinfo{person}{Sandhini Agarwal}, \bibinfo{person}{Ariel Herbert-Voss}, \bibinfo{person}{Gretchen Krueger}, \bibinfo{person}{Tom Henighan}, \bibinfo{person}{Rewon Child}, \bibinfo{person}{Aditya Ramesh}, \bibinfo{person}{Daniel~M. Ziegler}, \bibinfo{person}{Jeffrey Wu}, \bibinfo{person}{Clemens Winter}, \bibinfo{person}{Christopher Hesse}, \bibinfo{person}{Mark Chen}, \bibinfo{person}{Eric Sigler}, \bibinfo{person}{Mateusz Litwin}, \bibinfo{person}{Scott Gray}, \bibinfo{person}{Benjamin Chess}, \bibinfo{person}{Jack Clark}, \bibinfo{person}{Christopher Berner}, \bibinfo{person}{Sam McCandlish}, \bibinfo{person}{Alec Radford}, \bibinfo{person}{Ilya Sutskever},
+  {and} \bibinfo{person}{Dario Amodei}.} \bibinfo{year}{2020}\natexlab{}.
+\newblock \bibinfo{title}{Language Models are Few-Shot Learners}.
+\newblock
+\newblock
+\showeprint[arxiv]{2005.14165}~[cs.CL]
+
+
+\bibitem[\protect\citeauthoryear{Chen, Borgeaud, Irving, Lespiau, Sifre, and Jumper}{Chen et~al\mbox{.}}{2023}]%
+        {ChenBILSJ23}
+\bibfield{author}{\bibinfo{person}{Charlie Chen}, \bibinfo{person}{Sebastian Borgeaud}, \bibinfo{person}{Geoffrey Irving}, \bibinfo{person}{Jean{-}Baptiste Lespiau}, \bibinfo{person}{Laurent Sifre}, {and} \bibinfo{person}{John Jumper}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \showarticletitle{Accelerating Large Language Model Decoding with Speculative Sampling}.
+\newblock \bibinfo{journal}{\emph{ArXiv preprint}} (\bibinfo{year}{2023}).
+\newblock
+
+
+\bibitem[\protect\citeauthoryear{Chen, Tworek, Jun, Yuan, de~Oliveira~Pinto, Kaplan, Edwards, Burda, Joseph, Brockman, Ray, Puri, Krueger, Petrov, Khlaaf, Sastry, Mishkin, Chan, Gray, Ryder, Pavlov, Power, Kaiser, Bavarian, Winter, Tillet, Such, Cummings, Plappert, Chantzis, Barnes, Herbert-Voss, Guss, Nichol, Paino, Tezak, Tang, Babuschkin, Balaji, Jain, Saunders, Hesse, Carr, Leike, Achiam, Misra, Morikawa, Radford, Knight, Brundage, Murati, Mayer, Welinder, McGrew, Amodei, McCandlish, Sutskever, and Zaremba}{Chen et~al\mbox{.}}{2021}]%
+        {chen2021evaluating}
+\bibfield{author}{\bibinfo{person}{Mark Chen}, \bibinfo{person}{Jerry Tworek}, \bibinfo{person}{Heewoo Jun}, \bibinfo{person}{Qiming Yuan}, \bibinfo{person}{Henrique~Ponde de Oliveira~Pinto}, \bibinfo{person}{Jared Kaplan}, \bibinfo{person}{Harri Edwards}, \bibinfo{person}{Yuri Burda}, \bibinfo{person}{Nicholas Joseph}, \bibinfo{person}{Greg Brockman}, \bibinfo{person}{Alex Ray}, \bibinfo{person}{Raul Puri}, \bibinfo{person}{Gretchen Krueger}, \bibinfo{person}{Michael Petrov}, \bibinfo{person}{Heidy Khlaaf}, \bibinfo{person}{Girish Sastry}, \bibinfo{person}{Pamela Mishkin}, \bibinfo{person}{Brooke Chan}, \bibinfo{person}{Scott Gray}, \bibinfo{person}{Nick Ryder}, \bibinfo{person}{Mikhail Pavlov}, \bibinfo{person}{Alethea Power}, \bibinfo{person}{Lukasz Kaiser}, \bibinfo{person}{Mohammad Bavarian}, \bibinfo{person}{Clemens Winter}, \bibinfo{person}{Philippe Tillet}, \bibinfo{person}{Felipe~Petroski Such}, \bibinfo{person}{Dave Cummings}, \bibinfo{person}{Matthias Plappert}, \bibinfo{person}{Fotios Chantzis},
+  \bibinfo{person}{Elizabeth Barnes}, \bibinfo{person}{Ariel Herbert-Voss}, \bibinfo{person}{William~Hebgen Guss}, \bibinfo{person}{Alex Nichol}, \bibinfo{person}{Alex Paino}, \bibinfo{person}{Nikolas Tezak}, \bibinfo{person}{Jie Tang}, \bibinfo{person}{Igor Babuschkin}, \bibinfo{person}{Suchir Balaji}, \bibinfo{person}{Shantanu Jain}, \bibinfo{person}{William Saunders}, \bibinfo{person}{Christopher Hesse}, \bibinfo{person}{Andrew~N. Carr}, \bibinfo{person}{Jan Leike}, \bibinfo{person}{Josh Achiam}, \bibinfo{person}{Vedant Misra}, \bibinfo{person}{Evan Morikawa}, \bibinfo{person}{Alec Radford}, \bibinfo{person}{Matthew Knight}, \bibinfo{person}{Miles Brundage}, \bibinfo{person}{Mira Murati}, \bibinfo{person}{Katie Mayer}, \bibinfo{person}{Peter Welinder}, \bibinfo{person}{Bob McGrew}, \bibinfo{person}{Dario Amodei}, \bibinfo{person}{Sam McCandlish}, \bibinfo{person}{Ilya Sutskever}, {and} \bibinfo{person}{Wojciech Zaremba}.} \bibinfo{year}{2021}\natexlab{}.
+\newblock \bibinfo{title}{Evaluating Large Language Models Trained on Code}.
+\newblock
+\newblock
+\showeprint[arxiv]{2107.03374}~[cs.LG]
+
+
+\bibitem[\protect\citeauthoryear{Delétang, Ruoss, Grau-Moya, Genewein, Wenliang, Catt, Cundy, Hutter, Legg, Veness, and Ortega}{Delétang et~al\mbox{.}}{2023}]%
+        {delétang2023neural}
+\bibfield{author}{\bibinfo{person}{Grégoire Delétang}, \bibinfo{person}{Anian Ruoss}, \bibinfo{person}{Jordi Grau-Moya}, \bibinfo{person}{Tim Genewein}, \bibinfo{person}{Li~Kevin Wenliang}, \bibinfo{person}{Elliot Catt}, \bibinfo{person}{Chris Cundy}, \bibinfo{person}{Marcus Hutter}, \bibinfo{person}{Shane Legg}, \bibinfo{person}{Joel Veness}, {and} \bibinfo{person}{Pedro~A. Ortega}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \bibinfo{title}{Neural Networks and the Chomsky Hierarchy}.
+\newblock
+\newblock
+\showeprint[arxiv]{2207.02098}~[cs.LG]
+\urldef\tempurl%
+\url{https://arxiv.org/abs/2207.02098}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Dong, Li, and Jin}{Dong et~al\mbox{.}}{2023}]%
+        {10.1145/3597926.3598048}
+\bibfield{author}{\bibinfo{person}{Yihong Dong}, \bibinfo{person}{Ge Li}, {and} \bibinfo{person}{Zhi Jin}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \showarticletitle{CODEP: Grammatical Seq2Seq Model for General-Purpose Code Generation} \emph{(\bibinfo{series}{ISSTA 2023})}. \bibinfo{publisher}{Association for Computing Machinery}, \bibinfo{address}{New York, NY, USA}, \bibinfo{pages}{188–198}.
+\newblock
+\showISBNx{9798400702211}
+\urldef\tempurl%
+\url{https://doi.org/10.1145/3597926.3598048}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Earley}{Earley}{1970}]%
+        {10.1145/362007.362035}
+\bibfield{author}{\bibinfo{person}{Jay Earley}.} \bibinfo{year}{1970}\natexlab{}.
+\newblock \showarticletitle{An efficient context-free parsing algorithm}.
+\newblock \bibinfo{journal}{\emph{Commun. ACM}} \bibinfo{volume}{13}, \bibinfo{number}{2} (\bibinfo{date}{feb} \bibinfo{year}{1970}), \bibinfo{pages}{94–102}.
+\newblock
+\showISSN{0001-0782}
+\urldef\tempurl%
+\url{https://doi.org/10.1145/362007.362035}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Ebrahimi, Gelda, and Zhang}{Ebrahimi et~al\mbox{.}}{2020}]%
+        {ebrahimi}
+\bibfield{author}{\bibinfo{person}{Javid Ebrahimi}, \bibinfo{person}{Dhruv Gelda}, {and} \bibinfo{person}{Wei Zhang}.} \bibinfo{year}{2020}\natexlab{}.
+\newblock \showarticletitle{How Can Self-Attention Networks Recognize {D}yck-n Languages?}. In \bibinfo{booktitle}{\emph{Findings of the Association for Computational Linguistics: EMNLP 2020}}, \bibfield{editor}{\bibinfo{person}{Trevor Cohn}, \bibinfo{person}{Yulan He}, {and} \bibinfo{person}{Yang Liu}} (Eds.). \bibinfo{publisher}{Association for Computational Linguistics}, \bibinfo{address}{Online}, \bibinfo{pages}{4301--4306}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.18653/v1/2020.findings-emnlp.384}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Geng, Josifoski, Peyrard, and West}{Geng et~al\mbox{.}}{2023}]%
+        {geng2023grammar}
+\bibfield{author}{\bibinfo{person}{Saibo Geng}, \bibinfo{person}{Martin Josifoski}, \bibinfo{person}{Maxime Peyrard}, {and} \bibinfo{person}{Robert West}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \showarticletitle{Grammar-constrained decoding for structured NLP tasks without finetuning}. In \bibinfo{booktitle}{\emph{Proc. of EMNLP}}.
+\newblock
+
+
+\bibitem[\protect\citeauthoryear{Gerganov and et. al.}{Gerganov and et. al.}{2024}]%
+        {llamacpp}
+\bibfield{author}{\bibinfo{person}{Georgi Gerganov} {and} \bibinfo{person}{et. al.}} \bibinfo{year}{2024}\natexlab{}.
+\newblock \bibinfo{booktitle}{\emph{llama.cpp: Port of Facebook's LLaMA model in C/C++.}}
+\newblock
+\urldef\tempurl%
+\url{https://github.com/guidance-ai/guidance}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Hahn}{Hahn}{2020}]%
+        {Hahn_2020}
+\bibfield{author}{\bibinfo{person}{Michael Hahn}.} \bibinfo{year}{2020}\natexlab{}.
+\newblock \showarticletitle{Theoretical Limitations of Self-Attention in Neural Sequence Models}.
+\newblock \bibinfo{journal}{\emph{Transactions of the Association for Computational Linguistics}}  \bibinfo{volume}{8} (\bibinfo{date}{Dec.} \bibinfo{year}{2020}), \bibinfo{pages}{156–171}.
+\newblock
+\showISSN{2307-387X}
+\urldef\tempurl%
+\url{https://doi.org/10.1162/tacl_a_00306}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{{Lark}}{{Lark}}{ }]%
+        {lark}
+\bibfield{author}{\bibinfo{person}{{Lark}}.} \bibinfo{year}{-}\natexlab{}.
+\newblock \bibinfo{title}{Lark - a parsing toolkit for Python}.
+\newblock
+\newblock
+
+
+\bibitem[\protect\citeauthoryear{Leviathan, Kalman, and Matias}{Leviathan et~al\mbox{.}}{2023}]%
+        {leviathan2023fastinferencetransformersspeculative}
+\bibfield{author}{\bibinfo{person}{Yaniv Leviathan}, \bibinfo{person}{Matan Kalman}, {and} \bibinfo{person}{Yossi Matias}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \bibinfo{title}{Fast Inference from Transformers via Speculative Decoding}.
+\newblock
+\newblock
+\showeprint[arxiv]{2211.17192}~[cs.LG]
+\urldef\tempurl%
+\url{https://arxiv.org/abs/2211.17192}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Liang, Bommasani, Lee, Tsipras, Soylu, Yasunaga, Zhang, Narayanan, Wu, Kumar, Newman, Yuan, Yan, Zhang, Cosgrove, Manning, Ré, Acosta-Navas, Hudson, Zelikman, Durmus, Ladhak, Rong, Ren, Yao, Wang, Santhanam, Orr, Zheng, Yuksekgonul, Suzgun, Kim, Guha, Chatterji, Khattab, Henderson, Huang, Chi, Xie, Santurkar, Ganguli, Hashimoto, Icard, Zhang, Chaudhary, Wang, Li, Mai, Zhang, and Koreeda}{Liang et~al\mbox{.}}{2023}]%
+        {liang2023holistic}
+\bibfield{author}{\bibinfo{person}{Percy Liang}, \bibinfo{person}{Rishi Bommasani}, \bibinfo{person}{Tony Lee}, \bibinfo{person}{Dimitris Tsipras}, \bibinfo{person}{Dilara Soylu}, \bibinfo{person}{Michihiro Yasunaga}, \bibinfo{person}{Yian Zhang}, \bibinfo{person}{Deepak Narayanan}, \bibinfo{person}{Yuhuai Wu}, \bibinfo{person}{Ananya Kumar}, \bibinfo{person}{Benjamin Newman}, \bibinfo{person}{Binhang Yuan}, \bibinfo{person}{Bobby Yan}, \bibinfo{person}{Ce Zhang}, \bibinfo{person}{Christian Cosgrove}, \bibinfo{person}{Christopher~D. Manning}, \bibinfo{person}{Christopher Ré}, \bibinfo{person}{Diana Acosta-Navas}, \bibinfo{person}{Drew~A. Hudson}, \bibinfo{person}{Eric Zelikman}, \bibinfo{person}{Esin Durmus}, \bibinfo{person}{Faisal Ladhak}, \bibinfo{person}{Frieda Rong}, \bibinfo{person}{Hongyu Ren}, \bibinfo{person}{Huaxiu Yao}, \bibinfo{person}{Jue Wang}, \bibinfo{person}{Keshav Santhanam}, \bibinfo{person}{Laurel Orr}, \bibinfo{person}{Lucia Zheng}, \bibinfo{person}{Mert Yuksekgonul},
+  \bibinfo{person}{Mirac Suzgun}, \bibinfo{person}{Nathan Kim}, \bibinfo{person}{Neel Guha}, \bibinfo{person}{Niladri Chatterji}, \bibinfo{person}{Omar Khattab}, \bibinfo{person}{Peter Henderson}, \bibinfo{person}{Qian Huang}, \bibinfo{person}{Ryan Chi}, \bibinfo{person}{Sang~Michael Xie}, \bibinfo{person}{Shibani Santurkar}, \bibinfo{person}{Surya Ganguli}, \bibinfo{person}{Tatsunori Hashimoto}, \bibinfo{person}{Thomas Icard}, \bibinfo{person}{Tianyi Zhang}, \bibinfo{person}{Vishrav Chaudhary}, \bibinfo{person}{William Wang}, \bibinfo{person}{Xuechen Li}, \bibinfo{person}{Yifan Mai}, \bibinfo{person}{Yuhui Zhang}, {and} \bibinfo{person}{Yuta Koreeda}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \bibinfo{title}{Holistic Evaluation of Language Models}.
+\newblock
+\newblock
+\showeprint[arxiv]{2211.09110}~[cs.CL]
+
+
+\bibitem[\protect\citeauthoryear{Lundberg, Ribeiro, and et. al.}{Lundberg et~al\mbox{.}}{2023}]%
+        {guidance}
+\bibfield{author}{\bibinfo{person}{Scott Lundberg}, \bibinfo{person}{Marco Tulio ArXiv~preprinteia Ribeiro}, {and} \bibinfo{person}{et. al.}} \bibinfo{year}{2023}\natexlab{}.
+\newblock \bibinfo{booktitle}{\emph{Guidance-Ai/Guidance: {{A}} Guidance Language for Controlling Large Language Models.}}
+\newblock
+\urldef\tempurl%
+\url{https://github.com/guidance-ai/guidance}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Luo, Xu, Zhao, Sun, Geng, Hu, Tao, Ma, Lin, and Jiang}{Luo et~al\mbox{.}}{2023}]%
+        {luo2023wizardcoder}
+\bibfield{author}{\bibinfo{person}{Ziyang Luo}, \bibinfo{person}{Can Xu}, \bibinfo{person}{Pu Zhao}, \bibinfo{person}{Qingfeng Sun}, \bibinfo{person}{Xiubo Geng}, \bibinfo{person}{Wenxiang Hu}, \bibinfo{person}{Chongyang Tao}, \bibinfo{person}{Jing Ma}, \bibinfo{person}{Qingwei Lin}, {and} \bibinfo{person}{Daxin Jiang}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \bibinfo{title}{WizardCoder: Empowering Code Large Language Models with Evol-Instruct}.
+\newblock
+\newblock
+\showeprint[arxiv]{2306.08568}~[cs.CL]
+
+
+\bibitem[\protect\citeauthoryear{Melcer, Fulton, Gouda, and Qian}{Melcer et~al\mbox{.}}{2024}]%
+        {melcer2024constraineddecodingfillinthemiddlecode}
+\bibfield{author}{\bibinfo{person}{Daniel Melcer}, \bibinfo{person}{Nathan Fulton}, \bibinfo{person}{Sanjay~Krishna Gouda}, {and} \bibinfo{person}{Haifeng Qian}.} \bibinfo{year}{2024}\natexlab{}.
+\newblock \bibinfo{title}{Constrained Decoding for Fill-in-the-Middle Code Language Models via Efficient Left and Right Quotienting of Context-Sensitive Grammars}.
+\newblock
+\newblock
+\showeprint[arxiv]{2402.17988}~[cs.PL]
+\urldef\tempurl%
+\url{https://arxiv.org/abs/2402.17988}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Mialon, Dessì, Lomeli, Nalmpantis, Pasunuru, Raileanu, Rozière, Schick, Dwivedi-Yu, Celikyilmaz, Grave, LeCun, and Scialom}{Mialon et~al\mbox{.}}{2023}]%
+        {mialon2023augmented}
+\bibfield{author}{\bibinfo{person}{Grégoire Mialon}, \bibinfo{person}{Roberto Dessì}, \bibinfo{person}{Maria Lomeli}, \bibinfo{person}{Christoforos Nalmpantis}, \bibinfo{person}{Ram Pasunuru}, \bibinfo{person}{Roberta Raileanu}, \bibinfo{person}{Baptiste Rozière}, \bibinfo{person}{Timo Schick}, \bibinfo{person}{Jane Dwivedi-Yu}, \bibinfo{person}{Asli Celikyilmaz}, \bibinfo{person}{Edouard Grave}, \bibinfo{person}{Yann LeCun}, {and} \bibinfo{person}{Thomas Scialom}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \bibinfo{title}{Augmented Language Models: a Survey}.
+\newblock
+\newblock
+\showeprint[arxiv]{2302.07842}~[cs.CL]
+
+
+\bibitem[\protect\citeauthoryear{Murty, Sharma, Andreas, and Manning}{Murty et~al\mbox{.}}{2023}]%
+        {murty2023pushdown}
+\bibfield{author}{\bibinfo{person}{Shikhar Murty}, \bibinfo{person}{Pratyusha Sharma}, \bibinfo{person}{Jacob Andreas}, {and} \bibinfo{person}{Christopher~D Manning}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \showarticletitle{Pushdown Layers: Encoding Recursive Structure in Transformer Language Models}. In \bibinfo{booktitle}{\emph{The 2023 Conference on Empirical Methods in Natural Language Processing}}.
+\newblock
+\urldef\tempurl%
+\url{https://openreview.net/forum?id=nRB8VpeM7b}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Nijkamp, Pang, Hayashi, Tu, Wang, Zhou, Savarese, and Xiong}{Nijkamp et~al\mbox{.}}{2023}]%
+        {nijkamp2023codegen}
+\bibfield{author}{\bibinfo{person}{Erik Nijkamp}, \bibinfo{person}{Bo Pang}, \bibinfo{person}{Hiroaki Hayashi}, \bibinfo{person}{Lifu Tu}, \bibinfo{person}{Huan Wang}, \bibinfo{person}{Yingbo Zhou}, \bibinfo{person}{Silvio Savarese}, {and} \bibinfo{person}{Caiming Xiong}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \bibinfo{title}{CodeGen: An Open Large Language Model for Code with Multi-Turn Program Synthesis}.
+\newblock
+\newblock
+\showeprint[arxiv]{2203.13474}~[cs.LG]
+
+
+\bibitem[\protect\citeauthoryear{NousResearch}{NousResearch}{2024}]%
+        {jsoneval}
+\bibfield{author}{\bibinfo{person}{NousResearch}.} \bibinfo{year}{2024}\natexlab{}.
+\newblock \bibinfo{booktitle}{\emph{json-mode-eval}}.
+\newblock
+\urldef\tempurl%
+\url{https://huggingface.co/datasets/NousResearch/json-mode-eval}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Olausson, Gu, Lipkin, Zhang, Solar-Lezama, Tenenbaum, and Levy}{Olausson et~al\mbox{.}}{2023}]%
+        {Olausson_2023}
+\bibfield{author}{\bibinfo{person}{Theo Olausson}, \bibinfo{person}{Alex Gu}, \bibinfo{person}{Ben Lipkin}, \bibinfo{person}{Cedegao Zhang}, \bibinfo{person}{Armando Solar-Lezama}, \bibinfo{person}{Joshua Tenenbaum}, {and} \bibinfo{person}{Roger Levy}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \showarticletitle{LINC: A Neurosymbolic Approach for Logical Reasoning by Combining Language Models with First-Order Logic Provers}. In \bibinfo{booktitle}{\emph{Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing}}. \bibinfo{publisher}{Association for Computational Linguistics}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.18653/v1/2023.emnlp-main.313}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{OpenAI}{OpenAI}{2024}]%
+        {openai_tools}
+\bibfield{author}{\bibinfo{person}{OpenAI}.} \bibinfo{year}{2024}\natexlab{}.
+\newblock \bibinfo{booktitle}{\emph{OpneAI Tools}}.
+\newblock
+\urldef\tempurl%
+\url{https://platform.openai.com/docs/assistants/tools}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Pan, Albalak, Wang, and Wang}{Pan et~al\mbox{.}}{2023}]%
+        {pan2023logiclmempoweringlargelanguage}
+\bibfield{author}{\bibinfo{person}{Liangming Pan}, \bibinfo{person}{Alon Albalak}, \bibinfo{person}{Xinyi Wang}, {and} \bibinfo{person}{William~Yang Wang}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \bibinfo{title}{Logic-LM: Empowering Large Language Models with Symbolic Solvers for Faithful Logical Reasoning}.
+\newblock
+\newblock
+\showeprint[arxiv]{2305.12295}~[cs.CL]
+\urldef\tempurl%
+\url{https://arxiv.org/abs/2305.12295}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Paszke, Gross, Massa, Lerer, Bradbury, Chanan, Killeen, Lin, Gimelshein, Antiga, Desmaison, Kopf, Yang, DeVito, Raison, Tejani, Chilamkurthy, Steiner, Fang, Bai, and Chintala}{Paszke et~al\mbox{.}}{2019a}]%
+        {NEURIPS2019_9015}
+\bibfield{author}{\bibinfo{person}{Adam Paszke}, \bibinfo{person}{Sam Gross}, \bibinfo{person}{Francisco Massa}, \bibinfo{person}{Adam Lerer}, \bibinfo{person}{James Bradbury}, \bibinfo{person}{Gregory Chanan}, \bibinfo{person}{Trevor Killeen}, \bibinfo{person}{Zeming Lin}, \bibinfo{person}{Natalia Gimelshein}, \bibinfo{person}{Luca Antiga}, \bibinfo{person}{Alban Desmaison}, \bibinfo{person}{Andreas Kopf}, \bibinfo{person}{Edward Yang}, \bibinfo{person}{Zachary DeVito}, \bibinfo{person}{Martin Raison}, \bibinfo{person}{Alykhan Tejani}, \bibinfo{person}{Sasank Chilamkurthy}, \bibinfo{person}{Benoit Steiner}, \bibinfo{person}{Lu Fang}, \bibinfo{person}{Junjie Bai}, {and} \bibinfo{person}{Soumith Chintala}.} \bibinfo{year}{2019}\natexlab{a}.
+\newblock \showarticletitle{PyTorch: An Imperative Style, High-Performance Deep Learning Library}.
+\newblock In \bibinfo{booktitle}{\emph{Advances in Neural Information Processing Systems 32}}. \bibinfo{publisher}{Curran Associates, Inc.}, \bibinfo{pages}{8024--8035}.
+\newblock
+\urldef\tempurl%
+\url{http://papers.neurips.cc/paper/9015-pytorch-an-imperative-style-high-performance-deep-learning-library.pdf}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Paszke, Gross, Massa, Lerer, Bradbury, Chanan, Killeen, Lin, Gimelshein, Antiga, Desmaison, Köpf, Yang, DeVito, Raison, Tejani, Chilamkurthy, Steiner, Fang, Bai, and Chintala}{Paszke et~al\mbox{.}}{2019b}]%
+        {paszke2019pytorch}
+\bibfield{author}{\bibinfo{person}{Adam Paszke}, \bibinfo{person}{Sam Gross}, \bibinfo{person}{Francisco Massa}, \bibinfo{person}{Adam Lerer}, \bibinfo{person}{James Bradbury}, \bibinfo{person}{Gregory Chanan}, \bibinfo{person}{Trevor Killeen}, \bibinfo{person}{Zeming Lin}, \bibinfo{person}{Natalia Gimelshein}, \bibinfo{person}{Luca Antiga}, \bibinfo{person}{Alban Desmaison}, \bibinfo{person}{Andreas Köpf}, \bibinfo{person}{Edward Yang}, \bibinfo{person}{Zach DeVito}, \bibinfo{person}{Martin Raison}, \bibinfo{person}{Alykhan Tejani}, \bibinfo{person}{Sasank Chilamkurthy}, \bibinfo{person}{Benoit Steiner}, \bibinfo{person}{Lu Fang}, \bibinfo{person}{Junjie Bai}, {and} \bibinfo{person}{Soumith Chintala}.} \bibinfo{year}{2019}\natexlab{b}.
+\newblock \bibinfo{title}{PyTorch: An Imperative Style, High-Performance Deep Learning Library}.
+\newblock
+\newblock
+\showeprint[arxiv]{1912.01703}~[cs.LG]
+
+
+\bibitem[\protect\citeauthoryear{Poesia, Polozov, Le, Tiwari, Soares, Meek, and Gulwani}{Poesia et~al\mbox{.}}{2022}]%
+        {poesia2022synchromesh}
+\bibfield{author}{\bibinfo{person}{Gabriel Poesia}, \bibinfo{person}{Alex Polozov}, \bibinfo{person}{Vu Le}, \bibinfo{person}{Ashish Tiwari}, \bibinfo{person}{Gustavo Soares}, \bibinfo{person}{Christopher Meek}, {and} \bibinfo{person}{Sumit Gulwani}.} \bibinfo{year}{2022}\natexlab{}.
+\newblock \showarticletitle{Synchromesh: Reliable Code Generation from Pre-trained Language Models}. In \bibinfo{booktitle}{\emph{International Conference on Learning Representations}}.
+\newblock
+\urldef\tempurl%
+\url{https://openreview.net/forum?id=KmtVD97J43e}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Ren, Triantafillou, Ravi, Snell, Swersky, Tenenbaum, Larochelle, and Zemel}{Ren et~al\mbox{.}}{2018}]%
+        {ren2018metalearning}
+\bibfield{author}{\bibinfo{person}{Mengye Ren}, \bibinfo{person}{Eleni Triantafillou}, \bibinfo{person}{Sachin Ravi}, \bibinfo{person}{Jake Snell}, \bibinfo{person}{Kevin Swersky}, \bibinfo{person}{Joshua~B. Tenenbaum}, \bibinfo{person}{Hugo Larochelle}, {and} \bibinfo{person}{Richard~S. Zemel}.} \bibinfo{year}{2018}\natexlab{}.
+\newblock \bibinfo{title}{Meta-Learning for Semi-Supervised Few-Shot Classification}.
+\newblock
+\newblock
+\showeprint[arxiv]{1803.00676}~[cs.LG]
+
+
+\bibitem[\protect\citeauthoryear{Scholak, Schucher, and Bahdanau}{Scholak et~al\mbox{.}}{2021}]%
+        {scholak-etal-2021-picard}
+\bibfield{author}{\bibinfo{person}{Torsten Scholak}, \bibinfo{person}{Nathan Schucher}, {and} \bibinfo{person}{Dzmitry Bahdanau}.} \bibinfo{year}{2021}\natexlab{}.
+\newblock \showarticletitle{{PICARD}: Parsing Incrementally for Constrained Auto-Regressive Decoding from Language Models}. In \bibinfo{booktitle}{\emph{Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing}}, \bibfield{editor}{\bibinfo{person}{Marie-Francine Moens}, \bibinfo{person}{Xuanjing Huang}, \bibinfo{person}{Lucia Specia}, {and} \bibinfo{person}{Scott Wen-tau Yih}} (Eds.). \bibinfo{publisher}{Association for Computational Linguistics}, \bibinfo{address}{Online and Punta Cana, Dominican Republic}, \bibinfo{pages}{9895--9901}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.18653/v1/2021.emnlp-main.779}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Sengottuvelu and et. al.}{Sengottuvelu and et. al.}{2024}]%
+        {jsonformer}
+\bibfield{author}{\bibinfo{person}{Rahul Sengottuvelu} {and} \bibinfo{person}{et. al.}} \bibinfo{year}{2024}\natexlab{}.
+\newblock \bibinfo{booktitle}{\emph{jsonformer}}.
+\newblock
+\urldef\tempurl%
+\url{https://github.com/1rgs/jsonformer}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Team, Riviere, Pathak, Sessa, Hardin, Bhupatiraju, Hussenot, Mesnard, Shahriari, Ramé, Ferret, Liu, Tafti, Friesen, Casbon, Ramos, Kumar, Lan, Jerome, Tsitsulin, Vieillard, Stanczyk, Girgin, Momchev, Hoffman, Thakoor, Grill, Neyshabur, Bachem, Walton, Severyn, Parrish, Ahmad, Hutchison, Abdagic, Carl, Shen, Brock, Coenen, Laforge, Paterson, Bastian, Piot, Wu, Royal, Chen, Kumar, Perry, Welty, Choquette-Choo, Sinopalnikov, Weinberger, Vijaykumar, Rogozińska, Herbison, Bandy, Wang, Noland, Moreira, Senter, Eltyshev, Visin, Rasskin, Wei, Cameron, Martins, Hashemi, Klimczak-Plucińska, Batra, Dhand, Nardini, Mein, Zhou, Svensson, Stanway, Chan, Zhou, Carrasqueira, Iljazi, Becker, Fernandez, van Amersfoort, Gordon, Lipschultz, Newlan, yeong Ji, Mohamed, Badola, Black, Millican, McDonell, Nguyen, Sodhia, Greene, Sjoesund, Usui, Sifre, Heuermann, Lago, McNealus, Soares, Kilpatrick, Dixon, Martins, Reid, Singh, Iverson, Görner, Velloso, Wirth, Davidow, Miller, Rahtz, Watson,
+  Risdal, Kazemi, Moynihan, Zhang, Kahng, Park, Rahman, Khatwani, Dao, Bardoliwalla, Devanathan, Dumai, Chauhan, Wahltinez, Botarda, Barnes, Barham, Michel, Jin, Georgiev, Culliton, Kuppala, Comanescu, Merhej, Jana, Rokni, Agarwal, Mullins, Saadat, Carthy, Cogan, Perrin, Arnold, Krause, Dai, Garg, Sheth, Ronstrom, Chan, Jordan, Yu, Eccles, Hennigan, Kocisky, Doshi, Jain, Yadav, Meshram, Dharmadhikari, Barkley, Wei, Ye, Han, Kwon, Xu, Shen, Gong, Wei, Cotruta, Kirk, Rao, Giang, Peran, Warkentin, Collins, Barral, Ghahramani, Hadsell, Sculley, Banks, Dragan, Petrov, Vinyals, Dean, Hassabis, Kavukcuoglu, Farabet, Buchatskaya, Borgeaud, Fiedel, Joulin, Kenealy, Dadashi, and Andreev}{Team et~al\mbox{.}}{2024}]%
+        {gemmateam2024gemma2improvingopen}
+\bibfield{author}{\bibinfo{person}{Gemma Team}, \bibinfo{person}{Morgane Riviere}, \bibinfo{person}{Shreya Pathak}, \bibinfo{person}{Pier~Giuseppe Sessa}, \bibinfo{person}{Cassidy Hardin}, \bibinfo{person}{Surya Bhupatiraju}, \bibinfo{person}{Léonard Hussenot}, \bibinfo{person}{Thomas Mesnard}, \bibinfo{person}{Bobak Shahriari}, \bibinfo{person}{Alexandre Ramé}, \bibinfo{person}{Johan Ferret}, \bibinfo{person}{Peter Liu}, \bibinfo{person}{Pouya Tafti}, \bibinfo{person}{Abe Friesen}, \bibinfo{person}{Michelle Casbon}, \bibinfo{person}{Sabela Ramos}, \bibinfo{person}{Ravin Kumar}, \bibinfo{person}{Charline~Le Lan}, \bibinfo{person}{Sammy Jerome}, \bibinfo{person}{Anton Tsitsulin}, \bibinfo{person}{Nino Vieillard}, \bibinfo{person}{Piotr Stanczyk}, \bibinfo{person}{Sertan Girgin}, \bibinfo{person}{Nikola Momchev}, \bibinfo{person}{Matt Hoffman}, \bibinfo{person}{Shantanu Thakoor}, \bibinfo{person}{Jean-Bastien Grill}, \bibinfo{person}{Behnam Neyshabur}, \bibinfo{person}{Olivier Bachem}, \bibinfo{person}{Alanna
+  Walton}, \bibinfo{person}{Aliaksei Severyn}, \bibinfo{person}{Alicia Parrish}, \bibinfo{person}{Aliya Ahmad}, \bibinfo{person}{Allen Hutchison}, \bibinfo{person}{Alvin Abdagic}, \bibinfo{person}{Amanda Carl}, \bibinfo{person}{Amy Shen}, \bibinfo{person}{Andy Brock}, \bibinfo{person}{Andy Coenen}, \bibinfo{person}{Anthony Laforge}, \bibinfo{person}{Antonia Paterson}, \bibinfo{person}{Ben Bastian}, \bibinfo{person}{Bilal Piot}, \bibinfo{person}{Bo Wu}, \bibinfo{person}{Brandon Royal}, \bibinfo{person}{Charlie Chen}, \bibinfo{person}{Chintu Kumar}, \bibinfo{person}{Chris Perry}, \bibinfo{person}{Chris Welty}, \bibinfo{person}{Christopher~A. Choquette-Choo}, \bibinfo{person}{Danila Sinopalnikov}, \bibinfo{person}{David Weinberger}, \bibinfo{person}{Dimple Vijaykumar}, \bibinfo{person}{Dominika Rogozińska}, \bibinfo{person}{Dustin Herbison}, \bibinfo{person}{Elisa Bandy}, \bibinfo{person}{Emma Wang}, \bibinfo{person}{Eric Noland}, \bibinfo{person}{Erica Moreira}, \bibinfo{person}{Evan Senter},
+  \bibinfo{person}{Evgenii Eltyshev}, \bibinfo{person}{Francesco Visin}, \bibinfo{person}{Gabriel Rasskin}, \bibinfo{person}{Gary Wei}, \bibinfo{person}{Glenn Cameron}, \bibinfo{person}{Gus Martins}, \bibinfo{person}{Hadi Hashemi}, \bibinfo{person}{Hanna Klimczak-Plucińska}, \bibinfo{person}{Harleen Batra}, \bibinfo{person}{Harsh Dhand}, \bibinfo{person}{Ivan Nardini}, \bibinfo{person}{Jacinda Mein}, \bibinfo{person}{Jack Zhou}, \bibinfo{person}{James Svensson}, \bibinfo{person}{Jeff Stanway}, \bibinfo{person}{Jetha Chan}, \bibinfo{person}{Jin~Peng Zhou}, \bibinfo{person}{Joana Carrasqueira}, \bibinfo{person}{Joana Iljazi}, \bibinfo{person}{Jocelyn Becker}, \bibinfo{person}{Joe Fernandez}, \bibinfo{person}{Joost van Amersfoort}, \bibinfo{person}{Josh Gordon}, \bibinfo{person}{Josh Lipschultz}, \bibinfo{person}{Josh Newlan}, \bibinfo{person}{Ju yeong Ji}, \bibinfo{person}{Kareem Mohamed}, \bibinfo{person}{Kartikeya Badola}, \bibinfo{person}{Kat Black}, \bibinfo{person}{Katie Millican}, \bibinfo{person}{Keelin
+  McDonell}, \bibinfo{person}{Kelvin Nguyen}, \bibinfo{person}{Kiranbir Sodhia}, \bibinfo{person}{Kish Greene}, \bibinfo{person}{Lars~Lowe Sjoesund}, \bibinfo{person}{Lauren Usui}, \bibinfo{person}{Laurent Sifre}, \bibinfo{person}{Lena Heuermann}, \bibinfo{person}{Leticia Lago}, \bibinfo{person}{Lilly McNealus}, \bibinfo{person}{Livio~Baldini Soares}, \bibinfo{person}{Logan Kilpatrick}, \bibinfo{person}{Lucas Dixon}, \bibinfo{person}{Luciano Martins}, \bibinfo{person}{Machel Reid}, \bibinfo{person}{Manvinder Singh}, \bibinfo{person}{Mark Iverson}, \bibinfo{person}{Martin Görner}, \bibinfo{person}{Mat Velloso}, \bibinfo{person}{Mateo Wirth}, \bibinfo{person}{Matt Davidow}, \bibinfo{person}{Matt Miller}, \bibinfo{person}{Matthew Rahtz}, \bibinfo{person}{Matthew Watson}, \bibinfo{person}{Meg Risdal}, \bibinfo{person}{Mehran Kazemi}, \bibinfo{person}{Michael Moynihan}, \bibinfo{person}{Ming Zhang}, \bibinfo{person}{Minsuk Kahng}, \bibinfo{person}{Minwoo Park}, \bibinfo{person}{Mofi Rahman},
+  \bibinfo{person}{Mohit Khatwani}, \bibinfo{person}{Natalie Dao}, \bibinfo{person}{Nenshad Bardoliwalla}, \bibinfo{person}{Nesh Devanathan}, \bibinfo{person}{Neta Dumai}, \bibinfo{person}{Nilay Chauhan}, \bibinfo{person}{Oscar Wahltinez}, \bibinfo{person}{Pankil Botarda}, \bibinfo{person}{Parker Barnes}, \bibinfo{person}{Paul Barham}, \bibinfo{person}{Paul Michel}, \bibinfo{person}{Pengchong Jin}, \bibinfo{person}{Petko Georgiev}, \bibinfo{person}{Phil Culliton}, \bibinfo{person}{Pradeep Kuppala}, \bibinfo{person}{Ramona Comanescu}, \bibinfo{person}{Ramona Merhej}, \bibinfo{person}{Reena Jana}, \bibinfo{person}{Reza~Ardeshir Rokni}, \bibinfo{person}{Rishabh Agarwal}, \bibinfo{person}{Ryan Mullins}, \bibinfo{person}{Samaneh Saadat}, \bibinfo{person}{Sara~Mc Carthy}, \bibinfo{person}{Sarah Cogan}, \bibinfo{person}{Sarah Perrin}, \bibinfo{person}{Sébastien M.~R. Arnold}, \bibinfo{person}{Sebastian Krause}, \bibinfo{person}{Shengyang Dai}, \bibinfo{person}{Shruti Garg}, \bibinfo{person}{Shruti Sheth},
+  \bibinfo{person}{Sue Ronstrom}, \bibinfo{person}{Susan Chan}, \bibinfo{person}{Timothy Jordan}, \bibinfo{person}{Ting Yu}, \bibinfo{person}{Tom Eccles}, \bibinfo{person}{Tom Hennigan}, \bibinfo{person}{Tomas Kocisky}, \bibinfo{person}{Tulsee Doshi}, \bibinfo{person}{Vihan Jain}, \bibinfo{person}{Vikas Yadav}, \bibinfo{person}{Vilobh Meshram}, \bibinfo{person}{Vishal Dharmadhikari}, \bibinfo{person}{Warren Barkley}, \bibinfo{person}{Wei Wei}, \bibinfo{person}{Wenming Ye}, \bibinfo{person}{Woohyun Han}, \bibinfo{person}{Woosuk Kwon}, \bibinfo{person}{Xiang Xu}, \bibinfo{person}{Zhe Shen}, \bibinfo{person}{Zhitao Gong}, \bibinfo{person}{Zichuan Wei}, \bibinfo{person}{Victor Cotruta}, \bibinfo{person}{Phoebe Kirk}, \bibinfo{person}{Anand Rao}, \bibinfo{person}{Minh Giang}, \bibinfo{person}{Ludovic Peran}, \bibinfo{person}{Tris Warkentin}, \bibinfo{person}{Eli Collins}, \bibinfo{person}{Joelle Barral}, \bibinfo{person}{Zoubin Ghahramani}, \bibinfo{person}{Raia Hadsell}, \bibinfo{person}{D. Sculley},
+  \bibinfo{person}{Jeanine Banks}, \bibinfo{person}{Anca Dragan}, \bibinfo{person}{Slav Petrov}, \bibinfo{person}{Oriol Vinyals}, \bibinfo{person}{Jeff Dean}, \bibinfo{person}{Demis Hassabis}, \bibinfo{person}{Koray Kavukcuoglu}, \bibinfo{person}{Clement Farabet}, \bibinfo{person}{Elena Buchatskaya}, \bibinfo{person}{Sebastian Borgeaud}, \bibinfo{person}{Noah Fiedel}, \bibinfo{person}{Armand Joulin}, \bibinfo{person}{Kathleen Kenealy}, \bibinfo{person}{Robert Dadashi}, {and} \bibinfo{person}{Alek Andreev}.} \bibinfo{year}{2024}\natexlab{}.
+\newblock \bibinfo{title}{Gemma 2: Improving Open Language Models at a Practical Size}.
+\newblock
+\newblock
+\showeprint[arxiv]{2408.00118}~[cs.CL]
+\urldef\tempurl%
+\url{https://arxiv.org/abs/2408.00118}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Touvron, Lavril, Izacard, Martinet, Lachaux, Lacroix, Rozière, Goyal, Hambro, Azhar, Rodriguez, Joulin, Grave, and Lample}{Touvron et~al\mbox{.}}{2023a}]%
+        {touvron2023llama}
+\bibfield{author}{\bibinfo{person}{Hugo Touvron}, \bibinfo{person}{Thibaut Lavril}, \bibinfo{person}{Gautier Izacard}, \bibinfo{person}{Xavier Martinet}, \bibinfo{person}{Marie-Anne Lachaux}, \bibinfo{person}{Timothée Lacroix}, \bibinfo{person}{Baptiste Rozière}, \bibinfo{person}{Naman Goyal}, \bibinfo{person}{Eric Hambro}, \bibinfo{person}{Faisal Azhar}, \bibinfo{person}{Aurelien Rodriguez}, \bibinfo{person}{Armand Joulin}, \bibinfo{person}{Edouard Grave}, {and} \bibinfo{person}{Guillaume Lample}.} \bibinfo{year}{2023}\natexlab{a}.
+\newblock \bibinfo{title}{LLaMA: Open and Efficient Foundation Language Models}.
+\newblock
+\newblock
+\showeprint[arxiv]{2302.13971}~[cs.CL]
+
+
+\bibitem[\protect\citeauthoryear{Touvron, Martin, Stone, Albert, Almahairi, Babaei, Bashlykov, Batra, Bhargava, Bhosale, Bikel, Blecher, Ferrer, Chen, Cucurull, Esiobu, Fernandes, Fu, Fu, Fuller, Gao, Goswami, Goyal, Hartshorn, Hosseini, Hou, Inan, Kardas, Kerkez, Khabsa, Kloumann, Korenev, Koura, Lachaux, Lavril, Lee, Liskovich, Lu, Mao, Martinet, Mihaylov, Mishra, Molybog, Nie, Poulton, Reizenstein, Rungta, Saladi, Schelten, Silva, Smith, Subramanian, Tan, Tang, Taylor, Williams, Kuan, Xu, Yan, Zarov, Zhang, Fan, Kambadur, Narang, Rodriguez, Stojnic, Edunov, and Scialom}{Touvron et~al\mbox{.}}{2023b}]%
+        {touvron2023llama2openfoundation}
+\bibfield{author}{\bibinfo{person}{Hugo Touvron}, \bibinfo{person}{Louis Martin}, \bibinfo{person}{Kevin Stone}, \bibinfo{person}{Peter Albert}, \bibinfo{person}{Amjad Almahairi}, \bibinfo{person}{Yasmine Babaei}, \bibinfo{person}{Nikolay Bashlykov}, \bibinfo{person}{Soumya Batra}, \bibinfo{person}{Prajjwal Bhargava}, \bibinfo{person}{Shruti Bhosale}, \bibinfo{person}{Dan Bikel}, \bibinfo{person}{Lukas Blecher}, \bibinfo{person}{Cristian~Canton Ferrer}, \bibinfo{person}{Moya Chen}, \bibinfo{person}{Guillem Cucurull}, \bibinfo{person}{David Esiobu}, \bibinfo{person}{Jude Fernandes}, \bibinfo{person}{Jeremy Fu}, \bibinfo{person}{Wenyin Fu}, \bibinfo{person}{Brian Fuller}, \bibinfo{person}{Cynthia Gao}, \bibinfo{person}{Vedanuj Goswami}, \bibinfo{person}{Naman Goyal}, \bibinfo{person}{Anthony Hartshorn}, \bibinfo{person}{Saghar Hosseini}, \bibinfo{person}{Rui Hou}, \bibinfo{person}{Hakan Inan}, \bibinfo{person}{Marcin Kardas}, \bibinfo{person}{Viktor Kerkez}, \bibinfo{person}{Madian Khabsa},
+  \bibinfo{person}{Isabel Kloumann}, \bibinfo{person}{Artem Korenev}, \bibinfo{person}{Punit~Singh Koura}, \bibinfo{person}{Marie-Anne Lachaux}, \bibinfo{person}{Thibaut Lavril}, \bibinfo{person}{Jenya Lee}, \bibinfo{person}{Diana Liskovich}, \bibinfo{person}{Yinghai Lu}, \bibinfo{person}{Yuning Mao}, \bibinfo{person}{Xavier Martinet}, \bibinfo{person}{Todor Mihaylov}, \bibinfo{person}{Pushkar Mishra}, \bibinfo{person}{Igor Molybog}, \bibinfo{person}{Yixin Nie}, \bibinfo{person}{Andrew Poulton}, \bibinfo{person}{Jeremy Reizenstein}, \bibinfo{person}{Rashi Rungta}, \bibinfo{person}{Kalyan Saladi}, \bibinfo{person}{Alan Schelten}, \bibinfo{person}{Ruan Silva}, \bibinfo{person}{Eric~Michael Smith}, \bibinfo{person}{Ranjan Subramanian}, \bibinfo{person}{Xiaoqing~Ellen Tan}, \bibinfo{person}{Binh Tang}, \bibinfo{person}{Ross Taylor}, \bibinfo{person}{Adina Williams}, \bibinfo{person}{Jian~Xiang Kuan}, \bibinfo{person}{Puxin Xu}, \bibinfo{person}{Zheng Yan}, \bibinfo{person}{Iliyan Zarov}, \bibinfo{person}{Yuchen
+  Zhang}, \bibinfo{person}{Angela Fan}, \bibinfo{person}{Melanie Kambadur}, \bibinfo{person}{Sharan Narang}, \bibinfo{person}{Aurelien Rodriguez}, \bibinfo{person}{Robert Stojnic}, \bibinfo{person}{Sergey Edunov}, {and} \bibinfo{person}{Thomas Scialom}.} \bibinfo{year}{2023}\natexlab{b}.
+\newblock \bibinfo{title}{Llama 2: Open Foundation and Fine-Tuned Chat Models}.
+\newblock
+\newblock
+\showeprint[arxiv]{2307.09288}~[cs.CL]
+\urldef\tempurl%
+\url{https://arxiv.org/abs/2307.09288}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Wei, Xia, and Zhang}{Wei et~al\mbox{.}}{2023}]%
+        {Wei_2023}
+\bibfield{author}{\bibinfo{person}{Yuxiang Wei}, \bibinfo{person}{Chunqiu~Steven Xia}, {and} \bibinfo{person}{Lingming Zhang}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \showarticletitle{Copiloting the Copilots: Fusing Large Language Models with Completion Engines for Automated Program Repair}. In \bibinfo{booktitle}{\emph{Proceedings of the 31st ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering}} \emph{(\bibinfo{series}{ESEC/FSE ’23})}. \bibinfo{publisher}{ACM}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.1145/3611643.3616271}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Weyssow, Zhou, Kim, Lo, and Sahraoui}{Weyssow et~al\mbox{.}}{2024}]%
+        {weyssow2024exploringparameterefficientfinetuningtechniques}
+\bibfield{author}{\bibinfo{person}{Martin Weyssow}, \bibinfo{person}{Xin Zhou}, \bibinfo{person}{Kisub Kim}, \bibinfo{person}{David Lo}, {and} \bibinfo{person}{Houari Sahraoui}.} \bibinfo{year}{2024}\natexlab{}.
+\newblock \bibinfo{title}{Exploring Parameter-Efficient Fine-Tuning Techniques for Code Generation with Large Language Models}.
+\newblock
+\newblock
+\showeprint[arxiv]{2308.10462}~[cs.SE]
+\urldef\tempurl%
+\url{https://arxiv.org/abs/2308.10462}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Willard and Louf}{Willard and Louf}{2023}]%
+        {willard2023efficient}
+\bibfield{author}{\bibinfo{person}{Brandon~T. Willard} {and} \bibinfo{person}{Rémi Louf}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \bibinfo{title}{Efficient Guided Generation for Large Language Models}.
+\newblock
+\newblock
+\showeprint[arxiv]{2307.09702}~[cs.CL]
+
+
+\bibitem[\protect\citeauthoryear{Wolf, Debut, Sanh, Chaumond, Delangue, Moi, Cistac, Rault, Louf, Funtowicz, Davison, Shleifer, von Platen, Ma, Jernite, Plu, Xu, Le~Scao, Gugger, Drame, Lhoest, and Rush}{Wolf et~al\mbox{.}}{2020}]%
+        {wolf-etal-2020-transformers}
+\bibfield{author}{\bibinfo{person}{Thomas Wolf}, \bibinfo{person}{Lysandre Debut}, \bibinfo{person}{Victor Sanh}, \bibinfo{person}{Julien Chaumond}, \bibinfo{person}{Clement Delangue}, \bibinfo{person}{Anthony Moi}, \bibinfo{person}{Pierric Cistac}, \bibinfo{person}{Tim Rault}, \bibinfo{person}{Remi Louf}, \bibinfo{person}{Morgan Funtowicz}, \bibinfo{person}{Joe Davison}, \bibinfo{person}{Sam Shleifer}, \bibinfo{person}{Patrick von Platen}, \bibinfo{person}{Clara Ma}, \bibinfo{person}{Yacine Jernite}, \bibinfo{person}{Julien Plu}, \bibinfo{person}{Canwen Xu}, \bibinfo{person}{Teven Le~Scao}, \bibinfo{person}{Sylvain Gugger}, \bibinfo{person}{Mariama Drame}, \bibinfo{person}{Quentin Lhoest}, {and} \bibinfo{person}{Alexander Rush}.} \bibinfo{year}{2020}\natexlab{}.
+\newblock \showarticletitle{Transformers: State-of-the-Art Natural Language Processing}. In \bibinfo{booktitle}{\emph{Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: System Demonstrations}}, \bibfield{editor}{\bibinfo{person}{Qun Liu} {and} \bibinfo{person}{David Schlangen}} (Eds.). \bibinfo{publisher}{Association for Computational Linguistics}, \bibinfo{address}{Online}, \bibinfo{pages}{38--45}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.18653/v1/2020.emnlp-demos.6}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{wolfram}{wolfram}{2024}]%
+        {Wolfram}
+\bibfield{author}{\bibinfo{person}{wolfram}.} \bibinfo{year}{2024}\natexlab{}.
+\newblock \bibinfo{booktitle}{\emph{Wolfram Alpha}}.
+\newblock
+\urldef\tempurl%
+\url{https://writings.stephenwolfram.com/2023/01/wolframalpha-as-the-way-to-bring-computational-knowledge-superpowers-to-chatgpt/}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Wu, Jiang, Li, Rabe, Staats, Jamnik, and Szegedy}{Wu et~al\mbox{.}}{2022}]%
+        {wu2022autoformalization}
+\bibfield{author}{\bibinfo{person}{Yuhuai Wu}, \bibinfo{person}{Albert~Qiaochu Jiang}, \bibinfo{person}{Wenda Li}, \bibinfo{person}{Markus~Norman Rabe}, \bibinfo{person}{Charles~E Staats}, \bibinfo{person}{Mateja Jamnik}, {and} \bibinfo{person}{Christian Szegedy}.} \bibinfo{year}{2022}\natexlab{}.
+\newblock \showarticletitle{Autoformalization with Large Language Models}. In \bibinfo{booktitle}{\emph{Advances in Neural Information Processing Systems}}, \bibfield{editor}{\bibinfo{person}{Alice~H. Oh}, \bibinfo{person}{Alekh Agarwal}, \bibinfo{person}{Danielle Belgrave}, {and} \bibinfo{person}{Kyunghyun Cho}} (Eds.).
+\newblock
+\urldef\tempurl%
+\url{https://openreview.net/forum?id=IUikebJ1Bf0}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Yang, Chiang, and Angluin}{Yang et~al\mbox{.}}{2024}]%
+        {yang2024maskedhardattentiontransformersrecognize}
+\bibfield{author}{\bibinfo{person}{Andy Yang}, \bibinfo{person}{David Chiang}, {and} \bibinfo{person}{Dana Angluin}.} \bibinfo{year}{2024}\natexlab{}.
+\newblock \bibinfo{title}{Masked Hard-Attention Transformers Recognize Exactly the Star-Free Languages}.
+\newblock
+\newblock
+\showeprint[arxiv]{2310.13897}~[cs.FL]
+\urldef\tempurl%
+\url{https://arxiv.org/abs/2310.13897}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Yang, Swope, Gu, Chalamala, Song, Yu, Godil, Prenger, and Anandkumar}{Yang et~al\mbox{.}}{2023}]%
+        {yang2023leandojotheoremprovingretrievalaugmented}
+\bibfield{author}{\bibinfo{person}{Kaiyu Yang}, \bibinfo{person}{Aidan~M. Swope}, \bibinfo{person}{Alex Gu}, \bibinfo{person}{Rahul Chalamala}, \bibinfo{person}{Peiyang Song}, \bibinfo{person}{Shixing Yu}, \bibinfo{person}{Saad Godil}, \bibinfo{person}{Ryan Prenger}, {and} \bibinfo{person}{Anima Anandkumar}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \bibinfo{title}{LeanDojo: Theorem Proving with Retrieval-Augmented Language Models}.
+\newblock
+\newblock
+\showeprint[arxiv]{2306.15626}~[cs.LG]
+\urldef\tempurl%
+\url{https://arxiv.org/abs/2306.15626}
+\showURL{%
+\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Yu, Zhang, Yang, Yasunaga, Wang, Li, Ma, Li, Yao, Roman, Zhang, and Radev}{Yu et~al\mbox{.}}{2018}]%
+        {yu-etal-2018-spider}
+\bibfield{author}{\bibinfo{person}{Tao Yu}, \bibinfo{person}{Rui Zhang}, \bibinfo{person}{Kai Yang}, \bibinfo{person}{Michihiro Yasunaga}, \bibinfo{person}{Dongxu Wang}, \bibinfo{person}{Zifan Li}, \bibinfo{person}{James Ma}, \bibinfo{person}{Irene Li}, \bibinfo{person}{Qingning Yao}, \bibinfo{person}{Shanelle Roman}, \bibinfo{person}{Zilin Zhang}, {and} \bibinfo{person}{Dragomir Radev}.} \bibinfo{year}{2018}\natexlab{}.
+\newblock \showarticletitle{{S}pider: A Large-Scale Human-Labeled Dataset for Complex and Cross-Domain Semantic Parsing and Text-to-{SQL} Task}. In \bibinfo{booktitle}{\emph{Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing}}, \bibfield{editor}{\bibinfo{person}{Ellen Riloff}, \bibinfo{person}{David Chiang}, \bibinfo{person}{Julia Hockenmaier}, {and} \bibinfo{person}{Jun{'}ichi Tsujii}} (Eds.). \bibinfo{publisher}{Association for Computational Linguistics}, \bibinfo{address}{Brussels, Belgium}, \bibinfo{pages}{3911--3921}.
+\newblock
+\urldef\tempurl%
+\url{https://doi.org/10.18653/v1/D18-1425}
+\showDOI{\tempurl}
+
+
+\bibitem[\protect\citeauthoryear{Zaharia, Khattab, Chen, Davis, Miller, Potts, Zou, Carbin, Frankle, Rao, and Ghodsi}{Zaharia et~al\mbox{.}}{2024}]%
+        {compound-ai-blog}
+\bibfield{author}{\bibinfo{person}{Matei Zaharia}, \bibinfo{person}{Omar Khattab}, \bibinfo{person}{Lingjiao Chen}, \bibinfo{person}{Jared~Quincy Davis}, \bibinfo{person}{Heather Miller}, \bibinfo{person}{Chris Potts}, \bibinfo{person}{James Zou}, \bibinfo{person}{Michael Carbin}, \bibinfo{person}{Jonathan Frankle}, \bibinfo{person}{Naveen Rao}, {and} \bibinfo{person}{Ali Ghodsi}.} \bibinfo{year}{2024}\natexlab{}.
+\newblock \bibinfo{title}{The Shift from Models to Compound AI Systems}.
+\newblock \bibinfo{howpublished}{\url{https://bair.berkeley.edu/blog/2024/02/18/compound-ai-systems/}}.
+\newblock
+
+
+\bibitem[\protect\citeauthoryear{Zheng, Yin, Xie, Huang, Sun, Yu, Cao, Kozyrakis, Stoica, Gonzalez, Barrett, and Sheng}{Zheng et~al\mbox{.}}{2023}]%
+        {sglang}
+\bibfield{author}{\bibinfo{person}{Lianmin Zheng}, \bibinfo{person}{Liangsheng Yin}, \bibinfo{person}{Zhiqiang Xie}, \bibinfo{person}{Jeff Huang}, \bibinfo{person}{Chuyue Sun}, \bibinfo{person}{Cody~Hao Yu}, \bibinfo{person}{Shiyi Cao}, \bibinfo{person}{Christos Kozyrakis}, \bibinfo{person}{Ion Stoica}, \bibinfo{person}{Joseph~E. Gonzalez}, \bibinfo{person}{Clark Barrett}, {and} \bibinfo{person}{Ying Sheng}.} \bibinfo{year}{2023}\natexlab{}.
+\newblock \bibinfo{title}{Efficiently Programming Large Language Models using SGLang}.
+\newblock
+\newblock
+\showeprint[arxiv]{2312.07104}~[cs.AI]
+
+
+\bibitem[\protect\citeauthoryear{Zhu, Liang, Sun, Xiong, Zhang, and Cheng}{Zhu et~al\mbox{.}}{2024}]%
+        {10.1145/3597503.3639125}
+\bibfield{author}{\bibinfo{person}{Qihao Zhu}, \bibinfo{person}{Qingyuan Liang}, \bibinfo{person}{Zeyu Sun}, \bibinfo{person}{Yingfei Xiong}, \bibinfo{person}{Lu Zhang}, {and} \bibinfo{person}{Shengyu Cheng}.} \bibinfo{year}{2024}\natexlab{}.
+\newblock \showarticletitle{GrammarT5: Grammar-Integrated Pretrained Encoder-Decoder Neural Model for Code}. In \bibinfo{booktitle}{\emph{Proceedings of the IEEE/ACM 46th International Conference on Software Engineering}} (Lisbon, Portugal) \emph{(\bibinfo{series}{ICSE '24})}. \bibinfo{publisher}{Association for Computing Machinery}, \bibinfo{address}{New York, NY, USA}, Article \bibinfo{articleno}{76}, \bibinfo{numpages}{13}~pages.
+\newblock
+\showISBNx{9798400702174}
+\urldef\tempurl%
+\url{https://doi.org/10.1145/3597503.3639125}
+\showDOI{\tempurl}
+
+
+\end{thebibliography}

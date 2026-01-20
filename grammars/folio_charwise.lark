@@ -1,0 +1,66 @@
+// FOLIO First-Order Logic Character-Level Grammar for CSD
+// This grammar supports Prover9-style FOL syntax at the character level
+
+start: fol_statement
+
+// A complete FOL statement (can be a formula or a quantified expression)
+fol_statement: quantified_expr
+             | formula
+
+// Quantified expressions
+quantified_expr: quantifier VARIABLE formula
+               | quantifier VARIABLE quantified_expr
+
+quantifier: FORALL
+          | EXISTS
+
+// Main formula structure with operator precedence (lowest to highest)
+?formula: iff_expr
+
+?iff_expr: implies_expr (IFF implies_expr)*
+
+?implies_expr: xor_expr (IMPLIES xor_expr)*
+
+?xor_expr: or_expr (XOR or_expr)*
+
+?or_expr: and_expr (OR and_expr)*
+
+?and_expr: not_expr (AND not_expr)*
+
+?not_expr: NOT not_expr
+         | atom
+
+// Atomic formulas
+?atom: predicate
+     | "(" formula ")"
+
+// Predicate: PredicateName(arg1, arg2, ...)
+predicate: PREDICATE_NAME "(" arguments ")"
+
+arguments: argument ("," argument)*
+
+argument: VARIABLE
+        | CONSTANT
+
+// Character-level terminals for FOL operators and keywords
+FORALL: "{" "f" "o" "r" "a" "l" "l" "}"
+EXISTS: "{" "e" "x" "i" "s" "t" "s" "}"
+AND: "{" "a" "n" "d" "}"
+OR: "{" "o" "r" "}"
+XOR: "{" "x" "o" "r" "}"
+NOT: "{" "n" "o" "t" "}"
+IMPLIES: "{" "i" "m" "p" "l" "i" "e" "s" "}"
+IFF: "{" "i" "f" "f" "}"
+
+// Predicate names start with uppercase
+PREDICATE_NAME: /[A-Z][a-zA-Z0-9]*/
+
+// Constants are lowercase identifiers with 2+ characters
+CONSTANT: /[a-z][a-zA-Z0-9]+/
+
+// Variables are single lowercase letters
+VARIABLE: /[a-z]/
+
+// Character-level whitespace
+%import common.WS_INLINE
+%ignore WS_INLINE

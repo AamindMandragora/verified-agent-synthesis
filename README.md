@@ -1,70 +1,63 @@
-# CSD Generation: Constrained Decoding Strategy Synthesis Pipeline
 
-A synthesis pipeline for generating **Constrained Decoding Strategies (CSD)** using LLMs (Qwen) with formal verification via Dafny. The pipeline automatically generates, verifies, compiles, and tests constrained decoding strategies that guarantee valid output from language models according to specified grammars (JSON, Math, etc.).
+# Focal-Lab: Constrained Decoding Strategy Synthesis & Evaluation
 
-## Overview
+Focal-Lab is a modular pipeline for synthesizing, verifying, compiling, and evaluating **Constrained Decoding Strategies (CSD)** for language models. It leverages LLMs (Qwen series) and formal verification (Dafny) to guarantee output validity for structured formats (JSON, Math, FOL, etc.) under user-specified grammars. The system supports both character-level and token-level grammars, and is extensible to new domains.
+
+
+## Pipeline Overview
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  1. Generate    │────▶│   2. Verify     │────▶│   3. Compile    │────▶│    4. Test      │
-│  (Qwen LLM)     │     │   (Dafny)       │     │  (Dafny → Py)   │     │   (Runtime)     │
-└─────────────────┘     └─────────────────┘     └─────────────────┘     └─────────────────┘
-        │                       │                       │                       │
-        │                       │                       │                       │
-        ▼                       ▼                       ▼                       ▼
-   Dafny Strategy         Proof Checked           Python Module          Validated Output
-        │                       │                       │                       │
-        └───────────────────────┴───────────────────────┴───────────────────────┘
-                                        │
-                                        ▼
-                              Feedback Loop (on failure)
+┌──────────────┐   ┌─────────────┐   ┌─────────────┐   ┌────────────┐
+│ 1. Generate │→──│ 2. Verify   │→──│ 3. Compile  │→──│ 4. Evaluate│
+│   (LLM)     │   │  (Dafny)    │   │ (Dafny→Py)  │   │ (Runtime)  │
+└──────────────┘   └─────────────┘   └─────────────┘   └────────────┘
+     │                │                │                │
+     ▼                ▼                ▼                ▼
+   Dafny CSD        Proof Checked     Python Module    Validated Output
+     │                │                │                │
+     └────────────────┴────────────────┴────────────────┘
+            │
+            ▼
+       Feedback Loop (auto-refine)
 ```
+
 
 ## Quick Start
 
 ### Prerequisites
 
-1. **Python 3.10+** with dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+1. **Python 3.10+**
+  ```bash
+  pip install -r requirements.txt
+  ```
+2. **Dafny 4.x** (for verification/compilation)
+  - macOS: `brew install dafny`
+  - Linux/Windows: [Dafny Releases](https://github.com/dafny-lang/dafny/releases)
+  - Confirm: `dafny --version`
+3. **GPU (recommended)** for large Qwen models, or use smaller models for CPU.
 
-2. **Dafny 4.x** (for verification and compilation):
-   ```bash
-   # macOS
-   brew install dafny
-
-   # Ubuntu/Debian
-   # Download from: https://github.com/dafny-lang/dafny/releases
-
-   # Verify installation
-   dafny --version
-   ```
-
-3. **GPU (recommended)** for running Qwen models efficiently, or use a smaller model for CPU.
-
-### Basic Usage
+### Example Usage
 
 ```bash
-# Generate a CSD strategy for JSON output
+# Synthesize a CSD strategy for JSON
 python run_synthesis.py --task "Generate a strategy for JSON output"
 
-# With custom max iterations
-python run_synthesis.py --task "Generate a CRANE-style strategy" --max-iterations 10
+# Synthesize with custom grammar (e.g., math)
+python run_synthesis.py --task "Generate a math CSD" --output-name math_csd
 
-# Use a smaller model for faster testing (CPU-friendly)
-python run_synthesis.py --task "Generate a simple retry strategy" \
-    --model Qwen/Qwen2.5-Coder-3B-Instruct
+# Use a smaller model (CPU-friendly)
+python run_synthesis.py --task "Generate a retry strategy" --model Qwen/Qwen2.5-Coder-3B-Instruct
 
-# Specify output name
-python run_synthesis.py --task "Create a hybrid JSON strategy" --output-name my_strategy
+# Specify output directory
+python run_synthesis.py --task "Create a hybrid JSON strategy" --output-name my_strategy --output-dir outputs/generated-csd/
 ```
 
 ---
 
+
 ## Main Entry Point: `run_synthesis.py`
 
-This is the CLI entry point for the synthesis pipeline.
+This is the CLI for the synthesis pipeline. It supports all major options for task, model, grammar, and output control.
 
 ### Command Line Options
 
@@ -98,91 +91,39 @@ python run_synthesis.py --compile-only --output-name my_strategy
 
 ---
 
+
 ## Project Structure
 
 ```
-csd-generation/
-├── run_synthesis.py          # Main CLI entry point for CSD strategy synthesis
+focal-lab/
+├── run_synthesis.py          # Main CLI for CSD synthesis
 ├── requirements.txt          # Python dependencies
-│
-├── synthesis/                # Core synthesis pipeline
-│   ├── generator.py          # Qwen-based strategy generation (Dafny code)
-│   ├── verifier.py           # Dafny verification wrapper (proof checking)
-│   ├── compiler.py           # Dafny → Python compilation (verified code to runtime)
-│   ├── runner.py             # Runtime testing of compiled strategies
-│   ├── feedback_loop.py      # Main orchestration with iterative refinement
-│   ├── prompts.py            # LLM prompt templates for strategy generation
-│   └── rationale.py          # Strategy rationale extraction from LLM output
-│
-├── evaluations/              # Evaluation framework (modular design)
-│   ├── __init__.py           # Package exports
-│   ├── common/               # Shared utilities across evaluations
-│   │   ├── __init__.py
-│   │   ├── model_utils.py    # HuggingFace model loading with Dafny interface
-│   │   ├── parser_utils.py   # Lark grammar parser creation utilities
-│   │   └── token_selection.py # Token vocabulary selection for constrained decoding
-│   │
-│   └── gsm_symbolic/         # GSM-Symbolic math reasoning evaluation
-│       ├── __init__.py       # Package exports
-│       ├── dataset.py        # Dataset loading from HuggingFace
-│       ├── prompts.py        # CRANE-style prompt formatting
-│       ├── answer_extraction.py # Answer extraction and evaluation
-│       ├── grammar.py        # Dynamic grammar construction
-│       ├── generation.py     # Generation methods (standard, CRANE, CSD)
-│       ├── environment.py    # Dafny environment setup
-│       ├── metrics.py        # Evaluation metrics
-│       └── cli.py            # Command-line interface
-│
-├── scripts/                  # CLI entry points and utilities
-│   ├── run_csd_with_grammar.py    # Run CSD strategies with custom grammars
-│   ├── validate_json_csd.py       # Validate JSON-oriented strategies
-│   └── generate_gsm_csd.sh        # Helper script for GSM CSD generation
-│
-├── dafny/                    # Dafny source files
-│   ├── GeneratedCSD.dfy      # Template for generated strategies (injection point)
-│   └── VerifiedAgentSynthesis.dfy  # Core Dafny verification module (LM/parser specs)
-│
+├── synthesis/                # Core synthesis pipeline (generation, verification, compilation, feedback)
+├── evaluations/              # Modular evaluation framework (GSM-Symbolic, FOLIO, etc.)
+│   ├── common/               # Shared utilities (model, parser, token selection)
+│   ├── gsm_symbolic/         # GSM-Symbolic math evaluation
+│   └── folio/                # FOLIO logic evaluation
+├── scripts/                  # CLI scripts (run_csd_with_grammar.py, generate_gsm_csd.sh, ...)
+├── dafny/                    # Dafny source files (GeneratedCSD.dfy, VerifiedAgentSynthesis.dfy)
 ├── dafny_externs/            # Python implementations of Dafny {:extern} functions
-│   └── extern_functions.py   # LM, Parser, and decoding primitives for strategy execution
-│
-├── parsers/                  # Grammar and parsing utilities
-│   ├── json_prefix.py        # Hand-optimized JSON prefix validator (fast incremental)
-│   ├── lark_parser.py        # Generic Lark-based grammar parser (character-level)
-│   ├── model_token_parser.py # Token-level parsing for LMs (vocabulary-aware)
-│   └── schema_to_grammar.py  # JSON Schema → Lark grammar converter (for dynamic schemas)
-│
-├── grammars/                 # Lark grammar files for various formats
-│   ├── json.lark             # JSON syntax (ECMA-404 compliant)
-│   ├── json_charwise.lark    # Character-level JSON grammar
-│   ├── math.lark             # Mathematical expressions
-│   ├── gsm.lark              # Math expressions for GSM-Symbolic (arithmetic operations)
-│   └── gsm_math.lark         # Extended math grammar for GSM calculations
-│
-├── tests/                    # Unit tests
-│   └── test_json_prefix.py   # Tests for JSON prefix validation
-│
-├── outputs/                  # Generated outputs
-│   └── generated-csd/
-│       ├── latest_run.txt    # Pointer to most recent run
-│       └── runs/             # Individual run directories
-│           └── YYYYMMDD_HHMMSS_HASH/
-│               ├── generated_csd.dfy
-│               ├── success_report.json (or failure_report.json)
-│               └── generated_csd/      # Compiled Python module
-│
-└── docs/                     # Research paper and documentation
-    └── papers/               # Academic paper LaTeX source
+├── parsers/                  # Grammar and parsing utilities (Lark, prefix, schema)
+├── grammars/                 # Lark grammar files (json, math, gsm, folio, ...)
+├── outputs/                  # Generated outputs (compiled CSDs, reports)
+├── docs/                     # Research papers and documentation
+├── test_output.txt           # (Legacy placeholder; no unit tests currently included)
 ```
+
+**Note:** The `tests/` folder referenced in some places is not present; all test logic is currently in evaluation modules or scripts.
 
 ---
 
+
 ## Evaluations Package (`evaluations/`)
 
-The `evaluations/` package provides a modular, well-organized structure for benchmark evaluations. Each evaluation task is organized as a sub-package with clear separation of concerns.
+The `evaluations/` package provides modular, extensible evaluation harnesses for different reasoning tasks. Each task (e.g., GSM-Symbolic, FOLIO) is a sub-package with dataset loading, prompt formatting, grammar construction, answer extraction, and metrics.
+
 
 ### Common Utilities (`evaluations/common/`)
-
-Shared utilities used across all evaluations:
 
 ```python
 from evaluations.common import (
@@ -199,9 +140,8 @@ from evaluations.common import (
 )
 ```
 
-### GSM-Symbolic Evaluation (`evaluations/gsm_symbolic/`)
 
-Complete evaluation for CRANE-style CSD on grade school math problems:
+### GSM-Symbolic Evaluation (`evaluations/gsm_symbolic/`)
 
 ```python
 from evaluations.gsm_symbolic import (
@@ -228,9 +168,45 @@ from evaluations.gsm_symbolic import (
 )
 ```
 
+
+### FOLIO Evaluation (`evaluations/folio/`)
+
+```python
+from evaluations.folio import (
+    # Dataset
+    load_folio,                  # Load dataset from HuggingFace
+    load_folio_from_json,        # Load from local JSON file
+    FOLIOExample,                # Data class for FOLIO examples
+    
+    # Prompts
+    make_folio_prompt,           # Format CRANE-style FOL prompts
+    make_folio_prompt_no_cot,    # Without chain-of-thought
+    
+    # Answer extraction
+    extract_answer,              # Extract True/False/Uncertain
+    extract_fol_sections,        # Parse FOL structure sections
+    
+    # Grammar
+    build_dynamic_grammar,       # Build grammar for specific predicates
+    extract_predicates_from_generation,  # Extract predicates from text
+    
+    # Generation
+    run_crane_csd,               # CRANE with CSD strategy
+    run_unconstrained,           # Baseline without CSD
+    
+    # Environment
+    setup_dafny_environment,     # Load Dafny modules
+    
+    # Metrics
+    FOLIOMetrics,                # Track evaluation metrics
+)
+```
+
 ---
 
+
 ## Key Components
+
 
 ### 1. Strategy Generator (`synthesis/generator.py`)
 
@@ -259,6 +235,7 @@ refined = generator.refine_after_compilation_error(strategy, error_message)
 full_dafny_code = generator.inject_strategy(strategy)
 ```
 
+
 ### 2. Dafny Verifier (`synthesis/verifier.py`)
 
 The `DafnyVerifier` runs formal verification on generated Dafny code.
@@ -282,6 +259,7 @@ else:
 result = verifier.verify_file(Path("my_strategy.dfy"))
 ```
 
+
 ### 3. Dafny Compiler (`synthesis/compiler.py`)
 
 The `DafnyCompiler` compiles verified Dafny code to Python.
@@ -300,6 +278,7 @@ if result.success:
     print(f"Compiled to: {result.output_dir}")
     print(f"Main module: {result.main_module_path}")
 ```
+
 
 ### 4. Synthesis Pipeline (`synthesis/feedback_loop.py`)
 
@@ -326,7 +305,9 @@ except SynthesisExhaustionError as e:
 
 ---
 
+
 ## Evaluation Scripts
+
 
 ### GSM-Symbolic Math Reasoning (`evaluations/gsm_symbolic/`)
 
@@ -409,6 +390,108 @@ pred_answer, valid_format, symbolic_expr = extract_answer(
 - **Number Extraction**: Waits for complete numbers after `####` (handles multi-token numbers like "20" = "2" + "0")
 - **Grammar Validation**: Uses `grammars/gsm.lark` or `grammars/gsm_math.lark` for math expression validation
 
+
+### FOLIO First-Order Logic Reasoning (`evaluations/folio/`)
+
+**Purpose**: Evaluates CRANE-style CSD on FOLIO dataset (first-order logic natural language inference).
+
+**Architecture**: The evaluation is organized as a modular package:
+
+| Module | Description |
+|--------|-------------|
+| `dataset.py` | Dataset loading from HuggingFace (yale-nlp/FOLIO) |
+| `prompts.py` | CRANE-style FOL prompt formatting with Prover9 syntax |
+| `answer_extraction.py` | Answer extraction for True/False/Uncertain labels |
+| `grammar.py` | Dynamic grammar construction for per-question predicates/constants |
+| `generation.py` | CSD generation method (CRANE-CSD for FOL) |
+| `environment.py` | Dafny environment setup and module loading |
+| `metrics.py` | Evaluation metrics with per-label accuracy breakdown |
+| `cli.py` | Command-line interface |
+
+**Key Features**:
+- **CRANE-style dynamic switching**: Unconstrained reasoning until `<<` delimiter detected, then CSD-constrained FOL generation, resume unconstrained until `Answer:`
+- **FOL Operators**: Supports `{and}`, `{or}`, `{xor}`, `{not}`, `{implies}`, `{iff}`, `{forall}`, `{exists}`
+- **Prover9-style syntax**: Predicates like `Predicate(arg1, arg2)`, quantifiers like `{forall} x: P(x)`
+- **Three-class classification**: True, False, Uncertain
+- **Dynamic grammar**: Predicates and constants extracted from context to constrain generation
+
+**Metrics**:
+- Overall accuracy (three-class: True/False/Uncertain)
+- Per-label accuracy breakdown
+- Valid format rate (outputs contain `Answer:` with valid label)
+- Syntax validity (FOL expressions in `<< >>` pass grammar validation)
+
+**Usage**:
+```bash
+# Using the module directly (recommended)
+python -m evaluations.folio.cli \
+  --run-dir outputs/generated-csd/runs/YOUR_RUN \
+  --model Qwen/Qwen2.5-Coder-7B-Instruct \
+  --device cuda \
+  --limit 50
+
+# Run without constrained decoding (baseline)
+python -m evaluations.folio.cli \
+  --run-dir outputs/generated-csd/runs/YOUR_RUN \
+  --model Qwen/Qwen2.5-Coder-7B-Instruct \
+  --unconstrained \
+  --limit 50
+
+# Use synthetic examples (for testing without dataset access)
+python -m evaluations.folio.cli \
+  --run-dir outputs/generated-csd/runs/YOUR_RUN \
+  --model Qwen/Qwen2.5-Coder-7B-Instruct \
+  --synthetic \
+  --limit 5
+
+# Load from local JSON file
+python -m evaluations.folio.cli \
+  --run-dir outputs/generated-csd/runs/YOUR_RUN \
+  --model Qwen/Qwen2.5-Coder-7B-Instruct \
+  --json-path data/folio_validation.json
+```
+
+**Python API**:
+```python
+from evaluations.folio import (
+    load_folio,
+    make_folio_prompt,
+    extract_answer,
+    FOLIOMetrics,
+    setup_dafny_environment,
+    build_dynamic_grammar,
+)
+
+# Load dataset (requires HuggingFace authentication for gated dataset)
+ds = load_folio(split="validation", limit=10)
+
+# Process an example
+example = ds[0]
+prompt = make_folio_prompt(example.premises, example.conclusion)
+
+# Build dynamic grammar with extracted predicates
+predicates = ["Person", "Student", "Attends"]
+constants = ["John", "Mary"]
+grammar = build_dynamic_grammar(predicates, constants)
+
+# Extract answer from generated text
+pred_answer, confidence = extract_answer(generated_text)
+# pred_answer is one of: "True", "False", "Uncertain"
+```
+
+**Dataset Note**: The FOLIO dataset (`yale-nlp/FOLIO`) is gated on HuggingFace and requires authentication:
+```bash
+huggingface-cli login
+```
+Alternatively, use `--synthetic` for testing or `--json-path` for local data.
+
+**Implementation Details**:
+- **FOL Grammar**: Uses `grammars/folio.lark` with Prover9-style syntax
+- **Section Structure**: Predicates → Premises → Conclusion → Answer
+- **Termination**: Stops at `Answer:` instead of GSM's `####`
+- **Quantifier Handling**: Supports nested quantifiers with variable binding
+
+
 ## Running with Custom Grammars
 
 Use `scripts/run_csd_with_grammar.py` to test compiled strategies with specific grammars:
@@ -438,6 +521,7 @@ python scripts/run_csd_with_grammar.py \
     --vocab-size 1000 \
     --seed 42
 ```
+
 
 ### Built-in Formats
 

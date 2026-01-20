@@ -1,0 +1,37 @@
+\lstdefinestyle{myGrammarStyle}{
+    basicstyle=\scriptsize\ttfamily, % Reduce font size
+    commentstyle=\color{green},
+    keywordstyle=\color{blue},
+    stringstyle=\color{orange},
+    numbers=left, % Line numbers on left
+    numberstyle=\tiny\color{gray}, % Line numbers styling
+    breaklines=true, % Wrap long lines
+    frame=single, % Frame around the code
+    framesep=3pt, % Adjust frame separation
+    xleftmargin=5pt, % Adjust left margin
+    xrightmargin=5pt, % Adjust right margin
+    backgroundcolor=\color{yellow!0}, % Background color
+    tabsize=2, % Tab size
+    captionpos=b, % Caption position bottom
+    aboveskip=5pt, % Reduce space above the listing
+    belowskip=5pt, % Reduce space below the listing
+    linewidth=0.9\linewidth, % Set custom line width to less than text width
+    escapeinside={(*@}{@*)}, % for escaping to LaTeX
+}
+
+\begin{lstlisting}[style=myGrammarStyle, caption= text-2-SQL prompt.]
+
+db_id: concert_singer
+db_info: # stadium ( stadium_id , location , name , capacity , highest , lowest , average )
+# singer ( singer_id , name , country , song_name , song_release_year , age , is_male )
+# concert ( concert_id , concert_name , theme , stadium_id , year )
+# singer_in_concert ( concert_id , singer_id )
+# concert.stadium_id = stadium.stadium_id
+# singer_in_concert.singer_id = singer.singer_id
+# singer_in_concert.concert_id = concert.concert_id
+
+question: How many singers do we have? Only output the SQL query. 
+SQL:
+
+\end{lstlisting}
+\label{prompt:sql_prompt}

@@ -1,0 +1,21 @@
+\begin{table}
+    \tablesize
+    \centering
+    \vspace{-0.1in}
+    \caption{\Tool{} on few-shot prompting}
+    \begin{tabular}{@{}ll ccc@{}}
+        \toprule
+        Architecture & Error Type & \Baseline{} & \Tool{} & $\downarrow$ \\
+        \hline
+         CodeGen-350M  & Syntax & 53 & 0 & 100\% \\
+          & Indentation & 15 & 3 & 80\% \\
+        WizardCoder-1B  & Syntax & 40 & 2 & 95\% \\
+        & Indentation & 22 & 1 & 95\% \\
+        Llama-7B & Syntax & 110 & 0 & 100\% \\
+        & Indentation & 40 & 5 & 88\% \\
+        
+        \bottomrule
+    \end{tabular}
+    \vspace{-0.1in}
+    \label{tab:few_shot}
+\end{table}

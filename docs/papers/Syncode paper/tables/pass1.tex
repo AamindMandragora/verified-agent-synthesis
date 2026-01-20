@@ -1,0 +1,59 @@
+\begin{table}[tb] 
+    \tablesize
+    \centering
+    % \vspace{-0.2in}
+    \caption{Functional correctness on HumanEval problems}
+    \begin{tabular}{@{}l l r r r r r@{}}%{@{}lll rrr@{}}
+        \toprule
+        Metric & Architecture & \multicolumn{2}{c}{Python} & \multicolumn{2}{c}{Go}\\
+        
+        & & \Baseline{} & \Tool{} & \Baseline{} & \Tool{} \\
+        \midrule
+        & CodeGen-350M & 6.8\% & \textbf{6.9\%} & 3.6\% & 3.6\% \\
+        
+        pass@1 & WizardCoder-1B & 20.0\% & 20.0\% & 9.3\% & \textbf{9.5\%} \\
+        
+        & \llama{} & 11.2\% & \textbf{11.5\%} & 3.8\% & \textbf{4.25\%} \\
+        \hline
+        & CodeGen-350M & 10.6\% & 10.6\% & 5.6\% & \textbf{6.1\%} \\
+        
+        pass@10 & WizardCoder-1B & 27.6\% & \textbf{28.4\%} & 12.5\% & \textbf{13.7\%} \\
+        
+        & \llama{} & 17.1\% & \textbf{18.9\%} & 8.8\% & 8.8\% \\
+        
+
+        \bottomrule
+    \end{tabular}
+    % \vspace{-0.4in}
+    \label{tab:pass@1}
+\end{table}
+% \begin{table}[b] 
+%     \tablesize
+%     \centering
+%     \vspace{-0.2in}
+%     \caption{Functional correctness on HumanEval problems}
+%     \begin{tabular}{l | c c c c | c c c c}%{@{}lll rrr@{}}
+%         \toprule
+%         Architecture & \multicolumn{4}{c|}{Python} & \multicolumn{4}{c}{Go}\\
+        
+%         % & & Std. & \Tool{} & Std. & \Tool{} \\
+%         & \multicolumn{2}{c}{pass@1} & \multicolumn{2}{c|}{pass@10} & \multicolumn{2}{c}{pass@1} & \multicolumn{2}{c}{pass@10}\\
+
+%         \midrule 
+%         & Std. & \Tool{} & Std. & \Tool{} & Std. & \Tool{} & Std. & \Tool{} \\
+
+%         % model python,p1,standard python,p10,standard, python,p1,tool python,p10,tool go,standard,p1 go,standard,p10 go,tool,p1, go,tool,p10
+
+%         \midrule
+%         CodeGen-350M & 6.8\% & 6.9\% & 10.6\% & 10.6\% & 3.6\% & 3.6\% & 5.6\% &  6.1\% \\
+        
+%         WizardCoder-1B & 20.0\% & 20.0\% & 27.6\% & 28.4\% & 9.3\% & 9.5\% & 12.5\% & 13.7\% \\
+        
+%         Llama-7B & 11.2\% & 11.5\% &  17.1\% & 18.9\% & 3.8\% & 4.25\% & 8.8\% & 8.8\%\\
+        
+
+%         \bottomrule
+%     \end{tabular}
+%     % \vspace{-0.4in}
+%     \label{tab:pass@1}
+% \end{table}

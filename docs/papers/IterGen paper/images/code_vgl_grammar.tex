@@ -1,0 +1,94 @@
+\lstdefinestyle{myGrammarStyle}{
+    basicstyle=\scriptsize\ttfamily, % Reduce font size
+    commentstyle=\color{gray},
+    keywordstyle=\color{blue},
+    stringstyle=\color{orange},
+    numbers=left, % Line numbers on left
+    numberstyle=\tiny\color{gray}, % Line numbers styling
+    breaklines=true, % Wrap long lines
+    frame=single, % Frame around the code
+    framesep=3pt, % Adjust frame separation
+    xleftmargin=5pt, % Adjust left margin
+    xrightmargin=5pt, % Adjust right margin
+    backgroundcolor=\color{yellow!4}, % Background color
+    tabsize=2, % Tab size
+    captionpos=b, % Caption position bottom
+    aboveskip=5pt, % Reduce space above the listing
+    belowskip=5pt, % Reduce space below the listing
+    linewidth=0.9\linewidth, % Set custom line width to less than text width
+    escapeinside={(*@}{@*)}, % for escaping to LaTeX
+}
+
+\begin{lstlisting}[style=myGrammarStyle, caption=Vega-lite grammar]
+
+    start: specification
+
+    specification: "{" pair ("," pair)* "}"
+
+    pair: schema_property
+        | data_property
+        | mark_property
+        | encoding_property
+        | other_property
+
+    schema_property: "\"$schema\"" ":" string
+    data_property: "\"data\"" ":" "{" data_url_property "}"
+    mark_property: "\"mark\"" ":" mark_value
+    encoding_property: "\"encoding\"" ":" "{" encoding_pairs "}"
+    
+    other_property: key ":" value
+    key: string
+
+    data_url_property: "\"url\"" ":" string
+
+    mark_value: string
+              | "{" mark_type_property ("," mark_option_pair)* "}"
+
+    mark_type_property: "\"type\"" ":" MARK_TYPE
+
+    mark_option_pair: string ":" value
+
+    encoding_pairs: encoding_pair ("," encoding_pair)*
+    encoding_pair: string ":" encoding_value
+
+    encoding_value: object | string
+
+    MARK_TYPE.2: "\"bar\"" 
+             | "\"circle\"" 
+             | "\"square\"" 
+             | "\"tick\"" 
+             | "\"line\"" 
+             | "\"area\"" 
+             | "\"point\"" 
+             | "\"rule\"" 
+             | "\"geoshape\"" 
+             | "\"text\""
+
+    ?value: object
+          | array
+          | string
+          | SIGNED_NUMBER      -> number
+          | "true"             -> true
+          | "false"            -> false
+          | "null"             -> null
+          
+    array  : "[" [value ("," value)*] "]"
+    object : "{" [pair ("," pair)*] "}"
+
+    string: /\"[^"]*\"/ | "\"type\""
+    SIGNED_NUMBER: ["+"|"-"] NUMBER
+
+    DIGIT: "0".."9"
+    HEXDIGIT: "a".."f"|"A".."F"|DIGIT
+    INT: DIGIT+
+    SIGNED_INT: ["+"|"-"] INT
+    DECIMAL: INT "." INT? | "." INT
+
+    _EXP: ("e"|"E") SIGNED_INT
+    FLOAT: INT _EXP | DECIMAL _EXP?
+    NUMBER: FLOAT | INT
+
+    WS: /[ \t\f\r\n]/+
+    %ignore WS
+\end{lstlisting}
+

@@ -1,0 +1,51 @@
+
+    \begin{tcblisting}{
+        listing only, 
+        halign=left,
+        listing engine=listings,
+        title=\textbf{\small Prompt for Vega-lite case study},
+        colbacktitle=blue!30!white, 
+        coltitle=black,
+        left=0pt,               % Left inner padding
+        right=0mm,              % Right inner padding
+        top=0mm,                % Reduce top margin
+        bottom=0mm,             % Reduce bottom margin
+        boxsep=1mm,
+        width=\textwidth,
+        listing options={style=EBNF},
+        label={fig:overview_grammar},
+    }
+    You are an expert AI model in data visualization, skilled at converting natural language descriptions into Vega-Lite JSON specifications. Vega-Lite is a high-level JSON-based visualization grammar for creating interactive and multi-view visualizations. Its specifications describe a single or complex composed view, using properties such as mark (visual type) and encoding (mapping data fields to visual properties). Each JSON specification should begin with the following structure. 
+    
+"$schema": "https://vega.github.io/schema/vega-lite/v3.json",
+"data": {
+    "url": "datasets/{dataset}.csv"
+}
+    
+Given a natural language request, output a Vega-Lite JSON object that meets the request requirements. Only include the "$schema", "data", "mark", and "encoding" keys in the JSON object.
+
+For example:
+Request: "Show a bar chart of the number of houses in each city."
+Dataset: houses
+Data fields: "City", "Price", "Size"
+Vega-Lite JSON Specification:
+{
+    "$schema": "https://vega.github.io/schema/vega-lite/v3.json",
+    "data": {
+        "url": "datasets/houses.csv"
+    },
+    "mark": {"type": "bar"},
+    "encoding": {
+        "x": {"field": "City", "type": "nominal"},
+        "y": {"aggregate": "count", "type": "quantitative", "axis": {"title": "COUNT"}}
+	}
+}
+
+Each JSON object should accurately reflect the query's intent, using appropriate Vega-Lite encoding, marks, and transformations. Use "datasets/{dataset}.csv" as the data source. Can you convert the given utterance into a VEGA-Lite specification?
+Utterance: Scatterplot mpg vs displacement color by origin
+Dataset: cars
+Data fields: Model, MPG, Cylinders, Displacement, Horsepower, Weight, Acceleration, Year, Origin
+Vega-Lite JSON Specification:
+\end{tcblisting}
+\label{fig:database_schema_query}
+

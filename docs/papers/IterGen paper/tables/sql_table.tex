@@ -1,0 +1,165 @@
+\begin{table}[t]
+    \scriptsize
+    \centering
+    \caption{Comparison of \Tool{} and baselines with various models on SQL based on execution accuracy, execution success percentage, number of tokens, and average time.}
+    \begin{tabular}{llcccccccc}
+        \toprule
+        \multirow{2}{*}{\textbf{Model}} & \multirow{2}{*}{\textbf{Method}} & \multicolumn{5}{c}{\textbf{Accuracy (\%)}} & \multirow{2}{*}{\textbf{Execute (\%)}} & \multirow{2}{*}{\textbf{Tokens}} & \multirow{2}{*}{\textbf{Time (s)}} \\
+        \cmidrule(lr){3-7}
+        & & \textbf{Easy} & \textbf{Medium} & \textbf{Hard} & \textbf{Extra} & \textbf{Overall} & & & \\
+        
+\midrule
+
+     & \standard{} & 41.6 & 26.8 & 25.9 & 10.0 & 27.5 & 45.8 & 39.30 & 0.607 \\
+Qwen2.5-0.5B & \syncode{} & 42.4 & 28.0 & 26.4 & 9.4 & 28.1 & 47.3 & 38.58 & 0.781 \\
+\textbf{} & \Tool{} & \textbf{54.8} & \textbf{31.8} & \textbf{33.9} & \textbf{12.4} & \textbf{34.5} & \textbf{60.8} & 40.88 & 0.981 \\
+
+            \midrule
+             & \standard{} & 2.8 & 0.2 & 0.6 & 0.6 & 1.0 & 2.3 & 53.27 & 0.827 \\
+Qwen2.5-0.5B-Instruct & \syncode{} & 17.2 & 5.9 & 10.3 & 4.7 & 9.2 & 28.3 & 66.79 & 1.525 \\
+\textbf{} & \Tool{} & \textbf{36.8} & \textbf{23.4} & \textbf{31.0} & \textbf{11.8} & \textbf{26.0} & \textbf{64.7} & 39.02 & 0.931 \\
+
+            \midrule
+             & \standard{} & 70.8 & 47.3 & 37.9 & 27.6 & 48.2 & 78.1 & 35.79 & 0.641 \\
+Qwen2.5-1.5B & \syncode{} & 72.0 & 48.0 & 38.5 & 28.2 & 48.9 & 79.0 & 35.48 & 0.810 \\
+\textbf{} & \Tool{} & \textbf{73.6} & \textbf{48.4} & \textbf{39.7} & \textbf{28.2} & \textbf{49.7} & \textbf{81.5} & 42.41 & 1.139 \\
+
+            \midrule
+             & \standard{} & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 44.51 & 0.818 \\
+Qwen2.5-1.5B-Instruct & \syncode{} & 43.6 & 29.3 & 33.3 & 24.7 & 32.7 & 60.7 & 54.50 & 1.324 \\
+\textbf{} & \Tool{} & \textbf{61.6} & \textbf{47.7} & \textbf{50.0} & \textbf{42.9} & \textbf{50.7} & \textbf{80.0} & 38.44 & 1.015 \\
+
+            \midrule
+             & \standard{} & 84.8 & 61.1 & 55.2 & 41.2 & 62.6 & 86.0 & 28.54 & 0.505 \\
+Qwen2.5-Coder-1.5B & \syncode{} & 84.8 & 61.1 & 55.2 & 41.2 & 62.6 & 85.6 & 28.74 & 0.620 \\
+\textbf{} & \Tool{} & \textbf{84.8} & \textbf{61.6} & \textbf{58.6} & \textbf{43.5} & \textbf{63.7} & \textbf{88.7} & 38.55 & 0.977 \\
+
+            \midrule
+             & \standard{} & 40.4 & 24.8 & 20.7 & 10.6 & 25.5 & 50.6 & 37.28 & 0.385 \\
+Llama-3.2-1B & \syncode{} & 46.4 & 28.2 & 23.0 & 10.0 & 28.7 & 58.7 & 40.33 & 0.581 \\
+\textbf{} & \Tool{} & \textbf{50.4} & \textbf{30.2} & \textbf{23.6} & \textbf{11.8} & \textbf{30.9} & \textbf{67.6} & 38.66 & 0.687 \\
+
+            \midrule
+             & \standard{} & 38.0 & 29.5 & 28.2 & 12.4 & 28.5 & 65.3 & 40.42 & 0.714 \\
+Llama-3.2-3B & \syncode{} & 46.8 & 34.8 & 32.8 & 19.4 & 34.8 & 78.8 & 39.96 & 0.905 \\
+\textbf{} & \Tool{} & \textbf{49.2} & \textbf{35.0} & \textbf{33.3} & \textbf{19.4} & \textbf{35.6} & \textbf{81.4} & 39.08 & 1.042 \\
+
+            \midrule
+             & \standard{} & 34.4 & 21.8 & 12.1 & 4.1 & 20.3 & 31.9 & 42.58 & 1.083 \\
+Llama-2-7b-chat-hf & \syncode{} & 40.0 & 27.0 & 13.8 & 5.3 & 24.4 & 40.8 & 46.16 & 1.339 \\
+\textbf{} & \Tool{} & \textbf{54.0} & \textbf{35.2} & \textbf{27.0} & \textbf{15.3} & \textbf{35.1} & \textbf{64.5} & 51.36 & 1.520 \\
+
+            \midrule
+             & \standard{} & 62.0 & 44.3 & 42.0 & 32.4 & 46.2 & 87.7 & 32.95 & 0.895 \\
+Meta-Llama-3-8B & \syncode{} & 62.4 & 44.3 & 42.5 & 32.4 & 46.4 & 87.6 & 33.02 & 1.040 \\
+\textbf{} & \Tool{} & \textbf{62.8} & \textbf{45.7} & \textbf{43.4} & \textbf{33.5} & \textbf{47.6} & \textbf{89.5} & 32.68 & 1.175 \\
+
+\bottomrule
+    \end{tabular}
+    \label{tab:sql_comparison}
+    \vspace{-.2in}
+\end{table}
+
+%%%%%% OLD TABLE BELOW with max_new_tokens=200 problems  %%%%%%%%%%
+%  & \standard{} & 41.6 & 26.4 & 25.9 & 10.0 & 27.3 & 45.6 & 56.82 & 0.881 \\
+% Qwen2.5-0.5B & \\syncode{}{} & 42.4 & 27.5 & 26.4 & 9.4 & 27.9 & 47.1 & 55.06 & 1.299 \\
+% \textbf{} & \Tool{} & \textbf{54.8} & \textbf{31.4} & \textbf{33.9} & \textbf{12.4} & \textbf{34.3} & \textbf{60.6} & 49.19 & 1.231 \\
+
+%             \midrule
+%              & \standard{} & 2.8 & 0.2 & 0.6 & 0.6 & 1.0 & 2.3 & 58.65 & 0.883 \\
+% Qwen2.5-0.5B-Instruct & \\syncode{}{} & 18.0 & 5.9 & 10.3 & 5.3 & 9.5 & 28.8 & 103.05 & 2.801 \\
+% \textbf{} & \Tool{} & \textbf{36.8} & \textbf{23.4} & \textbf{31.0} & \textbf{12.4} & \textbf{26.1} & \textbf{64.8} & 39.69 & 1.046 \\
+
+%             \midrule
+%              & \standard{} & 71.2 & 47.3 & 38.5 & 27.6 & 48.4 & 78.6 & 42.37 & 0.747 \\
+% Qwen2.5-1.5B & \\syncode{}{} & 72.4 & 48.0 & 39.1 & 28.2 & 49.1 & 79.5 & 42.26 & 1.025 \\
+% \textbf{} & \Tool{} & \textbf{73.6} & \textbf{48.6} & \textbf{39.7} & \textbf{28.2} & \textbf{49.8} & \textbf{81.5} & 44.54 & 1.190 \\
+
+%             \midrule
+%              & \standard{} & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 45.37 & 0.819 \\
+% Qwen2.5-1.5B-Instruct & \\syncode{}{} & 43.6 & 29.8 & 33.9 & 25.9 & 33.2 & 61.8 & 74.32 & 2.023 \\
+% \textbf{} & \Tool{} & \textbf{61.6} & \textbf{47.7} & \textbf{50.6} & \textbf{42.9} & \textbf{50.8} & \textbf{80.2} & 40.25 & 1.143 \\
+ 
+%         \midrule
+%      & \standard{} & 84.8 & 60.9 & 55.2 & 41.8 & 62.6 & 86.4 & 29.82 & 0.530 \\
+% Qwen2.5-Coder-1.5B & \\syncode{}{} & 84.8 & 60.9 & 55.2 & 41.8 & 62.6 & 85.9 & 30.59 & 0.679 \\
+% \textbf{} & \Tool{} & \textbf{84.8} & \textbf{61.4} & \textbf{58.6} & \textbf{44.1} & \textbf{63.7} & \textbf{88.8} & 39.48 & 1.045 \\
+
+%     \midrule
+%      & \standard{} & 40.8 & 24.8 & 20.7 & 10.6 & 25.6 & 51.1 & 48.00 & 0.509 \\
+% Llama-3.2-1B & \\syncode{}{} & 46.8 & 28.2 & 23.0 & 10.0 & 28.8 & 59.0 & 56.36 & 0.916 \\
+% \textbf{} & \Tool{} & \textbf{50.8} & \textbf{30.2} & \textbf{23.6} & \textbf{11.8} & \textbf{31.0} & \textbf{67.9} & 46.55 & 0.860 \\
+
+%             \midrule
+%      & \standard{} & 38.0 & 29.5 & 28.2 & 12.9 & 28.6 & 67.4 & 47.78 & 0.846 \\
+% Llama-3.2-3B & \\syncode{}{} & 47.2 & 34.8 & 32.8 & 19.4 & 34.9 & 81.4 & 47.63 & 1.164 \\
+% \textbf{} & \Tool{} & \textbf{49.2} & \textbf{35.0} & \textbf{33.3} & \textbf{19.4} & \textbf{35.6} & \textbf{82.1} & 41.73 & 1.163 \\
+
+%     \midrule
+%      & \standard{} & 34.4 & 22.0 & 12.1 & 4.1 & 20.4 & 32.6 & 44.74 & 1.148 \\
+% Llama-2-7b-chat-hf & \\syncode{}{} & 40.0 & 27.3 & 13.8 & 5.9 & 26.6 & 43.6 & 50.33 & 1.483 \\
+% \textbf{} & \Tool{} & \textbf{51.0} & \textbf{35.9} & \textbf{27.0} & \textbf{17.6} & \textbf{35.8} & \textbf{64.9} & 55.12 & 1.833 \\
+
+%             \midrule
+%              & \standard{} & 62.0 & 44.3 & 42.0 & 32.4 & 46.2 & 88.5 & 35.11 & 0.961 \\
+% Meta-Llama-3-8B & \\syncode{}{} & 62.4 & 44.3 & 42.5 & 32.4 & 46.4 & 88.4 & 35.50 & 1.345 \\
+% \textbf{} & \Tool{} & \textbf{63.1} & \textbf{45.7} & \textbf{43.1} & \textbf{33.5} & \textbf{47.6} & \textbf{89.8} & 33.38 & 1.237 \\
+% \midrule
+
+
+
+%%%%%% OLD TABLE BELOW with 200 problems  %%%%%%%%%%
+
+% \begin{table}[htbp]
+%     \scriptsize
+%     \centering
+%     \begin{tabular}{llccccccc}
+%         \toprule
+%         \multirow{2}{*}{\textbf{Model}} & \multirow{2}{*}{\textbf{Method}} & \multicolumn{5}{c}{\textbf{Accuracy (\%)}} & \multirow{2}{*}{\textbf{Tokens}} & \multirow{2}{*}{\textbf{Time (s)}} \\
+%         \cmidrule(lr){3-7}
+%         & & \textbf{Easy} & \textbf{Medium} & \textbf{Hard} & \textbf{Extra} & \textbf{Overall} & & \\
+%         \midrule
+%         & \standard{} & 61.0 & 23.7 & 10.8 & 0.0 & 24.0 & 43.07 & 1.10 \\
+%         Qwen2.5-0.5B & \\syncode{}{} & 61.0 & 26.3 & 10.8 & 0.0 & 25.0 & 44.72 & 1.04 \\
+%         & \Tool{} & \textbf{70.7} & \textbf{27.5} & 10.8 & 0.0 & \textbf{27.5} & 44.25 & 1.15 \\
+%         \midrule
+%          & \standard{} & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 60.84 & 0.97 \\
+%         Qwen2.5-0.5B-Instruct & \\syncode{}{} & 31.7 & 1.3 & 2.7 & 2.4 & 8.0 & 98.06 & - \\
+%         & \Tool{} & \textbf{39.0} & \textbf{26.3} & \textbf{13.5} & \textbf{7.1} & \textbf{22.5} & 45.27 & 1.18 \\
+%         \midrule
+%          & \standard{} & 85.4 & 33.8 & 27.0 & 11.9 & 38.5 & 38.46 & - \\
+%         Qwen2.5-1.5B & \\syncode{}{} & 87.8 & 33.8 & 27.0 & 11.9 & 39.0 & 37.54 & 0.93 \\
+%         & \Tool{} & 87.8 & 33.8 & 27.0 & 11.9 & 39.0 & 40.57 & 1.11 \\
+%         \midrule
+%         & \standard{} & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 51.63 & 0.94 \\
+%         Qwen2.5-1.5B-Instruct & \\syncode{}{} & 56.1 & 21.2 & 24.3 & 11.9 & 27.0 & 83.9 & - \\
+%         & \Tool{} & \textbf{65.9} & \textbf{33.8} & \textbf{40.5} & \textbf{26.2} & \textbf{40.0} & 42.66 & 1.20 \\
+%         \midrule
+%         & \standard{} & 92.7 & 50.0 & 51.4 & 21.4 & 53.0 & 29.15 & 0.53 \\
+%     Qwen2.5-Coder-1.5B & \\syncode{}{} & 92.7 & 50.0 & 51.4 & 21.4 & 53.0 & 29.66 & 0.67 \\
+%     & \Tool{} & 92.7 & 50.0 & \textbf{56.8} & 21.4 & \textbf{54.0} & 37.71 & 1.03 \\
+%     \midrule
+%     & \standard{} & 7.3 & 5.0 & 10.8 & 0.0 & 5.5 & 127.36 & - \\
+% Phi-3-mini-instruct & \\syncode{}{} & 43.9 & 30.0 & 27.0 & 14.3 & 29.0 & 69.29 & 2.52 \\
+%     & \Tool{} & 43.9 & \textbf{31.2} & \textbf{29.7} & \textbf{26.2} & \textbf{32.5} & 68.41 & 2.72 \\
+
+% CodeLlama-7b-hf & \\syncode{}{} & 51.2 & 45.0 & 27.0 & 14.3 & 36.5 & 51.56 & 1.55 \\
+% & \Tool{} & 51.2 & \textbf{46.3} & 27.0 & 14.3 & \textbf{37.0} & 49.40 & 1.67 \\
+% \midrule
+
+    
+%     \midrule
+%      & \standard{} & 34.4 & 22.0 & 12.1 & 4.1 & 20.4 & 32.6 & 44.74 & 1.148 \\
+% Llama-2-7b-chat-hf & \\syncode{}{} & 40.0 & 27.3 & 13.8 & 5.9 & 24.6 & 41.6 & 50.33 & 1.483 \\
+% \textbf{} & \Tool{} & \textbf{54.0} & \textbf{35.9} & \textbf{27.0} & \textbf{17.6} & \textbf{35.8} & \textbf{66.9} & 55.12 & 1.833 \\
+
+%     \midrule
+%      & \standard{} & 27.3 & 20.3 & 19.4 & 6.5 & 19.6 & 78.2 & 48.14 & 1.226 \\
+% CodeLlama-7b-hf & \\syncode{}{} & 27.7 & 20.5 & 19.4 & 6.5 & 19.8 & 77.9 & 48.76 & 1.435 \\
+% \textbf{} & \Tool{} & \textbf{28.1} & \textbf{21.0} & \textbf{19.4} & \textbf{6.5} & \textbf{20.1} & \textbf{78.2} & 48.24 & 1.640 \\
+
+
+%     \end{tabular}
+%     \caption{Comparison of models on SQL based on accuracy, number of tokens, and average time.}
+%     \label{tab:sql_comparison}
+% \end{table}

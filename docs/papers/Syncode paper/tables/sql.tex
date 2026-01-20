@@ -1,0 +1,35 @@
+\begin{table}[tbh]
+    \scriptsize
+    \centering
+    \caption{Comparison of \Tool{} and unconstrained generation on SQL generation.}
+    \begin{tabular}{llcccccccc}
+        \toprule
+        \multirow{2}{*}{\textbf{Model}} & \multirow{2}{*}{\textbf{Method}} & \multicolumn{5}{c}{\textbf{Accuracy (\%)}} & \multirow{2}{*}{\textbf{Execute (\%)}} & \multirow{2}{*}{\textbf{Tokens}} & \multirow{2}{*}{\textbf{Time (s)}} \\
+        \cmidrule(lr){3-7}
+        & & \textbf{Easy} & \textbf{Medium} & \textbf{Hard} & \textbf{Extra} & \textbf{Overall} & & & \\
+
+
+        \midrule
+        & \Baseline{} & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 221.43 & 9.883 \\
+Gemma2-2B-it & \Baseline{}+ & 44.8 & 18.9 & 21.9 & 17.1 & 25.4 & 77.6 & 221.43 & 9.893  \\
+& \Tool{} & \textbf{45.8} & 18.7 & \textbf{23.3} & \textbf{20.6} & \textbf{26.3} & \textbf{78.2} & \textbf{135.17} & \textbf{5.876} \\
+
+        \midrule
+        & \Baseline{} & 34.4 & 22.0 & 12.1 & 4.1 & 20.4 & 32.6 & 44.74 & 1.148 \\
+Llama-2-7b-chat & \Tool{} & \textbf{40.0} & \textbf{27.3 }& \textbf{13.8} & \textbf{5.9} & \textbf{24.6} & \textbf{41.6} & 50.33 & 1.483 \\
+
+        \midrule
+        & \Baseline{} & 40.8 & 24.8 & 20.7 & 10.6 & 25.6 & 51.1 & 48.00 & 0.509 \\
+Llama-3.2-1B & \Tool{} & \textbf{46.8} & \textbf{28.2} & \textbf{23.0} & \textbf{10.6} & \textbf{28.8} & \textbf{59.0} & 56.36 & 0.916 \\
+
+            \midrule
+             & \Baseline{} & 38.0 & 29.5 & 28.2 & 12.9 & 28.6 & 67.4 & 47.78 & 0.846 \\
+Llama-3.2-3B & \Tool{} & \textbf{47.2} & \textbf{34.8} & \textbf{32.8} & \textbf{19.4} & \textbf{34.9} & \textbf{81.4} & 47.63 & 1.164 \\
+
+            
+            
+        \bottomrule
+    \end{tabular}
+    \label{tab:sql_comparison}
+    % \vspace{-.2in}
+\end{table}

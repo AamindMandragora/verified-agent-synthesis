@@ -1,0 +1,17 @@
+\begin{table}[ht]
+    \centering
+    \scriptsize
+    \caption{Averages across all models and methods for SQL case study}
+    \label{tab:avg_stats}
+    \begin{tabular}{lcccccccc}
+        \toprule
+        \multirow{2}{*}{\textbf{Method}} & \multicolumn{5}{c}{\textbf{Accuracy (\%)}} & \multirow{2}{*}{\textbf{Execute (\%)}} & \multirow{2}{*}{\textbf{Time (s)}} \\
+        \cmidrule(lr){2-6}
+        & \textbf{Easy} & \textbf{Medium} & \textbf{Hard} & \textbf{Extra} & \textbf{Overall} & & \\
+        \midrule
+        \standard{} & 41.73 & 28.38 & 24.80 & 15.56 & 28.90 & 50.28 & 0.81 \\
+        \syncode{}  & 50.84 & 34.08 & 30.78 & 19.81 & 35.22 & 63.72 & 1.56 \\
+        \Tool{}     & 58.74 & 39.92 & 37.87 & 24.70 & 41.63 & 75.84 & 1.19 \\
+        \bottomrule
+    \end{tabular}
+\end{table}

@@ -1,0 +1,51 @@
+For the simplicity of presenting the proof, we assume that $d > 2$. 
+
+Since $t \in \set(m)$ for some $\sequence_1 = \{\terminal_{f+1}, \terminal_{f+2} \dots \terminal_{f+d}\} \in \accepts$
+\[
+    \implies \dmatch(t, q , \{\terminal_{f+2} \dots \terminal_{f+d}\}) \implies \dmatch(r.t, \dfastart^{\terminal_{f+1}}, \{\terminal_{f+2} \dots \terminal_{f+d}\}) 
+\]
+\[
+    \implies \pmatch(r.t, \{\regex_{\terminal_{f+1}}.\regex_{\terminal_{f+2}} \dots \regex_{\terminal_{f+d}}\})
+\]
+By Definition~\ref{def:pmatch}, there are two possible cases:
+
+\begin{enumerate}
+    \item $\exists w_1 \in \alphabets^*, w_2 \in \alphabets^+$ such that $r.t = w_1.w_2 $ and $w_1 \in \lang(\regex_{\terminal_{f+1}}.\regex_{\terminal_{f+2}} \dots \regex_{\terminal_{f+d}})$ \\
+    We show that this case is not possible since our terminal sequence $\sequence_1$ is long enough that no prefix of $r.t$ cannot be in $\lang(\regex_{\terminal_{f+1}}.\regex_{\terminal_{f+2}} \dots \regex_{\terminal_{f+d}})$ \\
+    We can infer that $\len(w_1) < \len(r.t) \implies \len(w_1) < \len(r) + \len(t)$ \\
+    Further, from the assumption $ d > \textit{len}(t)$, we have
+    \[
+        \len(w_1) < d + \len(r) 
+    \]    
+    Firstly, note that $r \not\in \lang(\regex_{\terminal_{f+1}}.\regex_{\terminal_{f+2}})$ by the definition of remainder $r$ \\
+    Note that we assume no terminal contains empty string i.e. $\epsilon \not \in \lang(\regex_{\terminal_i})$ \\
+    Hence, every string in $\lang(\regex_{\terminal_{f+2}} \dots \regex_{\terminal_{f+d}})$ should have length at least $d-1$  \\
+
+    % it's not that clear 
+    Clearly, $r$ is prefix of $w_1$. Let $w_3 \in \alphabets^*$, $r.w_3 = w_1$ and hence $\len(w_3) > d-1$ \\
+    Hence, 
+    \[
+        \len(r) + d - 1 < \len(w_1)
+    \]
+    \[ 
+    \len(r) + d - 1 < \len(w_1) < d + \len(r) 
+    \]
+    This is not possible and hence such $w_1$ cannot exist. 
+    
+    \item $\exists w_1 \in \alphabets^*$ such that $r.t.w_1 \in \lang(\regex_{\terminal_{f+1}}.\regex_{\terminal_{f+2}} \dots \regex_{\terminal_{f+d}})$
+
+    By Definition~\ref{def:pparse}, we have $\sequence^{\square}, r = \partialparse(\partialcode)$ s.t $\partialcode = \fixpartialcode.r$, $\sequence^{\square} = \terminal_{1}, \terminal_{2} \dots \terminal_{f}$ $\fixpartialcode \in \lang(\regex_{\terminal_{1}}.\regex_{\terminal_{2}} \dots \regex_{\terminal_{f}})$. \\
+    Let $\sequence_1 = \terminal_{f+1}, \terminal_{f+2} \dots \terminal_{f+d}$ \\
+    Since, $\partialcode. t = \fixpartialcode.r.t$, $\fixpartialcode \in \lang(\sequence^{\square})$ and $r.t.w_1 \in \lang(\sequence_1)$, we have 
+    \[
+        \fixpartialcode.r.t.w_1 \in \lang(\sequence^{\square}.\sequence_1)
+    \]
+    \[
+        \partialcode.t.w_1 \in \lang(\sequence^{\square}.\sequence_1)
+    \]
+     By Definition~\ref{def:acc} of accept sequence, $\sequence^{\square} . \sequence_1 \in \lang_p^\allterminals(G)$, Hence
+     \[
+        \partialcode.t.w_1 \in \lang_p(G) \implies \partialcode.t \in \lang_p(G)
+     \]     
+\end{enumerate}
+Thus, our proof is complete and $\partialcode.t \in \lang_p(G)$

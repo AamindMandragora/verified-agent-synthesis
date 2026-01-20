@@ -1,0 +1,44 @@
+// GSM Grammar - Variables Only (No Numeric Constants)
+// =====================================================
+// This grammar forces all values to be represented as variables.
+// All numbers from the question (including constants like 100, 12, etc.)
+// should be extracted and assigned variable names before generation.
+//
+// Example: "16 markers at $8.5 each" -> variables: {m: 16, p: 8.5}
+//          Expression: m * p
+
+syncode: "<<" start ">>"
+
+start: expr
+
+// For CSD parsing - expression must end with >>
+csd_start: expr ">>"
+
+// Simple expression grammar - ONLY VARIABLES, no numeric literals
+?expr: term
+     | expr "+" term -> add
+     | expr "-" term -> sub
+
+?term: factor
+     | term "*" factor -> mul
+     | term "/" factor -> div
+     | term "//" factor -> floordiv
+     | term "%" factor -> mod
+
+?factor: atom
+       | "(" expr ")"
+
+// Atoms are ONLY variables - no NUMBER allowed
+?atom: VARIABLE
+     | "int" "(" expr ")"
+
+// ============================================================================
+// TERMINALS - Variables only
+// ============================================================================
+
+// This will be dynamically replaced to restrict to specific variable names
+// Example: VARIABLE: "m" | "p" | "c" | "n"
+VARIABLE: /[a-zA-Z]/
+
+%import common.WS
+%ignore WS

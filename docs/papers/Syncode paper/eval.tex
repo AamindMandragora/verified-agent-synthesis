@@ -1,0 +1,287 @@
+\newcommand{\CS}{C\nolinebreak\hspace{-.05em}\raisebox{.6ex}{\bf \#}}
+\noindent \textbf{Models.}
+In our evaluation, we select a diverse set of state-of-the-art open-weight LLMs of varying sizes. 
+Since closed-source LLMs, such as GPT-4 or Gemini, do not expose generation logits through their APIs, applying a constrained generation approach in \Tool{} is not feasible. 
+Therefore, we focus on enhancing smaller, open-source models in our evaluation.
+We select the state-of-the-art models Llama-2-7B-chat ~\cite{touvron2023llama2openfoundation} and Gemma2-2B-it ~\cite{gemmateam2024gemma2improvingopen} for our JSON evaluation.
+For text-2-SQL generation experiments, we use Llama-2-7B-chat, Llama-3.2-1B, Llama-3.2-3B, and Gemma-2-2B-it.
+Furthermore, we chose models such as \llama{}~\cite{touvron2023llama}, \wizard{}~\cite{luo2023wizardcoder}, and \codegen{}~\cite{nijkamp2023codegen} for code completion. 
+% These models were chosen since they were the top-performing small models featured on the BigCode Models Leaderboard~\cite{bigcode2023leaderboard}.
+% We give more detail about these models in Appendix~\ref{sec:models}.
+
+% \input{tables/models}
+\noindent \textbf{Datasets.}
+We focus our evaluation on generating JSON, SQL, Python, and Go outputs. 
+We choose JSON as it is supported by the baselines~\cite{llamacpp, willard2023efficient}, which allows us to compare against them.
+We selected Python since it is extensively present in the training data employed for LLM training and fine-tuning. 
+Conversely, we opted for Go due to its lower standard LLM accuracy and a relatively smaller presence in the training data.
+We consider JSON-Mode-Eval~\cite{jsoneval} dataset for text to JSON generation and HumanEval and MBXP~\cite{athiwaratkun2023multilingual} dataset for evaluating Python and Go code generation. 
+We display examples of prompts from these datasets in Appendix~\ref{sec:prompts}.
+
+\begin{itemize}
+\itemsep0em 
+\item \noindent \textbf{JSON-Mode-Eval~\cite{jsoneval}.} It consists of 100 zero-shot problems. Each problem prompt follows the chat format with a system prompt specifying a JSON schema and a user prompt requesting the LLM to generate a JSON object that contains specified contents.
+
+\item \noindent \textbf{Spider text-2-SQL.} Spider~\cite{yu-etal-2018-spider} text-to-SQL dataset consists of 1,034 problems of varying difficulty levels: \emph{easy} (250), \emph{medium} (440), \emph{hard} (174), and \emph{extra hard} (170).
+
+\item \noindent \textbf{Multilingual HumanEval~\cite{athiwaratkun2023multilingual}.}  It is an extension of the original HumanEval collection~\cite{chen2021evaluating}, which comprises 164 Python programming problems, to include other languages like Go. Each problem in the dataset consists of a function definition, and text descriptions of the function as a part of the function docstring.
+
+\item \noindent \textbf{MBXP~\cite{athiwaratkun2023multilingual}.} It is extended from the MBPP~\cite{austin2021program} dataset for Python to support other languages such as Go. The dataset consists of 974 problems with the same format as HumanEval. 
+
+
+\end{itemize}
+
+% \noindent \textbf{Parsers.}
+% Our evaluation considers the LR(1) base parser as the default and considers the LALR(1) parser for the ablation.
+
+% We build our parsing toolkit on top of Lark\cite{lark}.}
+\noindent \textbf{Grammars.}
+For Python, we used the readily available grammar from the Lark repository. 
+For Go, we converted an existing LL(*) grammar from~\cite{antlr} implementation to LR(1) grammar for our use.
+We write the CFG for these languages using the Extended Backus-Naur Form (EBNF) syntax.
+We use a substantial subset of grammar for Python and Go syntactic generation with \Tool{}. 
+The grammar has commonly used features of the language such as control flow, and loops, and excludes some features such as Python's support for lambda functions.  
+Adding support for more features would require more engineering effort but it will not change the overall technique.
+The grammars we used are available in Appendix~\ref{sec:grammar}.
+The JSON grammar consists of 19 rules and 12 terminals.
+The Python grammar we used contains 520 production rules and 94 terminals, whereas the Go grammar comprises 349 rules and 87 terminals.  
+
+\noindent \textbf{Evaluating Syntax Errors.}
+For evaluating the errors in the generated output in each of the languages, we use their respective standard compilers.  
+
+
+% \noindent \textbf{Hyperparameter Values.}
+% We use these same hyperparameter values for our baselines.
+
+\noindent \textbf{Experimental Setup.}
+We run experiments on a 48-core Intel Xeon Silver 4214R CPU with 2 NVidia RTX A5000 GPUs. 
+\Tool{} is implemented using PyTorch~\cite{NEURIPS2019_9015}, HuggingFace transformers library~\cite{wolf-etal-2020-transformers} and Lark library~\cite{lark}.
+
+\noindent \textbf{Baselines.}
+\add{
+We evaluate three state-of-the-art baselines \outlines{}~\cite{willard2023efficient} v0.1.1, \guidance{}~\cite{guidance} v0.1.16, and \llamacpp{}~\cite{llamacpp} v0.3.1 in our study. 
+% \outlines{} implementation is most similar to Synchromesh~\cite{poesia2022synchromesh} open-source reimplementation\cite{synchromesh_github} from a subset of original authors of the paper. 
+% However, we found that this open-source reimplementation has several bugs in its implementation and it does not work on most grammars we tried in our evaluation. 
+The algorithmic differences in the baselines and \Tool{} are discussed in Section~\ref{sec:related}.
+We perform a warmup run for each experiment where we measure inference time to ensure that one-time precomputation time is not included in the inference runtime.
+For a fair comparison with baselines, \Tool{} uses opportunistic masking~\cite{beurerkellner2024guiding}, an optimization used in \llamacpp{} and \guidance{}. 
+Instead of computing the full logit vector mask upfront, the model generates a token and only computes the mask if the proposed token is incorrect.
+}
+
+
+
+\section{Experimental Results} \label{sec:exp_main}
+\add{
+In this section, we evaluate \Tool{} on generating various formal languages.
+We compare \Tool{} with state-of-the-art baselines and perform various ablation studies. 
+}
+
+\add{
+\Tool{} allows the model to generate a special EOS token (indicating the end of generation) only when the output belongs to $\lang(G)$. 
+In practice, however, LLM generation typically stopped after a fixed maximum number of tokens, $n_\textit{max}$. 
+Therefore, terminating with the EOS token within this limit is not always guaranteed potentially resulting in syntax errors. 
+% Nevertheless, this approach significantly enhances syntactic accuracy, as we demonstrate in our evaluation.
+}
+
+
+
+\subsection{Effectiveness of \Tool{} for JSON Generation} 
+\label{sec:exp_errors}
+\input{tables/json} 
+We evaluate the effectiveness of \Tool{} in 
+guiding LLMs with the JSON grammar to generate syntactically correct JSON. 
+We run the inference with Llama-2-7B-chat and Gemma2-2B-it with \Tool{}, \llamacpp{}, \outlines{}, \guidance{}, \transformerscfg{}, and \baseline{} generation on the 100 problems from the JSON-Mode-Eval dataset. 
+We select these models for the JSON experiment as they are supported by all considered baselines. 
+
+% We chose \llamacpp{}, \outlines{}, and \guidance{} as they have JSON grammars that work with their frameworks. 
+We run \llamacpp{} on a CPU as it requires a specific CUDA version not compatible with our machine. 
+We set max new tokens $n_\textit{max} = 400$. 
+We also report an evaluation of augmenting the prompts with an explicit request to output only JSON. 
+We present an example of these explicit prompts in Appendix~\ref{sec:prompts}. 
+We evaluate the correctness of JSON generated by an LLM by first evaluating whether the JSON string can be parsed and converted to a valid JSON object. 
+We further evaluate whether the generated JSON is valid against the schema specified in the prompt. 
+Although the \Tool{} does not enforce the specific schema to the JSON output for each task, we believe it is an important research question to check whether the reduced syntax errors due to \Tool{} can also lead to improved schema validity.
+
+Table~\ref{tab:json_eval} presents our evaluation results. We report results for both the prompts taken directly from the dataset (denoted as "Original") and after augmenting these prompts with an explicit request to output JSON (denoted as "Explicit"). 
+In the "Validation Accuracy" column, we compute the percentage of valid completions against their respective schemas. 
+In the "Generation Time (s)" column, we report the average time taken to generate a completion to a prompt from the dataset. 
+Guiding Llama-2-7B-chat and Gemma2-2B-it  with the JSON grammar via \Tool{} eliminates syntax errors in generated JSON. 
+On the other hand, \baseline{} generation results in syntactically incorrect JSON for 98\% and 59\% of completions to the original prompts for the Llama-2-7B-chat and Gemma2-2B-it models respectively. A majority of these errors are due to the generation of natural language before and after the JSON. Explicit prompts somewhat mitigate this issue, but still results in syntactically invalid outputs to 41\% and 59\% of these prompts for \baseline{} Llama-2-7B-chat and Gemma2-2B-it generation respectively, primarily due to errors such as unmatched braces and unterminated string literals.\llamacpp{}, \outlines{}, \guidance{}, and \transformerscfg{} face similar problems with closing braces and terminating strings.
+% Augmenting \chat{} with \outlines{}, results in the generation of nonsensical output, such as numbers, empty braces, empty strings, and incomplete JSON, that does not align with the prompts. 
+
+
+Notably, \Tool{} significantly improves the JSON schema validation accuracy of Gemma2-2B-it completions over \baseline{} generation, from 41\% to 99\% and 41\% to 100\% for original and explicit prompts respectively. 
+\add{Furthermore, \Tool{} outperforms \llamacpp{}, \outlines{},\guidance{}, and \transformerscfg{} in validation accuracy of Llama-2-7B-chat completions by 3\%, 4\%, 9\%, and 4\% respectively for original prompts and 16\%, 28\%, 19\%, and 20\% for explicit prompts.} The remaining schema validation errors with \Tool{} are semantic errors, including data type mismatch between the generation JSON and schema, missing fields required by the schema, and adding extra fields not allowed by the schema. \Tool{} is faster than all baseline grammar-guided generation methods for Llama-2-7B-chat and all but \outlines{} for Gemma2-2B-it. The low generation time with \outlines{} for Llama-2-7B-chat can largely be attributed to the fact that many of its completions to prompts are empty JSON (35\% of original and 7\% of explicit) which takes few tokens to generate, but often does not conform to the schema.
+
+
+
+
+% \add{\Tool{} is 13.8x faster than \outlines{} for explicit prompts and 12.4x faster for original prompts. Similarly, \Tool{} is 1.4x faster than \guidance{} for explicit prompts and 1.6x faster for original prompts.} 
+% \llamacpp{} runtimes are relatively slower than other approaches as it was run on a CPU. 
+% We observed that JSON grammar-guided generation in \llamacpp{} reduces the average time to generate a completion by between 6.4\% to 10.9\% over standard \llamacpp{} generation.  
+
+
+Interestingly, we observe that for Llama-2-7B-chat, \Tool{} also reduces the average generation time over \baseline{} generation. 
+We attribute this finding to the fact that without grammar-guided generation, the model generates syntactically invalid output, such as natural language, in addition to JSON and thus generates more tokens in response to the same prompt than with \Tool{}. 
+Thus, augmenting LLMs with \Tool{} can significantly improve syntactical correctness and runtime efficiency.
+
+
+\subsection{Effectiveness of \Tool{} for SQL Generation} 
+\label{sec:exp_errors}
+This study demonstrates that \Tool{} improves text-to-SQL generation by enforcing grammar constraints, ensuring that generated SQL queries are syntactically accurate. 
+We evaluate the following models for SQL generation: Llama-3.2-1B, Llama-3.2-3B (base models) and Llama-2-7B-chat, Gemma-2-2B-it (instruct-tuned models). 
+We observe that despite explicitly prompting to only generate the SQL query, the instruct-tuned Gemma-2-2B-it model often enclosed generated SQL queries within markers, such as \str{\textasciigrave\textasciigrave\textasciigrave} or \str{\textasciigrave\textasciigrave\textasciigrave sql}. 
+Thus, we consider another baseline for Gemma-2-2B where we extract the SQL query substring within these markers, handling cases where the output format is either \str{\textasciigrave \textasciigrave \textasciigrave \{SQL query\} \textasciigrave \textasciigrave \textasciigrave} or \str{\textasciigrave \textasciigrave \textasciigrave sql \{SQL query\} \textasciigrave \textasciigrave \textasciigrave}.
+
+For evaluation, we use the Spider~\cite{yu-etal-2018-spider} text-to-SQL dataset, which consists of 1,034 problems of varying difficulty levels: \emph{easy} (250), \emph{medium} (440), \emph{hard} (174), and \emph{extra hard} (170). 
+We prompt models with schema information and text queries, instructing them to generate SQL queries only. 
+Using greedy decoding and \str{\textbackslash n\textbackslash n} is used as an additional stopping condition for all experiments.
+
+\input{tables/sql}
+
+Table~\ref{tab:sql_comparison} presents a comparison of \Tool{} and unconstrained generation across key metrics. The Accuracy (\%) column shows the percentage of correctly generated SQL queries across different difficulty levels.
+Execute (\%) reflects the percentage of queries successfully executed without runtime errors in SQLite. 
+The Tokens column reports the average number of tokens generated, and Time(s) shows the average generation time. 
+\Baseline{}+ row for Gemma2 denotes the result for the additional baseline where we extract the SQL query from the full generation using regex matching.
+
+We observe that \Tool{} achieves better performance over the baselines in terms of both execution percentage and execution accuracy.
+For example, with the Llama-3.2-3B model, \Tool{} achieves an execution success rate of 81.4\%, compared to 67.4\% for unconstrained generation. 
+Further, the execution accuracy improves from 28.6\% to 34.9\%.
+In the case of the Gemma2-2B-it model, we observe that \Tool{} shows a moderate improvement over the \Baseline{}+ accuracy. 
+However, it shows a significant gain in the speed (1.7x) of generation and a reduction in the number of tokens generated. 
+Although the Gemma2-2B-it model has a good execution percentage without any runtime errors.
+The instruct-tuned models tends to use large number of tokens that are not part of the query.
+In applications where the goal is to use LLMs to generate SQL queries without additional explanations, the result with Gemma2-2B-it shows that \Tool{} is useful in improving the efficiency of LLM generation along with the improvements in accuracy. 
+
+\subsection{Effectiveness of \Tool{} for GPL} 
+\label{sec:exp_errors}
+\input{tables/main_eval_python} 
+We run inference with \codegen{}, \wizard{}, and \llama{} with \Tool{} and with the \baseline{} no-masking approch. 
+We do not compare \Tool{} with the other baselines as none of these works support general-purpose programming language grammars. 
+We experiment with both Python and Go programming languages, evaluating performance on zero-shot problems from the HumanEval and MBXP datasets. 
+For each dataset, we generate $n = 20$ and $n = 1$ samples per problem with the LLM, respectively. 
+We run the LLM-generated code completion against a predefined set of unit tests. 
+For each unit test, we record the error type when running the generated program against that test case. 
+We use the hyperparameters temperature $= 0.2$ and top $p = 0.95$. 
+% Table \ref{tab:main_eval_python} presents our results for Python code. The columns \baseline{} and \Tool{} represent the total number of errors of a particular Error Type of LLM-generated code completions to problems in a particular dataset when utilizing that respective generation approach. The column $\downarrow$ represents the percentage reduction from the \baseline{} column to the \Tool{} column. Notably, our experiments reveal that \Tool{} reduces the number of syntax and indentation errors by over 90\% over the baseline in most experiments. Moreover, \Tool{} reduces the number of syntax or indentation errors to less than 1\% of the total test cases. 
+Table~\ref{tab:main_eval_python} presents our results for Python and Go. 
+The columns \baseline{} and \Tool{} represent the total number of generated programs with syntax errors for the respective approaches. 
+The column $\downarrow$ designates the percentage reduction in syntax errors from the \baseline{} generation to the \Tool{} generation.
+In this evaluation, across both HumanEval and MBXP datasets, we generate a total of 4154 samples for each language. 
+On average, of all \baseline{} generated samples, ~6\% and ~25\%  have syntax errors for Python and Go, respectively. 
+% The HumanEval dataset has 164 problems per language, and we generate $n = 20$ samples per problem, resulting in a total of 3280 generated samples per language. 
+% The MBXP dataset has 974 problems per language and $n = 1$ samples are generated per problem. The LLMs with \baseline{} generation generate syntax errors for ~9\% and ~30\% of MBXP Python and Go samples respectively on average.
+
+ Notably, our experiments reveal that \Tool{} reduces the number of syntax errors by over 90\% over the baseline in most experiments. 
+ Moreover, \Tool{} reduces the number of syntax errors to less than 1\% of the total samples. 
+ Interestingly, we observe significantly more Syntax errors in standard LLM-generated Go code than in Python code, likely because the LLMs are trained more extensively on Python code than Go. 
+ Thus, \Tool{} can be especially effective for Go and more underrepresented programming languages, where LLMs are more likely to generate syntax errors due to a limited understanding of the language. 
+ \Tool{} can bridge this gap by guiding the LLM to sample only the syntactically valid tokens during decoding. 
+
+
+% Furthermore, we report our findings for Go code in Table \ref{tab:main_eval_go} and demonstrate that \Tool{} reduces syntax errors by over 90\% compared to standard generation. Interestingly, we observe significantly more Syntax errors in standard LLM-generated Go code than in Python code, likely due to the fact that the LLMs are trained more extensively on Python code than Go. Thus, \Tool{} can be especially effective for Go and more underrepresented programming languages, where LLMs are more likely to generate syntax errors due to a limited understanding of the language. \Tool{} can bridge this gap by guiding the LLM to sample only the syntactically valid tokens during decoding. 
+
+We further analyze the errors in Python and Go code generated by the LLMs augmented with \Tool{}, an example of which is presented in Appendix~\ref{sec:syncode_error}. 
+All of the errors were because the LLM failed to generate a complete program within the maximum token limit. 
+Recall, \Tool{} provides guarantees of completeness for syntactically correct partial programs. 
+However, it does not guarantee convergence to a syntactically correct and complete program.
+% If the LLM cannot generate a complete program within the maximum token limit, \Tool{} cannot guarantee that the generated program is syntactically correct.
+
+% Across all datasets, programming languages, and model architectures evaluated, LLMs augmented with \Tool{} generate code with significantly fewer syntax and indentation errors, underscoring \Tool{}'s effectiveness in addressing syntactic issues.
+
+% \input{tables/runtime}
+% \noindent{\bf Runtime Comparison.}
+% We compare the runtime of code generation with and without \Tool{}. 
+% We used Python and Go prompts from the HumanEval dataset.
+% For each example, we generate a single sample ($ n = 1 $) per problem, with the max new tokens parameter set to 200. 
+% Table~\ref{table:runtime} reports the average time taken to generate a code completion to a prompt. 
+% Our results reveal that \Tool{} increases the generation time by  1.22x on average. Despite these slight time increases, the benefits of \Tool{} in reducing syntax errors outweigh the incurred overhead. 
+
+% As highlighted earlier, LLMs augmented with \Tool{} generate code with significantly fewer syntax errors. 
+% Therefore, the marginal increase in generation time with \Tool{} is justified by the potential for improved code quality and syntactic correctness, as demonstrated by our findings. 
+
+\input{tables/pass1}
+\noindent {\bf Functional Correctness for Code Generation.}
+% \label{sec:pass@1}
+We investigate whether augmenting LLMs with \Tool{} improves the functional correctness of the generated code. 
+We evaluate functional correctness using the pass@k metric, where $k$ samples are generated per problem, and a problem is considered solved if any sample passes a set of unit tests, and the fraction of solved problems is calculated. 
+Table~\ref{tab:pass@1} reports our results for pass@1 and pass@10 for generated code completions to problems from the HumanEval dataset. 
+We observe that augmenting LLMs with \Tool{} has a slight improvement in functional correctness over \baseline{} generation.
+%This observation indicates that for these state-of-the-art models, mere syntactic correction is not sufficient to improve their ability to generate logically correct code that passes the unit tests for these tasks.
+This observation indicates that for these state-of-the-art models, syntactic correction can result in a small improvement in the logical correctness of the code.
+% is not sufficient to improve their ability to generate logically correct code that passes the unit tests for these tasks.
+
+
+% While \Tool{} significantly reduces the number of syntax errors in LLM-generated code, many of these code completions still end up failing test cases. 
+
+\subsection{Mask Store Overhead} 
+\label{sec:exp_overhead}
+We analyze the time and memory overhead involved in generating a DFA mask store using \Tool{}. 
+The DFA mask store for \chat{} took 113.72 seconds to create and consumes 181 MB of memory. 
+Additionally, we report the creation time and memory overhead of DFA mask stores for models used for Python and Go in  Table~\ref{table:memory_overhead}. 
+Each row shows the \Tool{} store generation time in seconds, and memory in GBs, for a particular LLM and grammar. 
+The $|\vocab|$ column represents the total vocabulary size of the tokenizer of the particular LLM. 
+We see that generating the store requires less than 2GB of memory and several minutes across the evaluated models and grammars.
+This overhead is minimal for practical \Tool{} use cases, as the mask store is a one-time generation task. 
+Thereafter, the mask store can be efficiently loaded into memory and used for repeated inference. 
+We see smaller generation time and memory with \chat{} and JSON grammar as opposed to \llama{}, \wizard{}, and \codegen{} with Python and Go grammars since the size of the mask store is proportional to the number of terminals in the grammar.
+\input{tables/NFA_Generation_Memory}
+
+% We compare the runtime efficiency of code generation with and without \Tool{}. 
+% We used Python prompts from the HumanEval dataset and tasked \codegen{}, \wizard{}, and \llama{} to generate the code completions, both with and without the augmentation of the \Tool{}. 
+% For each example, we generate a single sample ($ n = 1 $) per problem, with the max new tokens parameter set to 200. 
+% Table~\ref{table:runtime} reports the average time taken to generate a code completion to a prompt from the HumanEval dataset with and without \Tool{}. 
+% Although \Tool{} introduces an increase in generation time, this added time proves to be beneficial. 
+% As highlighted in Section \ref{sec:exp_errors}, LLMs augmented with \Tool{} generate code with significantly fewer syntax and indentation errors. 
+% Therefore, the marginal increase in generation time with \Tool{} is justified by the potential for improved code quality and syntactic correctness, as evidenced in our findings.
+
+% The average generation time was determined by the ratio of the total time taken for generating solutions to all problems in the dataset to the total count of those problems, which amounts to 164. This computation yields the average time overhead for each model when generating a single prompt from the dataset.
+
+% We observed a smaller average generation time with \wizard{} compared to \codegen{} and \llama{}. However, we also observed that the generation time increased the most with \wizard{} compared to \codegen{} and \llama{}.
+
+% Our findings, as detailed in Table \ref{table:runtime}, indicate that \wizard{} achieves a lower average generation time compared to \codegen{} and \llama{}. However, it's notable that \wizard{} exhibits the most substantial increase in generation time when the models are scaled up for larger tasks. 
+
+% This trend offers insight into the scalability of the models and the relative efficiency of \Tool{} in optimizing code generation times across varying conditions.
+
+
+% Here we compare the average generation time for each problem from multilingual humaneval. The max length (also known as the max new token) is set to 200. 
+
+
+
+% }
+
+% \noindent \textbf{Choice of base parser: }
+% \add{Bottom-up LR parsers, including LR(1) and LALR(1) parsers, process terminals generated from the lexical analysis of the code sequentially and perform shift or reduce operations \cite{aho86}. 
+% LR(1) parsers have the immediate error detection property, ensuring they do not perform shift or reduce operations if the next input terminal is erroneous \cite{10.1145/356628.356629}. 
+% This property allows us to use LR(1) parsing tables to efficiently compute acceptable terminals at any intermediate point, making them preferable for \Tool{} applications. 
+% Thus, computing acceptable terminals with LR(1) parsers has a complexity of $O(|\allterminals|)$.
+% Although LALR(1) parsers are more commonly used due to their smaller memory requirements and faster construction, computing acceptable terminals with them requires iterating over all terminals leading to a complexity of $O(T_\parser \cdot |\allterminals|)$ due to the need for multiple reduce operations before confirming the validity of each terminal. 
+% Furthermore, while we note that for $k > 1$, LR(k) parsers can compute accept sequences of length $k$ immediately, they incur extremely high memory requirements. 
+% Our evaluation indicates that LR(1) parsers suffice for effectively eliminating most syntax errors, making them a practical choice for \Tool{}. 
+% }
+
+% Our results reveal that \Tool{}, whether employing LR(1) or LALR(1) parsing, introduces only a modest increase in generation time, with respective overheads of 1.22x and 1.76x on average. Despite these slight time increases, the benefits of SynCode in reducing syntax errors far outweigh the incurred overhead. As highlighted in Section \ref{sec:exp_errors}, LLMs augmented with \Tool{} generate code with significantly fewer syntax and indentation errors. 
+% Therefore, the marginal increase in generation time with \Tool{} is justified by the potential for improved code quality and syntactic correctness, as demonstrated by our findings. 
+
+% While \Tool{} may not always guarantee functional correctness against unit tests, its success in enhancing syntactic correctness positions it as a valuable tool in the ongoing efforts to improve the overall quality of LLM-generated code.
+
+% \subsection{\Tool{} Syntax Errors}
+% \label{sec:syn_errors}
+
+% We analyze 25 syntax errors in Python code generated by \llama{}, \wizard{}, and \codegen{} augmented with \Tool{} on problems from HumanEval and MBXP. Of those 25 syntax errors, all of them were because the LLM fails to generate a complete program within the maximum token limit. 
+
+% \Tool{} provides guarantees of completeness for syntactically correct partial programs. However, it does not provide any guarantees to whether the process will converge to a syntactically correct complete program. If the LLM cannot generate a complete program within the maximum token limit, \Tool{} cannot guarantee that the generated program is syntactically correct. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+

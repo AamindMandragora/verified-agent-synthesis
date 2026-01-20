@@ -1,0 +1,54 @@
+This section describes our main technical contributions and the \Tool{} algorithm. 
+% First, we formally define the syntactical decoding problem (Section~\ref{sec:syndecode}). 
+% Next, we describe our parsing algorithm (Section~\ref{sec:incparse}). 
+% Then we explain our CFG-based masking technique (Section~\ref{sec:mask}) and prove the soundness and completeness of our algorithm (Section~\ref{sec:prop}).
+% We finally summarize the \Tool{} implementation (Section~\ref{sec:implementation}) and analyze its time complexity (Section~\ref{sec:time}).  
+
+\subsection{Syntactical Decoding Problem}
+\label{sec:syndecode} 
+
+Given a language with grammar $G$, let $\lang(G) \subseteq \alphabets^*$ denote the set of all syntactically valid outputs according to the grammar $G$. 
+For a grammar $G$, $\lang_p(G)$ represents the set of all syntactically valid partial outputs. 
+If a string $w_1$ belongs to $\lang_p(G)$, then there exists another string $w_2$ such that appending $w_2$ to $w_1$ results in a string that is in the language defined by $G$. Formally,
+
+\begin{definition}[Partial Outputs]
+\label{def:gramdecode}
+For grammar $G$, $\lang_p(G) \subseteq \alphabets^*$ denotes all syntactically valid partial outputs. Formally, if $w_1 \in \lang_p(G)$ then $\exists w_2 \in \alphabets^*$ such that $w_1.w_2 \in \lang(G)$
+\end{definition}
+
+\noindent For a grammar $G$ and a partial output $\partialcode$ belonging to the set of prefix strings $\lang_p(G)$, the syntactical decoding problem aims to determine the set $\vocab_k$ of valid tokens from a finite vocabulary $\vocab$ such that appending any token $t \in \vocab_k$ to $\partialcode$ maintains its syntactic validity according to the grammar $G$. 
+
+\begin{definition}[Syntactical Decoding]
+\label{def:gramdecode}
+For grammar $G$, given partial output $\partialcode \in \lang_p(G)$ and finite token vocabulary $\vocab \subset \alphabets^*$, the syntactical decoding problem is to compute the set $\vocab_k \subseteq \vocab$ such that for any $t \in \vocab_k, \partialcode.t \in \lang_p(G)$    
+\end{definition}
+
+% Synchromesh~\cite{poesia2022synchromesh} solves this problem by iterating over the $\vocab$ and for each $t \in \vocab$ it parses $\partialcode.t$ to check if it is in $\lang_p(G)$. 
+% Typically $|V|$ is large ($>30,000$) and thus Synchromesh does a preorder traversal over a trie built on $\vocab$ and optimizes this step.
+% Despite this optimization, Synchromesh still needs to evaluate a considerable number of candidate tokens, introducing a large overhead.
+% As described earlier, prior works~\cite{poesia2022synchromesh, llamacpp} solve this problem by iterating over the $\vocab$ and for each $t \in \vocab$ it parses $\partialcode.t$ to check if it is in $\lang_p(G)$
+
+% \Tool{} solves this problem through the creation of a novel structure which we call \emph{DFA mask store} offline (Definition~\ref{def:lookup}). 
+% For a given grammar $G$ and vocabulary $\vocab$, this mask store is constructed once and can be leveraged across all generations. 
+% It efficiently stores masks over the vocabulary.
+% \Tool{} breaks down the syntactical decoding problem into two distinct steps.
+\mbox{We next present \Tool{}'s key aspects to solve this problem:}
+\begin{itemize}[leftmargin=*]
+    \item In the initial step, it parses $\partialcode$ and computes the unparsed remainder $r \in \alphabets^*$ along with the acceptable terminal sequences $\accepts$ (Section~\ref{sec:parse}).
+    \item In the second step, \Tool{} utilizes $r$, $\accepts$, and the precomputed mask store. This phase involves traversing the DFA and performing a few lookups within the DFA mask store to obtain the set of syntactically valid tokens $t$ capable of extending $\partialcode$ (Section~\ref{sec:mask}). 
+    \item Consequently, \Tool{} efficiently computes the set of syntactically valid tokens. We show the soundness and completeness of our approach in Section~\ref{sec:prop}.
+    \item We further discuss the theoretical complexity of \Tool{} in Section~\ref{sec:time} and the \Tool{} framework in Section~\ref{sec:framework}.
+\end{itemize}
+ 
+
+\input{technical/parsing}
+
+\input{technical/grammarmask}
+
+\input{technical/soundness}
+
+\input{technical/implementation}
+
+\input{technical/complexity}
+
+\input{technical/framework}

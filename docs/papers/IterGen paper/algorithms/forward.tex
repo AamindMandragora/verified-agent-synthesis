@@ -1,0 +1,49 @@
+\begin{algorithm}
+\small
+\caption{\Tool{} Forward Function}
+\label{alg:forward}
+\begin{flushleft}
+\textbf{Inputs:} $\textit{itergen}$: object containing model, tokenizer, symbol position map $\mathcal{D}$, LR parser, \\
+$\textit{stop\_symbol}$: target symbol to stop at, $\textit{count}$: number of stop symbols, \\
+$\textit{max\_tokens}$: maximum allowed tokens, $\gamma$: recurrence penalty (0 to 1) \\
+\textbf{Output:} string $O_n$
+\end{flushleft}
+
+\begin{algorithmic}[1]
+\Function{forward}{$\textit{itergen}$, $ \textit{stop\_symbol}, \textit{count}$}
+    
+    
+    \State $\textit{initial\_occurrences} \gets \text{count\_occurrences}(\mathcal{D}, \textit{stop\_symbol})$
+
+    \While{True}
+        \State $\textit{scores} \gets \textit{itergen.model}(\textit{cur\_tokens}, KV)$
+        \State $\textit{partial\_gen} \gets \text{detokenize}(\mathcal{T}, \textit{cur\_tokens})$
+        \State $\textit{itergen.parser\_update}(\textit{partial\_gen}, \mathcal{D})$
+        \State $m \gets \textit{generate\_mask}(\textit{itergen.parser})$
+        \State $\textit{scores} \gets m \odot \textit{scores}$
+
+        \For{each token $t$ in $\mathcal{H}\textit{.past\_tokens()}$}
+            \State $\textit{scores}[t] \gets \textit{scores}[t] \times (1-\gamma)^\alpha$  \Comment{Apply recurrence penalty}
+        \EndFor
+
+        \State $\textit{t}_i \gets \textit{itergen.decoding\_algorithm}(\textit{scores})$
+
+        \State \textbf{if }\text{$\textit{t}_i =$ \str{EOS}}\textbf{ then break}
+
+%        \If{$\textit{t}_i =$ \str{EOS}}
+%            \State \textbf{break}
+%        \EndIf
+        
+        \State $\textit{curr\_occurrences} \gets \text{count\_occurrences}(\mathcal{D}, \textit{stop\_symbol})$
+        \State\textbf{if }{$\textit{curr\_occurrences} - \textit{init\_occurrences} \geq \textit{count}$ \State\ \ \ \textbf{or} $\text{length}(\textit{cur\_tokens}) > \textit{max\_tokens}$}\textbf{ then break}
+
+        \State $\textit{cur\_tokens} \gets \text{append}(\textit{cur\_tokens}, \textit{t}_i)$
+        
+        \State $\mathcal{H}\textit{.add}(\textit{t}_i)$
+    \EndWhile
+    
+    \State $O_n \gets \text{detokenize}(\mathcal{T}, \textit{cur\_tokens})$
+    \State \Return $O_n$
+\EndFunction
+\end{algorithmic}
+\end{algorithm}

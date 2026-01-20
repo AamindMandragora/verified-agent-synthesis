@@ -1,0 +1,156 @@
+\begin{thebibliography}{27}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Agrawal et~al.(2023)Agrawal, Kanade, Goyal, Lahiri, and Rajamani]{agrawal2023guiding}
+Lakshya~A Agrawal, Aditya Kanade, Navin Goyal, Shuvendu~K. Lahiri, and Sriram~K. Rajamani.
+\newblock Guiding language models of code with global context using monitors, 2023.
+
+\bibitem[Aho et~al.(1986)Aho, Sethi, and Ullman]{aho86}
+Alfred~V. Aho, Ravi Sethi, and Jeffrey~D. Ullman.
+\newblock \emph{{Compilers, Principles, Techniques, and Tools}}.
+\newblock Addison-Wesley, 1986.
+
+\bibitem[Banerjee et~al.(2025)Banerjee, Suresh, Ugare, Misailovic, and Singh]{banerjee2025crane}
+Debangshu Banerjee, Tarun Suresh, Shubham Ugare, Sasa Misailovic, and Gagandeep Singh.
+\newblock Crane: Reasoning with constrained llm generation, 2025.
+
+\bibitem[Bassamzadeh and Methani(2024)]{bassamzadeh2024comparativestudydslcode}
+Nastaran Bassamzadeh and Chhaya Methani.
+\newblock A comparative study of dsl code generation: Fine-tuning vs. optimized retrieval augmentation, 2024.
+\newblock URL \url{https://arxiv.org/abs/2407.02742}.
+
+\bibitem[Beurer-Kellner et~al.(2023)Beurer-Kellner, Fischer, and Vechev]{10.1145/3591300}
+Luca Beurer-Kellner, Marc Fischer, and Martin Vechev.
+\newblock Prompting is programming: A query language for large language models.
+\newblock \emph{Proc. ACM Program. Lang.}, 7\penalty0 (PLDI), jun 2023.
+\newblock \doi{10.1145/3591300}.
+\newblock URL \url{https://doi.org/10.1145/3591300}.
+
+\bibitem[Beurer-Kellner et~al.(2024)Beurer-Kellner, Fischer, and Vechev]{beurerkellner2024guiding}
+Luca Beurer-Kellner, Marc Fischer, and Martin Vechev.
+\newblock Guiding llms the right way: Fast, non-invasive constrained generation, 2024.
+
+\bibitem[Chen et~al.(2021)Chen, Tworek, Jun, Yuan, de~Oliveira~Pinto, Kaplan, Edwards, Burda, Joseph, Brockman, Ray, Puri, Krueger, Petrov, Khlaaf, Sastry, Mishkin, Chan, Gray, Ryder, Pavlov, Power, Kaiser, Bavarian, Winter, Tillet, Such, Cummings, Plappert, Chantzis, Barnes, Herbert-Voss, Guss, Nichol, Paino, Tezak, Tang, Babuschkin, Balaji, Jain, Saunders, Hesse, Carr, Leike, Achiam, Misra, Morikawa, Radford, Knight, Brundage, Murati, Mayer, Welinder, McGrew, Amodei, McCandlish, Sutskever, and Zaremba]{chen2021evaluatinglargelanguagemodels}
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique~Ponde de~Oliveira~Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, Alex Ray, Raul Puri, Gretchen Krueger, Michael Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin, Brooke Chan, Scott Gray, Nick Ryder, Mikhail Pavlov, Alethea Power, Lukasz Kaiser, Mohammad Bavarian, Clemens Winter, Philippe Tillet, Felipe~Petroski Such, Dave Cummings, Matthias Plappert, Fotios Chantzis, Elizabeth Barnes, Ariel Herbert-Voss, William~Hebgen Guss, Alex Nichol, Alex Paino, Nikolas Tezak, Jie Tang, Igor Babuschkin, Suchir Balaji, Shantanu Jain, William Saunders, Christopher Hesse, Andrew~N. Carr, Jan Leike, Josh Achiam, Vedant Misra, Evan Morikawa, Alec Radford, Matthew Knight, Miles Brundage, Mira Murati, Katie Mayer, Peter Welinder, Bob McGrew, Dario Amodei, Sam McCandlish, Ilya Sutskever, and Wojciech Zaremba.
+\newblock Evaluating large language models trained on code, 2021.
+\newblock URL \url{https://arxiv.org/abs/2107.03374}.
+
+\bibitem[Geng et~al.(2023)Geng, Josifoski, Peyrard, and West]{geng2023grammar}
+Saibo Geng, Martin Josifoski, Maxime Peyrard, and Robert West.
+\newblock Grammar-constrained decoding for structured nlp tasks without finetuning.
+\newblock In \emph{Proc. of EMNLP}, 2023.
+
+\bibitem[Gerganov and et. al.(2024)]{llamacpp}
+Georgi Gerganov and et. al.
+\newblock llama.cpp: Port of facebook's llama model in c/c++., 2024.
+\newblock URL \url{https://github.com/guidance-ai/guidance}.
+
+\bibitem[Llama(2024)]{llamamodels}
+Llama.
+\newblock The llama 3 herd of models, 2024.
+\newblock URL \url{https://arxiv.org/abs/2407.21783}.
+
+\bibitem[Lundberg et~al.(2023)Lundberg, Ribeiro, and et. al.]{guidance}
+Scott Lundberg, Marco Tulio ArXiv~preprinteia Ribeiro, and et. al.
+\newblock Guidance-ai/guidance: {{A}} guidance language for controlling large language models., 2023.
+\newblock URL \url{https://github.com/guidance-ai/guidance}.
+
+\bibitem[Moskal et~al.(2024)Moskal, Musuvathi, and {K\i c\i man}]{Moskal2024}
+Michal Moskal, Madan Musuvathi, and Emre {K\i c\i man}.
+\newblock {AI Controller Interface}.
+\newblock \url{https://github.com/microsoft/aici/}, 2024.
+
+\bibitem[Paszke et~al.(2019)Paszke, Gross, Massa, Lerer, Bradbury, Chanan, Killeen, Lin, Gimelshein, Antiga, Desmaison, Kopf, Yang, DeVito, Raison, Tejani, Chilamkurthy, Steiner, Fang, Bai, and Chintala]{NEURIPS2019_9015}
+Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, Alban Desmaison, Andreas Kopf, Edward Yang, Zachary DeVito, Martin Raison, Alykhan Tejani, Sasank Chilamkurthy, Benoit Steiner, Lu~Fang, Junjie Bai, and Soumith Chintala.
+\newblock Pytorch: An imperative style, high-performance deep learning library.
+\newblock In \emph{Advances in Neural Information Processing Systems 32}, pages 8024--8035. Curran Associates, Inc., 2019.
+\newblock URL \url{http://papers.neurips.cc/paper/9015-pytorch-an-imperative-style-high-performance-deep-learning-library.pdf}.
+
+\bibitem[Poesia et~al.(2022)Poesia, Polozov, Le, Tiwari, Soares, Meek, and Gulwani]{poesia2022synchromesh}
+Gabriel Poesia, Alex Polozov, Vu~Le, Ashish Tiwari, Gustavo Soares, Christopher Meek, and Sumit Gulwani.
+\newblock Synchromesh: Reliable code generation from pre-trained language models.
+\newblock In \emph{International Conference on Learning Representations}, 2022.
+\newblock URL \url{https://openreview.net/forum?id=KmtVD97J43e}.
+
+\bibitem[Qwen(2024)]{qwen2.5}
+Qwen.
+\newblock Qwen2.5: A party of foundation models, September 2024.
+\newblock URL \url{https://qwenlm.github.io/blog/qwen2.5/}.
+
+\bibitem[Radford et~al.(2019)Radford, Wu, Child, Luan, Amodei, and Sutskever]{radford2019language}
+Alec Radford, Jeff Wu, Rewon Child, David Luan, Dario Amodei, and Ilya Sutskever.
+\newblock Language models are unsupervised multitask learners.
+\newblock 2019.
+
+\bibitem[Satyanarayan et~al.(2017)Satyanarayan, Moritz, Wongsuphasawat, and Heer]{10.1109/TVCG.2016.2599030}
+Arvind Satyanarayan, Dominik Moritz, Kanit Wongsuphasawat, and Jeffrey Heer.
+\newblock Vega-lite: A grammar of interactive graphics.
+\newblock \emph{IEEE Transactions on Visualization and Computer Graphics}, 23\penalty0 (1):\penalty0 341–350, January 2017.
+\newblock ISSN 1077-2626.
+\newblock \doi{10.1109/TVCG.2016.2599030}.
+\newblock URL \url{https://doi.org/10.1109/TVCG.2016.2599030}.
+
+\bibitem[Scholak et~al.(2021)Scholak, Schucher, and Bahdanau]{scholak-etal-2021-picard}
+Torsten Scholak, Nathan Schucher, and Dzmitry Bahdanau.
+\newblock {PICARD}: Parsing incrementally for constrained auto-regressive decoding from language models.
+\newblock In Marie-Francine Moens, Xuanjing Huang, Lucia Specia, and Scott Wen-tau Yih, editors, \emph{Proceedings of the 2021 Conference on Empirical Methods in Natural Language Processing}, pages 9895--9901, Online and Punta Cana, Dominican Republic, November 2021. Association for Computational Linguistics.
+\newblock \doi{10.18653/v1/2021.emnlp-main.779}.
+\newblock URL \url{https://aclanthology.org/2021.emnlp-main.779}.
+
+\bibitem[Srinivasan et~al.(2021)Srinivasan, Nyapathy, Lee, Drucker, and Stasko]{Srinivasan_2021}
+Arjun Srinivasan, Nikhila Nyapathy, Bongshin Lee, Steven~M. Drucker, and John Stasko.
+\newblock Collecting and characterizing natural language utterances for specifying data visualizations.
+\newblock In \emph{Proceedings of the 2021 CHI Conference on Human Factors in Computing Systems}, CHI ’21. ACM, May 2021.
+\newblock \doi{10.1145/3411764.3445400}.
+\newblock URL \url{http://dx.doi.org/10.1145/3411764.3445400}.
+
+\bibitem[Ugare et~al.(2024)Ugare, Suresh, Kang, Misailovic, and Singh]{ugare2024syncodellmgenerationgrammar}
+Shubham Ugare, Tarun Suresh, Hangoo Kang, Sasa Misailovic, and Gagandeep Singh.
+\newblock Syncode: Llm generation with grammar augmentation, 2024.
+\newblock URL \url{https://arxiv.org/abs/2403.01632}.
+
+\bibitem[Wang et~al.(2023)Wang, Chen, Pei, Xie, Kang, Zhang, Xu, Xiong, Dutta, Schaeffer, et~al.]{wang2023decodingtrust}
+Boxin Wang, Weixin Chen, Hengzhi Pei, Chulin Xie, Mintong Kang, Chenhui Zhang, Chejian Xu, Zidi Xiong, Ritik Dutta, Rylan Schaeffer, et~al.
+\newblock Decodingtrust: A comprehensive assessment of trustworthiness in gpt models.
+\newblock 2023.
+
+\bibitem[Wei et~al.(2023)Wei, Xia, and Zhang]{Wei_2023}
+Yuxiang Wei, Chunqiu~Steven Xia, and Lingming Zhang.
+\newblock Copiloting the copilots: Fusing large language models with completion engines for automated program repair.
+\newblock In \emph{Proceedings of the 31st ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering}, ESEC/FSE ’23. ACM, November 2023.
+\newblock \doi{10.1145/3611643.3616271}.
+\newblock URL \url{http://dx.doi.org/10.1145/3611643.3616271}.
+
+\bibitem[Weyssow et~al.(2024)Weyssow, Zhou, Kim, Lo, and Sahraoui]{weyssow2024exploringparameterefficientfinetuningtechniques}
+Martin Weyssow, Xin Zhou, Kisub Kim, David Lo, and Houari Sahraoui.
+\newblock Exploring parameter-efficient fine-tuning techniques for code generation with large language models, 2024.
+\newblock URL \url{https://arxiv.org/abs/2308.10462}.
+
+\bibitem[Willard and Louf(2023)]{willard2023efficient}
+Brandon~T. Willard and Rémi Louf.
+\newblock Efficient guided generation for large language models, 2023.
+
+\bibitem[Wolf et~al.(2020)Wolf, Debut, Sanh, Chaumond, Delangue, Moi, Cistac, Rault, Louf, Funtowicz, Davison, Shleifer, von Platen, Ma, Jernite, Plu, Xu, Le~Scao, Gugger, Drame, Lhoest, and Rush]{wolf-etal-2020-transformers}
+Thomas Wolf, Lysandre Debut, Victor Sanh, Julien Chaumond, Clement Delangue, Anthony Moi, Pierric Cistac, Tim Rault, Remi Louf, Morgan Funtowicz, Joe Davison, Sam Shleifer, Patrick von Platen, Clara Ma, Yacine Jernite, Julien Plu, Canwen Xu, Teven Le~Scao, Sylvain Gugger, Mariama Drame, Quentin Lhoest, and Alexander Rush.
+\newblock Transformers: State-of-the-art natural language processing.
+\newblock In Qun Liu and David Schlangen, editors, \emph{Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: System Demonstrations}, pages 38--45, Online, October 2020. Association for Computational Linguistics.
+\newblock \doi{10.18653/v1/2020.emnlp-demos.6}.
+\newblock URL \url{https://aclanthology.org/2020.emnlp-demos.6}.
+
+\bibitem[Xu et~al.(2024)Xu, Jain, and Kankanhalli]{xu2024hallucinationinevitableinnatelimitation}
+Ziwei Xu, Sanjay Jain, and Mohan Kankanhalli.
+\newblock Hallucination is inevitable: An innate limitation of large language models, 2024.
+\newblock URL \url{https://arxiv.org/abs/2401.11817}.
+
+\bibitem[Yu et~al.(2018)Yu, Zhang, Yang, Yasunaga, Wang, Li, Ma, Li, Yao, Roman, Zhang, and Radev]{yu-etal-2018-spider}
+Tao Yu, Rui Zhang, Kai Yang, Michihiro Yasunaga, Dongxu Wang, Zifan Li, James Ma, Irene Li, Qingning Yao, Shanelle Roman, Zilin Zhang, and Dragomir Radev.
+\newblock {S}pider: A large-scale human-labeled dataset for complex and cross-domain semantic parsing and text-to-{SQL} task.
+\newblock In Ellen Riloff, David Chiang, Julia Hockenmaier, and Jun{'}ichi Tsujii, editors, \emph{Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing}, pages 3911--3921, Brussels, Belgium, October-November 2018. Association for Computational Linguistics.
+\newblock \doi{10.18653/v1/D18-1425}.
+\newblock URL \url{https://aclanthology.org/D18-1425}.
+
+\end{thebibliography}

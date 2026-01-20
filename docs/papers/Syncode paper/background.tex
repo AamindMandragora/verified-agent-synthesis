@@ -1,0 +1,104 @@
+In this section, we provide the necessary background on LLMs and formal language grammar.
+
+\noindent{\bf Notation.} 
+Let the alphabet $\Sigma$ be a finite set of characters.
+We use $\epsilon$ to denote an empty string.
+Given a set $S$, we use $S^i$ to denote the set of all $i$-length sequences that can be formed by selecting elements from $S$,
+and $S^* = \bigcup_{i \in \mathbb{N}} S^i$.
+Thus $\alphabets^{*}$ represents the set of all strings over characters in $\alphabets$, including the empty string $\epsilon$. 
+Further, we use $\alphabets^{+}$ to denote $(\alphabets^{*} - \epsilon)$.
+Given two strings $w_1, w_2 \in \alphabets^*$, we use $w_1.w_2$ to denote string obtained by concatenating $w_2$ to $w_1$.
+All symbols used in the paper are listed in Appendix~\ref{sec:symbols}.
+
+\subsection{Language Models}
+
+Current language models (LM) operate on vocabulary $V \subseteq \Sigma^*$ of tokens.
+A tokenizer takes an input prompt $C_0 \in \Sigma^*$,
+which is a sequence of characters,
+as input and converts $C_0$ into a sequence of tokens $t_1, t_2, \dots, t_k$.
+Figure~\ref{fig:tokenization} shows a typical tokenization method, where common words (e.g., \str{def}) have their own token (even with a space in front), 
+while rare words (e.g., \str{incr\_list}) are split into multiple tokens. 
+In order to generate the next token,
+the LM $M: V^* \to \mathbb{R}^{|V|}$ takes as input the sequence of tokens
+$t_1, t_2, \dots, t_k$, and outputs a vector of scores $z$ over the vocabulary:
+$z = M(t_1, t_2, \dots, t_k)$.
+The softmax function $\textit{softmax}(z_i) = \exp(z_i)/\sum_j(\exp(z_j))$ 
+transforms $z$ into a probability distribution over the vocabulary $V$.
+
+\begin{wrapfigure}{r}{.45\textwidth}
+    % \vspace{-0.45in}
+    \centering
+    \includegraphics[width=0.45\textwidth]{images/tokens.png}
+    % \vspace{-.1in}
+    \caption{Tokenization of a string.}
+    \label{fig:tokenization}
+     \vspace{-0.15in}
+\end{wrapfigure}
+% and then the next token $t_{k+1}$ is selected as the token with the highest probability.
+
+\sloppypar
+\noindent{\bf Decoding.} 
+Building upon this, the language model $M$ is recurrently applied to generate a sequence of tokens $t_1, t_2 \dots t_k$. 
+When choosing the $(k + 1)$-th token, the probability distribution for the next token is obtained through $\text{softmax}(M(t_1, t_2 \dots t_k))$. 
+Various approaches for token selection from this distribution have been explored in the literature such as greedy decoding, sampling, and beam search.
+Each technique is repeated until the prediction of a special end-of-sequence token, \str{EOS}, or the fulfillment of another stopping criterion. 
+This iterative process is equivalent to sampling from a distribution over $V^*$, potentially resulting in multiple feasible decodings.
+
+\input{algorithms/masked_decoding}
+
+\noindent{\bf Constrained Masking.} 
+In the context of decoding, we encounter scenarios where excluding specific tokens at particular positions becomes crucial (e.g., excluding harmful words). 
+This implies we can disregard these tokens and proceed with decoding based on the remaining set. 
+An algorithm for such masking relies on a function $f_m$ to generate the mask $m$ based on the exact use case. 
+In the mask $m \in \{0, 1\}^{|V|}$, '$1$' indicates a viable token, and '$0$' signifies a discarded one. 
+Decoding methods mentioned earlier can be applied to $m \odot \textit{softmax}(z)$, where $\odot$ represents element-wise multiplication. 
+The resultant vector should be scaled by $1/\sum_i(m \times \textit{softmax}(z))_i$ to restore correct probabilities.
+Algorithm~\ref{alg:masked} presents the steps for masked decoding.
+In \Tool{}, we use the constrained masking technique to exclude syntactically invalid tokens.
+
+\subsection{Formal Language Grammar}
+A formal language syntax is represented by defining a grammar.
+A formal grammar is essentially a set of production rules that describe all possible strings in a given language.
+A grammar consists of terminal and nonterminal symbols, where terminal symbols are the actual characters or tokens in the language, while nonterminal symbols are placeholders used to define patterns or structures within the language.
+
+The syntax for most programming languages can be defined using context-free grammar (CFG).
+CFG is a formal grammar that consists of production rules that can be applied to a nonterminal symbol regardless of its context.
+In CFG, each production rule is of the form $E \to \beta$ with $E$ a single nonterminal symbol, and $\beta$ a string of terminals and nonterminals ($\beta$  can be empty). 
+Regardless of which symbols surround it, the single nonterminal $E$ on the left-hand side can always be replaced by $\beta$ on the right-hand side.
+
+
+
+\noindent{\bf Terminals.}
+We use $\allterminals$ to denote the set of terminals in the grammar.
+Regular expressions are used to describe the terminals.
+For instance, A regular expression $^\wedge[0\text{-}9]^+$ is used for an integer literal: This regular expression describes a sequence of one or more digits (0 to 9). 
+We use $\regex$ to denote a regular expression and $\lang(\regex) \subseteq \alphabets^*$ to denote the language recognized $\regex$.
+Regular expressions are often associated with the creation of Deterministic Finite Automata (DFAs). 
+A DFA is a theoretical construct used to recognize patterns specified by regular expressions. 
+
+\begin{definition} [DFA]
+\label{def:dfa}
+A deterministic finite automaton (DFA) $\dfa$ is a 5-tuple, $(\dfastates, \alphabets, \transitions, \dfastart, \dfafinal)$, consisting of a finite set of states $\dfastates$, a finite set of input symbols called the alphabet $\alphabets$, a transition function $\transitions : \dfastates \times \alphabets \to \dfastates$, an initial state $q_{0}\in Q$ and a set of accept states $F\subseteq Q$.
+\end{definition}
+
+Let $w = a_1 a_2 \dots a_n$ be a string over the alphabet $\alphabets$.
+The DFA computation $\compute: \dfastates \times \alphabets^* \to \dfastates$ on a string $w$ is defined as $\compute(r_0, w) = r_n$ when $r_{i+1} = \transitions(r_i, a_{i+1}), \text{ for } i = 0, \dots, n-1$. The automaton $\dfa$ accepts the string $w$ if $\compute(q_0, w) \in \dfafinal$. 
+
+% Next, we state the lemma that shows the equivalence of regular expressions and DFA.
+
+% \begin{lemma}
+% For every regular expression $\regex$ there is an equivalent DFA $\dfa$ such that $\dfa$ accepts $w$ iff $w \in \lang(\regex)$
+% \end{lemma}
+
+\noindent{\bf Lexer.}
+We assume lexical analysis with a 1-character lookahead and no backtracking. 
+\add{
+This assumption is crucial for the efficiency of \Tool{} algorithm.
+}
+% This is the default behavior of popular existing lexers~\cite{lark}.
+
+\begin{definition} [Lexer]
+\label{def:lex}
+The function \lex is defined to take partial output $\partialcode \in \alphabets^*$ as input and produce a sequence $l_1, l_2, \dots, l_f$ of lexical tokens where $l_i \in \alphabets^*$.
+\end{definition}
+

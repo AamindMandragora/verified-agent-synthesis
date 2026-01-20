@@ -1,0 +1,66 @@
+\begin{proof}
+\begin{enumerate} [label=(\alph*)]
+    \item First we prove $\dmatch(w, \dfastart^{\terminal_{f+1}}, \sequence^p) \implies \pmatch(w, \regex_\sequence)$
+    We prove this using induction on the length $i$ of $w$. \\
+    For $i=0$, $\pmatch(w, \regex_\sequence)$ is trivially true. \\
+    Now, we assume that for $w$ of length $i < k$, $\dmatch(w, \dfastart^{\terminal_{f+1}}, \sequence^p) \implies \pmatch(w, \regex_\sequence)$. \\
+    We consider $w$ of length $k$ and $\dmatch(w, \dfastart^{\terminal_{f+1}}, \sequence^p)$.\\ 
+    We consider 3 conditions from Definition~\ref{def:dmatch}. \\
+    If condition 1 is true, $\compute_{\terminal_{f+1}}(w, \dfastart^{\terminal_{f+1}}) \in \live(Q_{\terminal_{f+1}})$. 
+    Let $q_1 = \compute(w, \dfastart^{\terminal_{f+1}})$. 
+    By Definition~\ref{def:live}, $\exists w_1 \text{ s.t. } \compute_{\terminal_{f+1}}(w_1, q_1) \in F_{\terminal_{f+1}}$.
+    Hence, 
+    \[\compute(w.w_1, \dfastart^{\terminal_{f+1}}) \in F_{\terminal_{f+1}} \implies w.w_1 \in \lang(\regex_{\terminal_{f+1}})\]
+    We assume that each terminal $\lang(\terminal_i)$ is non-empty. Hence, 
+    \[\exists w_2 \in \lang(\regex_{\sequence^p}) \implies w.w_1.w_2 \in \lang(\regex_{\sequence}) \]
+    Hence, by condition 2 from Definition~\ref{def:pmatch}, $\pmatch(w, \regex_\sequence)$. 
+    
+    If condition 2 is true, $\exists w_1, w_2$ such that $w_1.w_2 = w$, $\compute_{\terminal_{f+1}}(w_1, \dfastart^{\terminal_{f+1}}) \in F \text{ and } \sequence^p= \{\} $. 
+    Here, $w_1 \in \lang(\regex_{\terminal_{f+1}})$. 
+    Since $\sequence^p = \{\}$, $\regex_\sequence = \regex_1$, and hence, $w_1 \in \lang(\regex_\sequence)$. 
+    Hence by condition 1 from Definition~\ref{def:pmatch}, $\pmatch(w, \regex_\sequence)$. 
+
+    If condition 3 is true, $\exists w_1, w_2$ such that $w_1.w_2 = w$, $\compute_{\terminal_{f+1}}(w_1, \dfastart^{\terminal_{f+1}}) \in F_{\terminal_{f+1}}$, \\ 
+    and $\dmatch(w_2, q_{0}^{\terminal_{f+2}}, \{\terminal_{f+3} \dots \terminal_{f+d}\}) = \true$. 
+    \[\compute_{\terminal_{f+1}}(w_1, \dfastart^{\terminal_{f+1}}) \in F_{\terminal_{f+1}} \implies w_1 \in \lang(\regex_{\terminal_{f+1}}) \]
+    Since length of $w_2 < k$, by our induction hypothesis, $\pmatch(w_2, \regex_{\sequence^p}) = \true.$ By Definition~\ref{def:pmatch}, there are two possibilities. 
+    Suppose $\exists w_2 = w_3.w_4$ such that $w_3 \in \lang(\regex_{\sequence^p})$. \\
+    \[w_1.w_3 \in \lang(\regex_{\sequence}) \implies \pmatch(w, \regex_{\sequence}) = \true \] 
+    Alternatively, if $\exists w_3$ such that $w_2.w_3 \in \lang(\regex_{\sequence^p})$ 
+    \[ w_1.w_2.w_3 \in \lang(\regex_\sequence) \implies \pmatch(w, \regex_{\sequence}) = \true
+    \]
+    Hence, our induction proof is complete and $\pmatch(w, \regex_{\sequence}) = \true$
+
+
+    \item Next we prove $\pmatch(w, \regex_\sequence) \implies \dmatch(w, \dfastart^{\terminal_{f+1}}, \sequence^p)$
+    We prove this using induction on the length $i$ of $w$. \\
+    For $i=0$, $\dmatch(w, \dfastart^{\terminal_{f+1}}, \sequence^p)$ is trivially true. \\
+    Now, we assume that for $w$ of length $i < k$, $ \pmatch(w, \regex_\sequence) \implies \dmatch(w, \dfastart^{\terminal_{f+1}}, \sequence^p)$ \\
+    Now we consider $w$ of length $k$ and $\pmatch(w, \regex_\sequence)$.\\ 
+    By Definition~\ref{def:pmatch}, there are two possible conditions \\
+    
+    \textbf{Case 1:} $\exists w_1 \in \alphabets^*, w_2 \in \alphabets^+\text{ such that } w = w_1.w_2$ and $w_1 \in \lang(\regex_\sequence)$ \\
+    Hence, $\exists w_3, w_4 \text{ such that } w_1 = w_3.w_4 $ and $w_3 \in \lang(\regex_{\terminal_{f+1}})$ and $w_4 \in \lang(\regex_{\sequence^p})$. By induction hypothesis, 
+    \[
+        \pmatch(w_4.w_2, \regex_{\sequence^p}) \implies \dmatch(w_4 w_2, \{\terminal_{f+2}, \terminal_{f+3} \dots \terminal_{f+d} \})
+    \]
+    Since $w = w_3.w_4.w_2$ and
+    \[
+        w_3 \in \lang(\regex_{\terminal_{f+1}}) \implies \compute_{\terminal_{f+1}}(w_3, \dfastart^{\terminal_{f+1}}) \in F_{\terminal_{f+1}}
+    \]
+    Hence, by condition 3 in Definition~\ref{def:dmatch}, $\dmatch(w, \dfastart^{\terminal_{f+1}}, \sequence^p)$  
+
+    \textbf{Case 2:} $\exists w_1$ such that $w.w_1 \in \lang(\regex_\sequence)$ \\
+    Hence, $\exists w_2, w_3 \text{ s.t } w.w_1 = w_2.w_3 $ and $w_2 \in \lang(\regex_{\terminal_{f+1}})$ and $w_3 \in \lang(\regex_{\sequence})$ \\
+    Now there are two possibilities, either $w$ is prefix of $w_2$ or $w_2$ is prefix of $w_2$ \\
+    Supoose $w$ is prefix of $w_2$, then $\compute_{\terminal_{f+1}}(w, \dfastart^{\terminal_{f+1}}) \in \live(\dfastates_{\terminal_{f+1}})$ and hence by Definition~\ref{def:dmatch}, $\dmatch(w, \dfastart^{\terminal_{f+1}}, \sequence^p)$
+    Alternatively, if $w_2$ is prefix of $w$ then $\exists w_4 \text{ s.t. } w = w_2 w_4$ \\
+    Hence, $w_4.w_1 = w_3 \in \lang(\regex_{\terminal_{f+1}})$ and thus $\pmatch(w_4, \regex_{\sequence^p})$ \\
+    By induction hypothesis $\dmatch(w_4, \dfastart^{\terminal_{f+2}}, \{\terminal_{f+3}, \terminal_4 \dots \terminal_{f+d} \})$ \\
+    and since $w = w_2.w_4 $ and $\compute_{\terminal_{f+1}}(w_2, \dfastart^{\terminal_{f+1}}) \in F_{\terminal_{f+1}}$. 
+    We get $\dmatch(w, \dfastart^{\terminal_{f+1}}, \sequence^p)$
+    
+\end{enumerate}
+
+
+\end{proof}

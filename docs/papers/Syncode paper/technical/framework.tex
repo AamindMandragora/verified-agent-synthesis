@@ -1,0 +1,55 @@
+\subsection{SynCode Framework}
+\label{sec:framework}
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=13cm]{images/example_framework.png}
+\vspace{-.1in}
+\caption{The upper section displays erroneous output from a standard LLM generation, failing to produce the intended JSON format. The lower segment showcases the fix achieved through the use of the \Tool{} framework.
+} 
+\label{fig:dfa}
+\vspace{-.1in}
+\end{figure}
+
+Figure~\ref{fig:dfa} shows how \Tool{} framework can be used in practice by selecting a grammar. 
+We next discuss other important features of the framework.
+
+\noindent \textbf{Adding a New Grammar.} 
+Our Python-based \Tool{} framework is shipped with several built-in grammars such as JSON, Python, Go, etc. 
+A user can apply \Tool{} for arbitrary grammar by providing the grammar rules in EBNF syntax with little effort.
+The grammar needs to be unambiguous LALR(1) or LR(1) grammar for using the respective base parsers.
+% The power of the LALR(1) parser is sufficient for most mainstream formal languages~\cite{10.5555/42212}.
+
+\noindent \textbf{Ignore Terminals.}
+Our EBNF syntax adopted from Lark allows one to provide \emph{ignore terminals} as part of the grammar. 
+Lark ignores those terminals while parsing. 
+In the case of Python, this includes \emph{comments} and \emph{whitespaces}. 
+\Tool{} handles these ignore terminals by adding a trivial 1-length accept sequence for each of these ignore terminals.
+
+\noindent \textbf{Parsers.}
+\Tool{} supports both LALR(1) and LR(1) as base parsers. 
+We adapt Lark's~\cite{lark} LALR(1) parser generator for \Tool{}. 
+Since Lark does not implement the LR(1) parser generator, we implemented the LR(1) parser generator on top of the Lark.
+The generation of LR(1) parser which is performed offline may take longer time compared to the LALR(1) parser (e.g., up to 2 mins for our Python grammar), however, it is more efficient at inference time in computing the accept sequences.
+Further, since the Lark-generated parser is non-incremental, we build the incremental parser on top of it by caching the parser state as described in Appendix~\ref{sec:incparse}.
+
+\noindent \textbf{Non-CFG Fragments of PLs.}
+\Tool{} can handle non-context-free fragments of PLs, such as \emph{indentation} in Python and end-of-scope markers in Go.
+To support languages with indentation, such as Python and YAML, \Tool{} has a mechanism that tracks acceptable indentation for the next token, effectively masking tokens that violate indentation constraints at a given point.
+This indentation constraint feature can be enabled with any new grammar. 
+Similarly, for handling other custom parsing rules beyond CFGs, users can add additional constraints to the generation by overriding specific \Tool{} functions. 
+For instance, in Go, semicolons are optional and may be automatically inserted at the end of non-blank lines. 
+Implementing such constraints in \Tool{} programmatically requires minimal effort.
+However, \Tool{} currently does not support enforcing semantic constraints. (e.g, if a variable in a program is defined before it is used.)
+
+% \noindent \textbf{Opportunistic Mode.}
+% \add{
+% Additionally, \Tool{} incorporates a form of optimization also present in~\cite{beurerkellner2024guiding, llamacpp}, referred to as opportunistic masking. 
+% Instead of initially computing the mask, as outlined in Algorithm~\ref{alg:main}, we first execute the decode step of the LLM and use the parser to examine the token suggested by the model. 
+% Only if the token is incorrect\fTBD{how wo we know the overhead is going to be better this way than the other?} do we proceed to compute the remainder of the mask, thus allowing the LLM to direct the decoding process.\fTBD{Where do we use it in our experiments? Do we show this optimization is useful/nencessary? Does it perform better in our sys than in those from the 2 refs?}
+% }
+
+% \noindent \textbf{Under-approximation.}
+% \add{
+% Write here!
+% }

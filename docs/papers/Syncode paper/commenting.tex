@@ -1,0 +1,71 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%% EDITING HELPER FUNCTIONS  %%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% From Dan %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% NA: needs attention (rough writing whose correctness needs to be
+%% verified) TBD: instructions for how to fix a gap ("Describe the
+%% propagation by ...")  PROBLEM: bug or missing crucial bit
+
+%% use \fXXX versions of these macros to put additional explanation
+%% into a footnote.  The idea is that we don't want to interrupt the
+%% flow of the paper or make it impossible to read because there are a
+%% bunch of comments.
+
+%% NA's (and TBDs, those less crucially) should be written so that
+%% they flow with the text.
+
+\definecolor{WowColor}{rgb}{.75,0,.75}
+\definecolor{SubtleColor}{rgb}{0,.75,0}
+\definecolor{Gray}{rgb}{0.5,0.5,0.5}
+\definecolor{mahogany}{RGB}{192,64,0}
+
+% general
+\renewcommand{\Comment}[1]{}
+
+% inline
+%\newcommand{\NA}[1]{#1}
+%\newcommand{\fTBD}[1]{}
+%\newcommand{\TBD}[1]{}
+
+
+
+
+
+
+% as margin notes
+\newcounter{margincounter}
+\newcommand{\displaycounter}{{\arabic{margincounter}}}
+\newcommand{\incdisplaycounter}{{\stepcounter{margincounter}\arabic{margincounter}}}
+
+\newcommand{\accalgo}{Acc/Algo}
+\newcommand{\libcomp}{Lib. Compat.}
+\newcommand{\impl}{Impl.}
+
+
+\renewcommand{\cite}[1]{\citep{#1}}
+
+\ifthenelse{\boolean{showcomments}}{
+\newcommand{\NA}[1]{\textcolor{SubtleColor}{ {\tiny \bf ($\star$)} #1}}
+
+\newcommand{\TBD}[1]{\textcolor{SubtleColor}{ {\tiny \bf (!)} #1}}
+\newcommand{\PROBLEM}[1]{\textcolor{WowColor}{ {\bf (!!)} {\bf #1}}}
+\newcommand{\Fix}[1]{\textcolor{red}{[#1]}}
+\newcommand{\fTBD}[1]{\textcolor{SubtleColor}{$\,^{(\incdisplaycounter)}$}\marginpar{\tiny\textcolor{SubtleColor}{ {\tiny $(\displaycounter)$} #1}}}
+\newcommand{\fPROBLEM}[1]{\textcolor{WowColor}{$\,^{((\incdisplaycounter))}$}\marginpar{\tiny\textcolor{WowColor}{ {\bf $\mathbf{((\displaycounter))}$} {\bf #1}
+}}}
+\newcommand{\LATER}[1]{\textcolor{SubtleColor}{ {\tiny \bf ($\dagger$)} #1}}
+\newcommand{\fLATER}[1]{\textcolor{SubtleColor}{$\,^{(\incdisplaycounter\dagger)}$}\marginpar{\tiny\textcolor{SubtleColor}{ {\tiny $(\displaycounter\dagger)$} #1}}}
+\newcommand{\Repl}[2]{\textcolor{Gray}{\st{#1}} \textcolor{SubtleColor}{#2}}
+\newcommand{\yifan}[1]{\textcolor{mahogany}{Yifan: #1}}
+}{
+\newcommand{\NA}[1]{#1}
+\newcommand{\fTBD}[1]{}
+\newcommand{\fPROBLEM}[1]{}
+\newcommand{\TBD}[1]{}
+\newcommand{\Fix}[1]{#1}
+\newcommand{\LATER}[1]{}
+\newcommand{\fLATER}[1]{}
+}
+

@@ -1,0 +1,28 @@
+\subsection{Time Complexity}
+\label{sec:time}
+In this section, we analyze the time complexity of the \Tool{} algorithm. 
+We focus on the cost of creating the mask at each iteration of the LLM generation loop.
+The key computations involved in this process are the parsing carried out by the incremental parser to compute $\accepts$ and the lookup/unification operations performed through the DFA mask store.
+
+The incremental parser parses $O(1)$ new tokens at each iteration and computes $\accepts$. 
+Let $T_A$ represent the time taken by the parser to compute the accepted terminals and $T_\parser$ denote the time the parser takes to parse a new token and update the parser state. 
+Hence, in each iteration, the parser consumes $O(T_A+T_\parser)$ time to generate $\accepts$.
+%
+The DFA mask store lookup involves traversing $|\accepts|$ DFA sequences, with the number of steps in this walk bounded by the length of the remainder $r$. 
+As $\accepts$ can have a maximum of $|\allterminals|$ sequences, the DFA walk consumes $O(|\allterminals| \cdot \len(r))$ time.
+We employ a hashmap to facilitate efficient lookups at each DFA node, ensuring that all lookups take constant time. Consequently, this step takes $O(|\allterminals|)$ time. 
+Let $T_\cup$ denote the time taken for computing the union of binary masks. 
+With potentially $|\allterminals|$ union operations to be performed, the mask computation takes $O(T_\cup \cdot |\allterminals|)$ time.
+Therefore, the overall time complexity at each step during generation is given by $O(T_A + T_\parser + |\allterminals| \cdot \len(r) + T_\cup \cdot |\allterminals|)$. 
+
+For an incremental LR(1) parser, the complexity of our algorithm at each step of LLM token generation is $O(|\allterminals| \cdot \len(r) + T_\cup \cdot |\allterminals|)$. 
+\add{With our lexer assumption, we ensure that} the remainder $r$ is small, allowing us to further simplify our complexity analysis to $O(T_\cup \cdot |\allterminals|)$ by treating $\len(r)$ as constant.
+% Additionally, all these computations have the potential for parallelization during LLM generation, but this aspect is deferred to future work.
+
+\noindent \textbf{Offline cost: } The cost of computing the mask store $\dmap{\alpha}$ offline involves considering all DFA states $q \in Q_\Omega$, all possible terminal sequences of length $\alpha$, and all tokens $t \in \vocab$. 
+Given that we need to traverse the DFA for $\len(t)$ steps for each entry in the store, the time complexity for computing the mask store is $O(\textit{max}_{t \in \vocab}(\len(t)).|Q_\Omega|.|\vocab|.|\allterminals|^\alpha)$. 
+Typically, $\len(t)$ is small, allowing us to simplify this to $O(|Q_\Omega|.|\vocab|.|\allterminals|^\alpha)$. 
+In our implementation, the use of $\dmap{0}$ and $\dmap{1}$ results in a cost of $O(|Q_\Omega|.|\vocab|.|\allterminals|)$.
+The size of $|Q_\Omega|$ depends on the complexity of regular expressions for the terminals, which may vary for each grammar. 
+However, as demonstrated in our evaluation section, these mask stores can be computed within 10 minutes for each combination of grammar and LLM. 
+This computation is a one-time cost that can be amortized over all generations performed for the given LLM and grammar.

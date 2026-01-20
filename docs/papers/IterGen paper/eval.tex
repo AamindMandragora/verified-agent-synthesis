@@ -1,0 +1,219 @@
+\newcommand{\CS}{C\nolinebreak\hspace{-.05em}\raisebox{.6ex}{\bf \#}}
+
+In this section, we present three experiments demonstrating the ease of writing LLM decoding algorithms with semantic constraints for (1) SQL, (2) privacy leakage, and (3) Vega-Lite.
+Additionally, \Tool{} implementation supports other languages in our repository, including a large fragment of Python.
+\Tool{} code is available at {\color{blue}\url{https://github.com/uiuc-arc/itergen}}
+
+\noindent \textbf{Experimental Setup.}
+We run experiments on a 48-core Intel Xeon Silver 4214R CPU with 2 NVidia RTX A5000 GPUs. 
+\Tool{} is implemented using PyTorch~\cite{NEURIPS2019_9015}, HuggingFace transformers library~\cite{wolf-etal-2020-transformers} and \syncode{} library~\cite{ugare2024syncodellmgenerationgrammar} for the parser-guided LLM generation infrastructure.
+
+
+\subsection{SQL Generation}
+\label{sec:sql_study}
+
+This case study shows that \Tool{} can improve text to SQL generation. 
+Despite providing SQL schema through the prompt, LLM-generated SQL queries can often fail to execute due to mistakes in using accurate table and column names. 
+This issue can be easily addressed by selectively resampling column and table names until they exist in the given schema. 
+We show that \Tool{} is ideal for implementing a constraint such as this while generating SQL. 
+% (See Appendix~\ref{sec:sql_error} for examples)
+
+Figure~\ref{fig:sql_algo} defines a function \str{generate\_sql\_with\_itergen} that utilizes \Tool{} to enhance text-to-SQL generation by ensuring that the generated SQL queries are syntactically accurate and adhere to a specified schema.
+The function begins by initializing the generation process with the given prompt and parsing the SQL schema. 
+Within a loop, it calls the \str{forward} function, which generates the next output, stopping specifically at either a column name or a table name. 
+Here, "column\_name" and "table\_name" are symbols representing non-terminals in our SQL grammar (See Appendix~\ref{sec:sql_grammar} for the full grammar).
+The function then checks the validity of this name against the schema using the \str{view} function. 
+If the name is invalid, it invokes the \str{backward} function, which moves \Tool{}'s context back to the state before the invalid name was generated, allowing for a new attempt. 
+% If a generated column or table name does not match the schema, the function selectively resamples until valid names are produced.
+The \str{max\_iter} hyper-parameter prevents infinite looping and excessive computation.
+
+\input{images/code_sql}
+
+\noindent \textbf{Models.} 
+We experiment with a range of state-of-the-art LLMs, including Qwen2.5~\cite{qwen2.5} (base, instruct-tuned, and code-specific) and various models from Llama series~\cite{llamamodels}.
+
+\noindent \textbf{Baselines.}
+We use \standard{} unconstrained generation and state-of-the-art grammar-guided generation tool \syncode{}~\cite{ugare2024syncodellmgenerationgrammar} as our baselines. 
+\syncode{} will ensure that the LLM-generated SQL queries are syntactically correct, however, it does not guarantee other errors that can occur during the execution of the query.
+
+\noindent \textbf{Datasets.} 
+We use the standard Spider~\cite{yu-etal-2018-spider} text-2-SQL dataset for the evaluation.
+This dataset has 1034 problems, that are categorized into different difficulty levels - \emph{easy} (250), \emph{medium} (440), \emph{hard} (174), and \emph{extra hard} (170).
+
+We prompt the model with information about the database schema and the text query.
+Our prompt is formatted as a user message for instruct-tuned models.
+Further, we explicitly prompt the model only to generate the SQL query as it is automatically parsed.
+The exact formatting of the prompt is provided in Appendix~\ref{sec:sql_prompt}.
+We use greedy decoding for the experiment and set \Tool{}'s maximum limit for moving backward as \str{max\_iter=20} and set the \Tool{} recurrence penalty to 0.7, as it worked well on a small subset of the training dataset. 
+We use \str{\textbackslash n\textbackslash n} as an additional stop word to the EOS token for all experiments and use max new token limit as 100 for all three methods. 
+
+
+\input{tables/sql_table}
+
+% Present table and results
+Table~\ref{tab:sql_comparison} presents our result comparing \standard{} unconstrained generation and \syncode{} to \Tool{}. 
+The columns provide insights into each approach's performance: the Accuracy (\%) displays the percentage of correctly generated SQL queries across different difficulty levels, while the Execute (\%) indicates the successful execution percentage of these queries using the SQLite Python interface (execution without runtime errors). 
+Additionally, the Tokens column shows the average number of tokens generated, and the Time (s) column reports the average generation time. 
+\add{
+\Tool{} improves over both baselines with an average overall accuracy of 41.63\% and an execution percentage of 75.84\%, compared to 28.9\% accuracy and 50.28\% execution rate for \standard{} generation. 
+It outperforms \syncode{}, which has an average accuracy of 35.22\% and an execution rate of 63.72\%. 
+Table~\ref{tab:avg_stats} in Appendix~\ref{tab:avg_stats} presents these averages for each metric over all considered LLMs in the study.
+}
+
+We observe that the generation algorithm defined using \Tool{} significantly improves over both baselines for all models in terms of execution accuracy.
+For instance, with the Qwen2.5-0.5B model, \Tool{} achieves an overall accuracy of 34.3\%, compared to 27.9\% for the \syncode{}.
+Similarly, with the Qwen2.5-1.5B-Instruct model, \Tool{} reaches an overall accuracy of 50.8\%, ahead of \syncode{}'s 33.2\%. 
+Our simple \Tool{} written algorithm also substantially reduces the execution errors.  
+For Llama-3.2-1B, \Tool{} achieves 67.9\% overall execution success rate, compared to \standard{}'s 51.1\%. 
+These results highlight the effectiveness of the \Tool{} approach in generating valid SQL outputs.
+We present a detailed comparison of examples where the \Tool{} method avoids the issue in \syncode{} solution in Appendix~\ref{sec:sql_error}.
+
+% \add{
+% Furthermore, the \Tool{} approach demonstrates improved time efficiency over \syncode{}. 
+% For the Qwen2.5-0.5B model, \Tool{} has an average execution time of 1.23 seconds, slightly faster than \syncode{}'s 1.29 seconds. 
+% For Llama-3.2-1B, \Tool{} reduces the average time to 0.86 seconds, outperforming \syncode{}'s 0.91 seconds.
+% This is mainly due to the reduced output size in some cases where the model with \Tool{} method halts earlier on generating a valid query, and \standard{} and \syncode{} generate additional redundant tokens. 
+% }
+
+Ablation study on recurrence penalty $\gamma$, other modes of prompting with execution feedback, and detailed error analysis is in the Appendix.
+
+% We show some of these examples in Appendix~\ref{sec:sql_error}.
+
+% Overall, \Tool{} improves accuracy by 4\% to 7\% compared to the best-performing syncode, while also boosting execution rates by approximately 10\% to 20\%. 
+
+
+
+
+
+% \subsection{Privacy Leakage}
+% We show that \Tool{} can be successfully applied to drastically reduce total \texttt{leak}ed emails and evaluate on the DecodingTrust ~\cite{wang2023decodingtrust} privacy dataset. To use \Tool{}, we provide a grammar to be followed, defining an \texttt{EMAIL} as a terminal in the grammar. We provide more evaluation details and the code using \Tool{} for reducing privacy leakage in Appendix ~\ref{sec:priv_grammar}. We also show the grammar used for our experiments in Appendix~\ref{sec:priv_grammar}. 
+
+
+% Note, in our case study, we disallow the exact generation of emails from our corpus. 
+% However, \Tool{}s generations may still contain fragments of private email data, due to the simplicity of the email matching function used in the experiment. For more critical applications users may define a more comprehensive matching function. 
+
+
+% % \noindent \textbf{Baselines.}
+% % 
+% % We run the base model directly from HuggingFace with no safeguards in place. 
+% % \sasa{What does it mean 'standard baseline' ? }
+
+
+
+
+% \noindent \textbf{Datasets.}
+% We use 100 problems from the DecodingTrust ~\cite{wang2023decodingtrust} privacy benchmark, focusing on the Enron email extraction setting with the 5-shot prompts specified above. 
+
+
+% \noindent \textbf{Hyperparameter Values.}
+% We use \standard{} unconstrained generation as the baseline. 
+% For both the \Tool{} and \standard{} experiments we use greedy sampling. 
+% For \Tool{} we set a recurrence penalty \add{$\gamma$ to $0.7$}, and limit the number of per-email backtracking attempts to $10$. 
+% % In addition to the models evaluated in~\ref{sec:sql_study}, we further evaluate \Tool{}s privacy preservation ability on the Llama-2-7b, and Llama-3-8B models. 
+
+% Table \ref{tab:model_comparison_1} displays generation metrics of \standard{} generation compared to \Tool{} privacy preserving generation. 
+% We display the number of emails leaked by the model in each generation mode, along with the average amount of time spent per generation. 
+% Since \Tool{} inherently relies on re-generating certain parts of the completion, we display Average $\Delta$ tokens, a measure of how many more tokens \Tool{} generated on average, per prompt, in comparison to \standard{} generation. 
+
+
+% We observe a clear, significant improvement over base models, with \Tool{} persevering user privacy with 100\% success. 
+% We observe a small increase in average time per completion and average tokens per generation. 
+% This overhead consists of mostly discarded tokens when backtracking away from leaky completions, and minor processing delays (e.g., checking for leaks at each step, keeping track of backtracking attempts, moderate fixed overhead when initializing~\Tool{}).
+% We also show output perplexity as a response quality gauge to verify that \Tool{}'s secure generations are still providing utility. 
+% We notice a marginal increase in response perplexity, indicating a minor divergence from the highest probability tokens, resulting from \Tool{}s replacement of high probability leak-yielding tokens.
+
+% \noindent \textbf{Models.}
+% We ran our experiments using the Qwen and $BLANK$ families of models ~\cite{qwen2} (\texttt{Qwen2.5-0.5B-Instruct}, \texttt{Qwen2.5-3B-Instruct}) 
+
+% \begin{table}[h]
+%     \centering
+%     \caption{Toxicity evaluation for various models}
+%     \begin{tabular}{@{}llcccc@{}}
+%         \toprule
+%         Model                            & Configuration & Avg. Detoxify Score (\%) & Total Tokens & Avg. Runtime (s) \\ \midrule    
+%         \multirow{3}{*}{Qwen 2.5 - 0.5B} & Standard       & 2.01      & 10299        & 2.382       \\ 
+%                                          & Baseline       & 1.26      & 10402        & 2.398       \\
+%                                          & IterGen        & 1.53      &  7139        & 2.76       \\ \midrule
+%         \multirow{3}{*}{Qwen 2.5 - 3B}   & Standard       & 5.31      & 11940        & 6.026      \\ 
+%                                          & Baseline       & 3.04      & 15033        & 7.503       \\
+%                                          & IterGen        & 3.36      &  7877        & 2.395       \\ 
+%         \bottomrule
+%     \end{tabular}
+%     \label{tab:merged_model_metrics}
+% \end{table}
+
+% \input{tables/privacy_table}
+
+\subsection{Privacy Leakage}
+As LLMs continue to proliferate and are integrated into a multitude of applications, it is imperative to protect the private user data used in model pretraining. 
+LLMs can inadvertently output data from their training corpus thus exposing private details to end users.
+As such, privacy safeguards are critical to mitigate the risks of sensitive information disclosure, (2) further public trust in AI systems, and (3) comply with current and future data protection regulations.   
+
+We evaluate \Tool{} on its capacity to prevent LLMs from ``leaking'' private data to end users. Specifically, a `leak' is defined as an LLM outputting sensitive data that was in its pretraining dataset. While this can happen coincidentally, malicious actors may rely on specifically designed prompts that are intended to make LLMs reveal private data. 
+In this case study, we focus on the \emph{Enron} email dataset: a corpus of roughly 600,000 emails between employees of the Enron Corporation. This dataset is often aggregated into large LLM pretraining corpora. As such, most common LLMs have been exposed to this data 
+% (including email addresses and message content) 
+during their pretraining phase, and thus are capable of leaking the data to end users. 
+
+We show that \Tool{} can be applied to easily prevent private email address leakage. We use the DecodingTrust ~\cite{wang2023decodingtrust} privacy dataset, focusing on the Enron email extraction task. 
+We provide an in-depth explanation of the \Tool{} API, as well as experiment details in Appendix ~\ref{sec:privacy_appendix_casestudy}
+
+Table \ref{tab:model_comparison_1} displays generation metrics of \standard{} generation compared to \Tool{} privacy preserving generation. 
+We display the number of emails leaked by the model in each generation mode, along with the average amount of time spent per generation. 
+Since \Tool{} inherently relies on re-generating certain parts of the completion, we display Average $\Delta$ tokens, a measure of how many more tokens \Tool{} generated on average, per prompt, in comparison to \standard{} generation. 
+\input{tables/privacy_table}
+
+We observe a clear, significant improvement over base models, with \Tool{} preserving user privacy with 100\% success. 
+We observe a small increase in average time per completion and average tokens per generation. 
+This overhead consists of mostly discarded tokens when backtracking away from leaky completions and minor processing delays (e.g., checking for leaks at each step, keeping track of backtracking attempts, moderate fixed overhead when initializing~\Tool{}).
+We also show output perplexity as a response quality gauge to verify that \Tool{}'s secure generations are still providing utility. 
+We notice a small increase in response perplexity, showing a minor divergence from the highest probability tokens, resulting from \Tool{}s replacement of leak-yielding tokens.
+
+\subsection{Vega-lite}
+\label{sec:vgl}
+
+\add{
+% Explain what vega-lite and NVL corpus is
+Vega-Lite~\cite{10.1109/TVCG.2016.2599030} is a declarative language for specifying data visualizations based on a data frame, a tabular structure where rows represent individual data points and columns define attributes of various types. 
+Vega-Lite syntax is a subset of JSON, and the Vega-Lite grammar accepts JSON objects conforming to its schema. The detailed grammar for Vega-Lite is provided in Appendix~\ref{sec:vgl_grammar}.
+We apply the following constraints with \Tool{}, ensuring precise backtracking before the source of any detected violations:
+
+% \vspace{-0.6}
+\begin{itemize}
+    \itemsep 1pt 
+    \parskip 2pt 
+    \item Valid Field Names: Each field name must correspond to a valid column in the data frame.
+    \item Field Type Compatibility: The type of each field must follow specific rules. For example, string columns are typically categorical values (nominal in Vega-Lite). If the entries follow ISO timestamp formatting, the column can be interpreted as temporal.
+    \item Aggregation Constraints: Aggregations must be limited to specific values, including "count", "mean", "average", and "sum".
+\end{itemize}
+
+When checking field type compatibility, we account for the fact that JSON objects are unordered. This means the model may generate either the field name first or the data type first as valid output orders. 
+To handle this, we allow the model to complete the generation of the entire object corresponding to the channel, including the field name and the type. 
+If a violation is detected, we move backward to the point before the type value. 
+% Figure illustrates an example of this process.
+
+
+\input{tables/nlv_table}
+
+
+\noindent \textbf{Datasets.}
+% Actual evaluation
+For the evaluation, we use the NLV Corpus~\cite{Srinivasan_2021}, a dataset comprising 814 examples of text utterances paired with corresponding Vega-Lite visualization specifications.
+We use a single-example prompt that explicitly lists all field names from the data frame, as shown in Appendix~\ref{sec:vgl_prompt}.
+
+
+\noindent \textbf{Hyperparameter Values.}
+We use \syncode{}  as the baseline. 
+For both \Tool{} and \syncode{} experiments, we use greedy sampling. 
+For \Tool{} we set a recurrence penalty \add{$\gamma$ to $0.1$}, and set \str{max\_iter} to 50.
+We evaluate three models: Qwen2.5-1.5B, Llama-3.2-3B, and Llama-3-8B. 
+
+% We measure both exact match accuracy to the ground truth and execution success with the Vega-lite compiler.
+Table~\ref{tab:nlv_comparison} presents the result for our case study.
+The Column "Accuracy" represents the exact match accuracy with the ground truth, the Column "Execute" denotes the execution success with the Vega-lite compiler, and the Column "Time" shows the average time taken for each task.
+We observe that the generation algorithm defined using \Tool{} significantly improves over \syncode{} for all models in terms of validation and accuracy.
+For instance, with the Llama-3-8B model, \Tool{} achieves an accuracy of 30.5\%, outperforming \syncode{}'s 24.7\%.
+Similarly, for the Llama-3.2-3B model, \Tool{} gets an accuracy of 36.0\%, compared to 31.7\% for \syncode{}.
+Additionally, \Tool{} demonstrates higher execution rates across all models.
+For example, with Qwen2.5-1.5B, \Tool{} achieves an Average Validity of 46.6\%, exceeding \syncode{}'s 44.5\%. We further analyze the evaluation of tasks with Llama-3.2-3B  in the dataset based on the number of iterations and backward calls made by \Tool{} in Figure~\ref{fig:scatter_iters_vs_backwards1} in Appendix~\ref{sec:vgl_appendix_casestudy}.
+} 
+

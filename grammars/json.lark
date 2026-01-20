@@ -1,0 +1,26 @@
+// JSON Grammar for Constrained Decoding
+// Based on ECMA-404 JSON specification
+
+start: value
+
+?value: object
+      | array
+      | string
+      | number
+      | "true"   -> true
+      | "false"  -> false
+      | "null"   -> null
+
+object: "{" [pair ("," pair)*] "}"
+pair: string ":" value
+
+array: "[" [value ("," value)*] "]"
+
+string: ESCAPED_STRING
+number: SIGNED_NUMBER
+
+%import common.ESCAPED_STRING
+%import common.SIGNED_NUMBER
+%import common.WS
+%ignore WS
+

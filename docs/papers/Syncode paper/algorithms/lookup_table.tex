@@ -1,0 +1,27 @@
+\begin{wrapfigure}{R}{0.53\textwidth}
+\vspace{-.34in}
+\begin{minipage}{0.55\textwidth}
+
+\begin{algorithm}[H]
+
+\caption{Computing Lookup Table}
+\label{alg:lookup}
+%
+\textbf{Inputs:} $\allterminals$: all terminals in the grammar, $\vocab$: vocabulary
+\begin{algorithmic}[1]
+\Function{compute\_lookup\_table}{$\allterminals$, $\vocab$}
+\For{$\terminal \in \allterminals$}
+\State $\dfa_{\terminal} \gets \text{ComputeDFA}(\terminal)$
+\For{$q_{\terminal} \in Q_{\terminal}, t \in \vocab$}
+% \State 
+\EndFor
+\EndFor
+% \State $A_{j+1}, A_{j}, r \gets \text{Parse}(C_i)$
+% \State $m \gets \Big(\bigcup_{\terminal \in A_j} L(\terminal, r)\Big) \cup \Big(\bigcup_{\terminal \in A_{j+1}} L(\terminal, \epsilon)\Big)$
+\State \Return $m$
+\end{algorithmic}
+\end{algorithm}
+
+\end{minipage}
+\vspace{-0.2in}
+\end{wrapfigure}

@@ -1,0 +1,20 @@
+\begin{Verbatim}[commandchars=\\\{\}]
+\PYG{k}{def} \PYG{n+nf}{generate\PYGZus{}sql\PYGZus{}with\PYGZus{}itergen}\PYG{p}{(}\PYG{n}{iter\PYGZus{}gen}\PYG{p}{,} \PYG{n}{problem}\PYG{p}{):}
+    \PYG{n}{iter\PYGZus{}gen}\PYG{o}{.}\PYG{n}{start}\PYG{p}{(}\PYG{n}{problem}\PYG{p}{[}\PYG{l+s+s1}{\PYGZsq{}prompt\PYGZsq{}}\PYG{p}{])}
+    \PYG{n}{schema} \PYG{o}{=} \PYG{n}{parse\PYGZus{}sql\PYGZus{}schema}\PYG{p}{(}\PYG{n}{problem}\PYG{p}{)}
+    \PYG{n}{attempts} \PYG{o}{=} \PYG{l+m+mi}{0}
+
+    \PYG{k}{while} \PYG{o+ow}{not} \PYG{n}{iter\PYGZus{}gen}\PYG{o}{.}\PYG{n}{finished}\PYG{p}{()} \PYG{o+ow}{and} \PYG{n}{attempts} \PYG{o}{\PYGZlt{}} \PYG{n}{max\PYGZus{}iter}\PYG{p}{:}
+        \PYG{n}{out} \PYG{o}{=} \PYG{n}{iter\PYGZus{}gen}\PYG{o}{.}\PYG{n}{forward}\PYG{p}{(}\PYG{n}{stop\PYGZus{}symbols}\PYG{o}{=}\PYG{p}{[}\PYG{l+s+s1}{\PYGZsq{}column\PYGZus{}name\PYGZsq{}}\PYG{p}{,} \PYG{l+s+s1}{\PYGZsq{}table\PYGZus{}name\PYGZsq{}}\PYG{p}{])}
+        \PYG{n}{attempts} \PYG{o}{+=} \PYG{l+m+mi}{1}
+
+        \PYG{k}{if} \PYG{o+ow}{not} \PYG{n}{exists\PYGZus{}column}\PYG{p}{(}\PYG{n}{schema}\PYG{p}{,} \PYG{n}{iter\PYGZus{}gen}\PYG{o}{.}\PYG{n}{view}\PYG{p}{(}\PYG{l+s+s1}{\PYGZsq{}column\PYGZus{}name\PYGZsq{}}\PYG{p}{)[}\PYG{o}{\PYGZhy{}}\PYG{l+m+mi}{1}\PYG{p}{]):}
+            \PYG{n}{iter\PYGZus{}gen}\PYG{o}{.}\PYG{n}{backward}\PYG{p}{(}\PYG{l+s+s1}{\PYGZsq{}column\PYGZus{}name\PYGZsq{}}\PYG{p}{)}
+            \PYG{k}{continue}
+
+        \PYG{k}{if} \PYG{o+ow}{not} \PYG{n}{exists\PYGZus{}table}\PYG{p}{(}\PYG{n}{schema}\PYG{p}{,} \PYG{n}{iter\PYGZus{}gen}\PYG{o}{.}\PYG{n}{view}\PYG{p}{(}\PYG{l+s+s1}{\PYGZsq{}table\PYGZus{}name\PYGZsq{}}\PYG{p}{)[}\PYG{o}{\PYGZhy{}}\PYG{l+m+mi}{1}\PYG{p}{]):}
+            \PYG{n}{iter\PYGZus{}gen}\PYG{o}{.}\PYG{n}{backward}\PYG{p}{(}\PYG{l+s+s1}{\PYGZsq{}table\PYGZus{}name\PYGZsq{}}\PYG{p}{)}
+            \PYG{k}{continue}
+
+    \PYG{k}{return} \PYG{n}{out}
+\end{Verbatim}

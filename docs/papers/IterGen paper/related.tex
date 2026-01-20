@@ -1,0 +1,42 @@
+
+
+Our work focuses on enhancing the semantic accuracy of LLMs through constrained decoding. 
+Prior research has explored two primary strategies to improve LLM accuracy in generating structured formal languages:
+Fine-tuning or prompt engineering \cite{bassamzadeh2024comparativestudydslcode, weyssow2024exploringparameterefficientfinetuningtechniques}, which typically requires significant data, computational resources, and time, often without formal guarantees of success.
+However, fine-tuning and prompt engineering approaches are complementary to the constrained decoding approach we adopt, and improvements from those techniques could enhance the overall quality of LLM output.
+
+
+Context-free-grammar generation techniques such as \tgcd{}~\cite{geng2023grammar}, \outlines{}~\cite{willard2023efficient}, \domino{}~\cite{beurerkellner2024guiding}, \syncode{}~\cite{ugare2024syncodellmgenerationgrammar} and \aici{}~\cite{Moskal2024} constrain LLM output according to grammar rules. 
+However, in contrast to \Tool{}, these tools cannot apply semantic constraints to the generation process.
+% \sasa{check the rewrite from but do not apply semanitc to this.}
+Other recent constrained-generation methods utilize language servers (designed for communication between IDEs and language-specific tools) to enforce some semantic constraints during decoding \cite{agrawal2023guiding, Wei_2023}. 
+However, these techniques lack guarantees for syntactic accuracy and depend on the availability and performance of language servers.
+% \sasa{What is lang server tool? seems a convoluted way to say "code completion tools"}
+
+% \\synchromesh{}, \guidance{} and \lmql{}
+% \lmql{}~\cite{10.1145/3591300} is a query language designed for structured LLM generation, allowing users to write queries with "holes" in text, where constraints can be applied. 
+% % \lmql{} fills these holes using rejection sampling based on the constraints. 
+% These constraints are limited to regular expressions or predefined types such as int and float and do not extend to context-free grammars.
+% In contrast, \Tool{} operates on a predefined overarching context-free grammar and offers fine-grained control over the generation process to the user. 
+% Users can apply rejection sampling to specific parts of the grammar by moving forward or backward through the output. 
+% Additionally, \Tool{} allows users to adjust generation parameters, providing flexibility during generation dynamically.
+
+\guidance{}~\cite{guidance} supports context-free languages but requires users to compose grammars through supported operations. 
+\guidance{}’s \str{stop\_at} function, which halts generation at a specified regular expression, has similarities to the \Tool{}’s \str{forward} function. 
+However, while \str{stop\_at} works with regular expressions, \str{forward} operates based on symbols from \Tool{}'s overarching grammar. 
+Unlike \Tool{}, \guidance{} does not support backtracking, and the only way to impose constraints is through regular expressions on generated "holes," similar to \lmql{}. 
+Moreover, \Tool{} uses any LR grammar in the standard Lark EBNF format, making it easier to plug in large grammars like SQL, which is not straightforward with \guidance{}.
+Both \lmql{} and \guidance{} provide additional features, such as the ability to insert strings during generation and support for function calls, which are outside the scope of this paper.
+
+\synchromesh{}~\cite{poesia2022synchromesh} uses constrained semantic decoding (CSD) to enforce semantic constraints through predictive masking and rejection sampling at the token level. 
+It checks if the model's first token choice adheres to the semantic constraints, and if not, uses predictive masking to resample. 
+It is designed for use with OpenAI's GPT-3 and Codex and relies on API access without direct control over the underlying language models. 
+Similarly, \picard{}~\cite{scholak-etal-2021-picard} is a grammar-guided generation tool that's developed for SQL generation with additional constraints on valid table and column names. 
+The approach used in \synchromesh{} and \picard{} for SQL can be easily implemented with \Tool{} with few lines of code, as shown in our case study. 
+In contrast to both \synchromesh{} and \picard{}, the goal of \Tool{} is to develop an efficient and intuitive tool that allows users to write programs to define grammar-level semantic constraints through its forward and backward operations that can work with any user-provided grammar and not specific to improving SQL generation. \add{An unofficial implementation of Synchromesh exists; in practice, this system encountered errors when running with complex Lark grammars}. Furthermore, \picard{} works only with T5 architecture, and thus it is not possible to make an empirical comparison to \Tool{}.
+
+\add{
+\Tool{} also serves as the primary building block in recent works like CRANE \cite{banerjee2025crane}, which combines syntactic and semantic correctness of constrained decoding with unconstrained LLM reasoning steps to improve LLM performance on challenging symbolic reasoning benchmarks such as GSM-symbolic and FOLIO.
+}
+
+% \sasa{Is there some other principled thing to shoot picard down? E.g. it works only for sql, single architecure; vs also stating Itergen is general in both dimensions (any cfg language and supports various archs.)}

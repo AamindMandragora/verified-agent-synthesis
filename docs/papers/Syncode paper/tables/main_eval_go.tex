@@ -1,0 +1,24 @@
+% \begin{wraptable}{r}{.6\textwidth} 
+\begin{table}[b]
+    \tablesize
+    \centering
+    % \vspace{-0.15in}
+    \caption{Effectiveness of \Tool{} in generating syntactic Go code}
+    \begin{tabular}{@{}ll ccc@{}}
+        \toprule
+        Dataset & Architecture & \Baseline{} & \Tool{} & $\downarrow$ \\
+        \hline
+         & CodeGen-350M  & 573 & 49 & 91\% \\
+        HumanEval & WizardCoder-1B  & 1031 & 50 & 95\% \\
+        & Llama-7B  & 725 & 10 & 99\% \\
+        \hline
+        & CodeGen-350M  & 212 & 2 & 99\% \\
+        MBXP & WizardCoder-1B  & 243 & 14 & 94\% \\
+        & Llama-7B & 414 & 1 & 99\% \\
+        
+        \bottomrule
+    \end{tabular}
+    % \vspace{-0.1in}
+    \label{tab:main_eval_go}
+% \end{wraptable}
+\end{table}

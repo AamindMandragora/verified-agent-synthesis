@@ -1,0 +1,72 @@
+\begin{tabular}{ll}
+% Grammar related
+    $G$ & Formal Grammar\\
+    $L(G)$ & Language of a grammar \\
+    $L_p(G)$ & Prefix language of a grammar\\
+    $l$ & lexical tokens \\
+    $l_i$ & $i$-th lexical token in the parsed output \\
+    $\terminal$ & A terminal in the grammar \\
+    $\terminal_i$ & Terminal type of $i$-th lexical token \\
+    $\allterminals$ & Set of all terminals in the grammar \\
+    $\lang^\allterminals(G)$ & Language of terminals for grammar $G$ \\
+    $\lang^\allterminals_p(G)$ & Prefix language of terminals \\
+    $\parser$ & Parser \\
+    $\sequence$ & Sequence of terminals \\
+    $\tokenizer$ & Tokenizer in an LLM \\
+    $\vocab$ & Vocabulary of an LLM\\
+    $\vocab_k$ & Subset of vocabulary containing acceptable tokens at $k$-th LLM generation iteration\\
+    $\regex_\terminal$ & Regular expression for a terminal $\terminal$ \\
+    $\regex_i$ & Regular expression corresponding to $i$-th lexical token \\
+    $\greater$ & Partial order over set of terminal sequences\\
+
+% Syncode related
+    $\remainder$ & Remainder from \Tool{} parsing the partial output \\
+    $\partialcode$ & Partial output at $k$-th iteration of LLM generation\\
+    $\fixpartialcode$ & Parsed prefix of partial output $\partialcode$ at $k$-th iteration of LLM generation\\
+    $\accepts$ & Set of accept sequences \\
+    $\dmap{\alpha}$ & DFA lookup store function for terminal sequences of length $\alpha$ \\
+    $\dmatch$ &  Match with DFA walk as defined in Section~\ref{sec:technical}\\
+    $\pmatch$  & Partial match with regular expression\\
+    $\partialparse$ & Partial parsing function \\
+    $m$ & Boolean mask \\
+
+
+
+% DFA related
+    $\dfa$ & Deterministic finite automaton \\
+    $\dfastates$ & States in a DFA \\
+    $\alphabets$ & Set of characters i.e. alphabet for DFA \\
+    $\transitions$ & Transition function in a DFA \\
+    $\compute$ &  Extended transition function in a DFA\\
+    $\dfastart$ & Start state of a DFA \\
+    $\dfafinal$ & Set of final states in DFA\\
+    $\live$ & Live states of the DFA \\
+    $\dfastates_\Omega$ & Set containing all DFA states for DFAs of all terminals in the grammar\\
+
+% Parser related 
+    $\curaccepts$ & Set of terminals acceptable for current lexical token \\
+    $\nextaccepts$ & Set of terminals acceptable as for next lexical token \\
+    $\lex$ & Lexer function \\
+    $\len$ & Length of a sequence \\
+    $\curtokens$ & Current set of tokens \\
+    $\psmap$ & Map for storing parser state \\
+\end{tabular}
+
+
+% \newcommand{\partialparse}{\textit{pparse}}
+
+% \newcommand{\set}{\textit{set}}
+
+% \newcommand{\str}[1]{\enquote*{\emph{#1}}} 
+
+% % Parser related
+% \newcommand{\next}{\emph{Next}\xspace}
+% \newcommand{\follow}{\emph{Follow}\xspace}
+% % \newcommand{\lexertokens}{\textit{LT}}
+
+% % regex
+% \newcommand{\pmatch}{\textit{pmatch}}
+% \newcommand{\len}{\textit{len}}
+
+% % DFA related
+% \newcommand{\dmatch}{\textit{dmatch}}

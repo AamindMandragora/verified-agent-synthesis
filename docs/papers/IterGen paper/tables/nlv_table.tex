@@ -1,0 +1,26 @@
+\begin{wraptable}{r}{0.62\textwidth}
+    \scriptsize
+    % \centering
+    \vspace{-.2in}
+    \caption{Comparing \Tool{} and \syncode{} on the NLV corpus based on accuracy, execution success, and average time.}
+    \vspace{-.03in}
+    \begin{tabular}{llccc}
+        \toprule
+        \textbf{Model} & \textbf{Method} & \textbf{Accuracy (\%)} & \textbf{ Execute (\%)} & \textbf{Time (s)} \\
+        \midrule
+        \multirow{2}{*}{Qwen2.5-1.5B} 
+        & \syncode{} & 13.14 & 44.47 & 3.36 \\
+        & \Tool{} & \textbf{15.48} & \textbf{46.56} & 3.96 \\
+        \midrule
+        \multirow{2}{*}{Llama-3.2-3B} 
+        & \syncode{} & 31.70 & 85.50 & 4.43 \\
+        & \Tool{} & \textbf{36.01} & \textbf{88.21} & 5.00 \\
+        \midrule
+        \multirow{2}{*}{Llama-3-8B} 
+        & \syncode{} & 24.69 & 89.56 & 4.09 \\
+        & \Tool{} & \textbf{30.47} & \textbf{92.51} & 4.87 \\
+        \bottomrule
+    \end{tabular}
+    \label{tab:nlv_comparison}
+    \vspace{-.2in}
+\end{wraptable}
