@@ -80,12 +80,15 @@ def select_fol_token_ids(tokenizer, vocab_size: int) -> List[int]:
     Select tokens relevant for FOL generation.
 
     This includes:
-    - All alphanumeric tokens (for predicates, variables, constants)
-    - Logical operators in {keyword} format: {forall}, {exists}, {and}, {or}, {not}, {implies}, {iff}, {xor}
-    - Parentheses, commas, colons
-    - Section markers: Predicates:, Premises:, Conclusion:, Answer:
+    - FOL logical operators: {forall}, {exists}, {and}, {or}, {not}, {implies}, {iff}, {xor}
+    - Short alphanumeric tokens for predicates (max 8 chars, starting with uppercase)
+    - Single lowercase letters for variables (x, y, z)
+    - Short lowercase tokens for constants (2-10 chars)
     - Constraint delimiters: <<, >>
-    - Whitespace and newlines
+    - Structural tokens: (), commas, colons
+
+    IMPORTANT: Excludes long programming identifiers like "TouchListener", "NSError"
+    to prevent garbage generation.
 
     Args:
         tokenizer: HuggingFace tokenizer
@@ -94,30 +97,83 @@ def select_fol_token_ids(tokenizer, vocab_size: int) -> List[int]:
     Returns:
         List of token IDs
     """
-    # Critical FOL tokens that MUST be included
+    import re
+
+    # Critical FOL tokens that MUST be included (HIGHEST PRIORITY)
     critical_fol_tokens = [
         # Constraint delimiters
         "<<", ">>", "<", ">",
-        # FOL operators
+        # FOL operators (complete) - with and without leading space
         "{forall}", "{exists}", "{and}", "{or}", "{not}", "{implies}", "{iff}", "{xor}",
+        " {forall}", " {exists}", " {and}", " {or}", " {not}", " {implies}", " {iff}", " {xor}",
         # Partial FOL operators (for incremental generation)
-        "{", "}", "forall", "exists", "and", "or", "not", "implies", "iff", "xor",
-        "{f", "{e", "{a", "{o", "{n", "{i", "{x",
+        "{", "}", " {",
+        "{f", "{fo", "{for", "{fora", "{foral", "{forall", "{forall}",
+        "{e", "{ex", "{exi", "{exis", "{exist", "{exists", "{exists}",
+        "{a", "{an", "{and", "{and}",
+        "{o", "{or", "{or}",
+        "{n", "{no", "{not", "{not}",
+        "{i", "{im", "{imp", "{impl", "{impli", "{implie", "{implies", "{implies}",
+        "{if", "{iff", "{iff}",
+        "{x", "{xo", "{xor", "{xor}",
         "forall}", "exists}", "and}", "or}", "not}", "implies}", "iff}", "xor}",
+        "forall", "exists", "and", "or", "not", "implies", "iff", "xor",
         # Section markers
         "Predicates:", "Premises:", "Conclusion:", "Answer:",
         "Predicates", "Premises", "Conclusion", "Answer",
-        # Structural tokens
+        "True", "False", "Uncertain",
+        # Structural tokens - CRITICAL: include space-prefixed variants
         "(", ")", ",", ":", ":::",
+        " (", " )", " ,",  # Space-prefixed for after variables
+        "( ", ") ",  # With trailing space
         # Whitespace
-        " ", "\n", "\t", "  ",
+        " ", "\n", "\t", "  ", "   ",
     ]
 
-    # Add individual characters for FOL operators
-    for c in "forallexistsandornotimpliesiffxor":
+    # Common predicate names in FOL (short, meaningful)
+    # Include both with and without leading space, and with opening paren
+    common_predicates_base = [
+        # Common logical predicates
+        "Cat", "Dog", "Animal", "Mammal", "Bird", "Fish", "Pet",
+        "Human", "Person", "Man", "Woman", "Child", "Student", "Teacher",
+        "Red", "Blue", "Green", "Big", "Small", "Tall", "Short",
+        "Happy", "Sad", "Smart", "Fast", "Slow", "Good", "Bad",
+        "Like", "Love", "Hate", "Know", "See", "Hear", "Want",
+        "Friend", "Enemy", "Parent", "Sibling",
+        # Single letter predicates
+        "P", "Q", "R", "S", "T", "U", "V", "W",
+        # Common 2-letter predicates
+        "Is", "At", "In", "On", "Of", "To", "By",
+        # FOLIO-specific predicates
+        "InClub", "Perform", "Attend", "Engaged", "Inactive", "Chaperone",
+        "Wish", "Young", "Teen", "Member", "Active",
+    ]
+
+    # Add predicates with variants: "Cat", " Cat", "Cat(", " Cat(", "(Cat"
+    for pred in common_predicates_base:
+        critical_fol_tokens.append(pred)
+        critical_fol_tokens.append(" " + pred)  # Space-prefixed
+        critical_fol_tokens.append(pred + "(")  # With opening paren
+        critical_fol_tokens.append(" " + pred + "(")  # Space + pred + paren
+        critical_fol_tokens.append("(" + pred)  # Paren + pred (for nested)
+
+    # Common constants (lowercase, 2+ chars) - with variants
+    common_constants_base = [
+        "felix", "fido", "john", "mary", "bob", "alice", "sam",
+        "socrates", "plato", "aristotle", "bonnie",
+    ]
+    for const in common_constants_base:
+        critical_fol_tokens.append(const)
+        critical_fol_tokens.append(" " + const)
+        critical_fol_tokens.append(const + ")")  # With closing paren
+        critical_fol_tokens.append(" " + const + ")")
+
+    # Single letter variables
+    for c in "xyzabcdefghijklmnopqrstuvw":
         critical_fol_tokens.append(c)
 
     found_ids: List[int] = []
+    found_ids_set = set()
     vocab = tokenizer.get_vocab()
     found_tokens = set()
 
@@ -129,45 +185,97 @@ def select_fol_token_ids(tokenizer, vocab_size: int) -> List[int]:
             continue
 
         # Check for exact matches
-        if decoded in critical_fol_tokens:
-            if tok_id not in found_ids:
+        if decoded in critical_fol_tokens or decoded.strip() in critical_fol_tokens:
+            if tok_id not in found_ids_set:
                 found_ids.append(tok_id)
+                found_ids_set.add(tok_id)
                 found_tokens.add(decoded)
 
-        # Check for tokens containing critical patterns
-        for critical in critical_fol_tokens:
-            if critical in decoded and tok_id not in found_ids:
-                found_ids.append(tok_id)
-                found_tokens.add(decoded)
-                break
-
-    # Second pass: add alphanumeric tokens for predicates, variables, constants
-    safe_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-    safe_punct = set(" ,.:()\n\t{}<>")
+    # Second pass: add ONLY short, well-formed tokens for FOL
+    # - Predicates: Start with uppercase, max 10 chars, only letters
+    # - Constants: Start with lowercase, 2-10 chars, only letters
+    # - Variables: Single lowercase letters (already added above)
+    # - NO long programming identifiers!
 
     scan_limit = min(50000, len(tokenizer))
 
+    # Pattern for valid predicate names (CamelCase, max 10 chars)
+    predicate_pattern = re.compile(r'^[A-Z][a-z]{0,9}$')
+    # Pattern for valid constants (lowercase, 2-10 chars)
+    constant_pattern = re.compile(r'^[a-z]{2,10}$')
+
+    # Banned substrings that indicate programming identifiers
+    banned_substrings = {
+        'Listener', 'Handler', 'Manager', 'Factory', 'Builder', 'Service',
+        'Controller', 'Repository', 'Adapter', 'Provider', 'Wrapper',
+        'Exception', 'Error', 'Thread', 'Pool', 'Cache', 'Buffer',
+        'Stream', 'Reader', 'Writer', 'Parser', 'Lexer', 'Token',
+        'Node', 'Tree', 'Graph', 'Queue', 'Stack', 'List', 'Map', 'Set',
+        'Array', 'Vector', 'Iterator', 'Pointer', 'Reference',
+        'Config', 'Setting', 'Option', 'Param', 'Arg', 'Flag',
+        'Request', 'Response', 'Client', 'Server', 'Socket', 'HTTP',
+        'JSON', 'XML', 'HTML', 'CSS', 'SQL', 'API', 'URL', 'URI',
+        'coeff', 'yyvsp', 'collider', 'frared', 'velt',
+    }
+
     for tok_id in range(scan_limit):
-        if tok_id in found_ids:
+        if tok_id in found_ids_set:
             continue
-        if len(found_ids) >= vocab_size * 2:
+        if len(found_ids) >= vocab_size:
             break
 
         try:
             decoded = tokenizer.decode([tok_id])
         except Exception:
             continue
-        if not decoded or len(decoded) > 20:
+        if not decoded:
             continue
 
         stripped = decoded.strip()
+
+        # Allow whitespace tokens
         if not stripped:
-            found_ids.append(tok_id)  # Whitespace tokens
+            if decoded and len(decoded) <= 4:  # Only short whitespace
+                found_ids.append(tok_id)
+                found_ids_set.add(tok_id)
             continue
-        if all(c in safe_chars for c in stripped):
+
+        # Skip if contains banned substrings
+        has_banned = any(banned in stripped for banned in banned_substrings)
+        if has_banned:
+            continue
+
+        # Skip if too long (max 10 chars for any token)
+        if len(stripped) > 10:
+            continue
+
+        # Check if it's a valid predicate name pattern (CamelCase, short)
+        if predicate_pattern.match(stripped):
             found_ids.append(tok_id)
-        elif all(c in safe_punct or c in safe_chars for c in decoded):
+            found_ids_set.add(tok_id)
+            continue
+
+        # Check if it's a valid constant pattern (lowercase, short)
+        if constant_pattern.match(stripped):
             found_ids.append(tok_id)
+            found_ids_set.add(tok_id)
+            continue
+
+        # Allow structural chars with optional whitespace
+        structural_chars = set("(),:{}><\n\t ")
+        if all(c in structural_chars for c in decoded):
+            found_ids.append(tok_id)
+            found_ids_set.add(tok_id)
+            continue
+
+        # Allow tokens that are partial FOL operators
+        fol_op_parts = ['forall', 'exists', 'and', 'or', 'not', 'implies', 'iff', 'xor']
+        is_fol_part = any(part.startswith(stripped.lower()) or stripped.lower().startswith(part)
+                         for part in fol_op_parts)
+        if is_fol_part and stripped.isalpha() and len(stripped) <= 8:
+            found_ids.append(tok_id)
+            found_ids_set.add(tok_id)
+            continue
 
     return found_ids[:vocab_size]
 

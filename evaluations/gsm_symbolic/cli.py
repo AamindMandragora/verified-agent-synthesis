@@ -34,7 +34,7 @@ from evaluations.gsm_symbolic.prompts import make_gsm_prompt, symbolize_question
 from evaluations.gsm_symbolic.answer_extraction import extract_answer, extract_gold_answer
 from evaluations.gsm_symbolic.grammar import build_dynamic_grammar
 from evaluations.gsm_symbolic.metrics import GSMMetrics
-from evaluations.gsm_symbolic.generation import run_crane_csd
+from evaluations.gsm_symbolic.generation import run_crane_csd, run_unconstrained
 from evaluations.gsm_symbolic.environment import (
     setup_dafny_environment,
     verify_critical_tokens,
@@ -78,6 +78,8 @@ Examples:
                     help="Debug delimiter detection")
     ap.add_argument("--random-sample", action="store_true",
                     help="Randomly sample examples instead of taking first N")
+    ap.add_argument("--unconstrained", action="store_true",
+                    help="Run unconstrained baseline instead of CSD")
     args = ap.parse_args()
 
     # Load dataset
@@ -148,11 +150,19 @@ Examples:
             if args.verbose:
                 print(f"  [DEBUG] Created dynamic parser for variables: {variables}")
             
-        out_text, tok_count, dt, constrained_segments = run_crane_csd(
-            dafny_env, prompt, args.max_steps, args.grammar, 
-            debug_delimiters=args.debug_delimiters,
-            dynamic_parser=dynamic_parser,
-        )
+        # Generate using CSD or unconstrained baseline
+        if args.unconstrained:
+            out_text, tok_count, dt = run_unconstrained(
+                dafny_env, prompt, args.max_steps,
+                debug=args.verbose,
+            )
+            constrained_segments = []
+        else:
+            out_text, tok_count, dt, constrained_segments = run_crane_csd(
+                dafny_env, prompt, args.max_steps, args.grammar, 
+                debug_delimiters=args.debug_delimiters,
+                dynamic_parser=dynamic_parser,
+            )
 
         # Extract answer
         pred_answer, valid_format, symbolic_expr = extract_answer(
@@ -214,11 +224,12 @@ Examples:
     print("\n" + "=" * 60)
     print("GSM-SYMBOLIC RESULTS")
     print("=" * 60)
-    print(f"Method: CRANE-CSD")
+    print(f"Method: {'Unconstrained Baseline' if args.unconstrained else 'CRANE-CSD'}")
     print(f"Model: {args.model}")
     print(f"Config: {args.config}")
-    print(f"CSD Run: {args.run_dir}")
-    print(f"Grammar: {args.grammar}")
+    if not args.unconstrained:
+        print(f"CSD Run: {args.run_dir}")
+        print(f"Grammar: {args.grammar}")
     print()
     print(metrics.summary())
 

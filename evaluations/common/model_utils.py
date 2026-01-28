@@ -161,12 +161,25 @@ def create_huggingface_lm(
 
         def ChooseNextToken(self):
             """Return the token with the highest logit score (constrained to vocab)."""
+            import os
+            debug = os.environ.get('CSD_MASK_DEBUG', '').lower() in ('1', 'true', 'yes')
+
             best_idx, best_val = 0, float(self.Logits[0])
             for i in range(1, self.Logits.length(0)):
                 val = float(self.Logits[i])
                 if val > best_val:
                     best_val, best_idx = val, i
-            return self._Tokens[best_idx]
+
+            chosen_token = self._Tokens[best_idx]
+            if debug:
+                # Convert Dafny Seq to string for display
+                try:
+                    token_str = ''.join(chosen_token[i] for i in range(len(chosen_token)))
+                except:
+                    token_str = str(chosen_token)
+                print(f"    [CHOOSE DEBUG] Best idx={best_idx}, logit={best_val:.2f}, token={repr(token_str)}")
+
+            return chosen_token
         
         def ChooseNextTokenUnconstrained(self):
             """Return the token with the highest logit score from FULL vocabulary."""
@@ -177,7 +190,11 @@ def create_huggingface_lm(
             return _dafny.Seq(token_text)
         
         def MaskTokensExcept(self, valid_tokens, debug=False):
-            """Mask all tokens except those in valid_tokens."""
+            """Mask all tokens except those in valid_tokens.
+
+            SAFETY: If valid_tokens is empty, falls back to keeping '>>' unmasked
+            to allow graceful closure of constrained regions.
+            """
             import os
             debug = debug or os.environ.get('CSD_MASK_DEBUG', '').lower() in ('1', 'true', 'yes')
 
@@ -200,6 +217,20 @@ def create_huggingface_lm(
             valid_set = set()
             for i in range(len(valid_tokens)):
                 valid_set.add(seq_to_str(valid_tokens[i]))
+
+            # SAFETY: If no valid tokens, fall back to allowing '>>' for graceful closure
+            # This prevents infinite garbage loops when parser returns empty
+            if len(valid_set) == 0:
+                if debug:
+                    print(f"    [MASK DEBUG] WARNING: No valid tokens! Adding '>>' as fallback")
+                # Find any token containing '>>' and add it to valid set
+                for i in range(self.Logits.length(0)):
+                    token_str = seq_to_str(self._Tokens[i])
+                    if '>>' in token_str:
+                        valid_set.add(token_str)
+                        if debug:
+                            print(f"    [MASK DEBUG] Added fallback token: {repr(token_str)}")
+                        break  # Just need one
 
             # Set logits of invalid tokens to large negative value (matches Dafny IsMasked check)
             # Use float for BigRational, not string

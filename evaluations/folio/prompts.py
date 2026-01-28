@@ -21,12 +21,12 @@ FOL_GRAMMAR_DESCRIPTION = """The grammar of the first-order logic formula is def
 8) logical existential quantification: {exists} x. These are the ONLY operations in the grammar."""
 
 
-# Few-shot examples for FOLIO evaluation (adapted for dynamic CSD)
+# Few-shot examples for FOLIO evaluation (matching CRANE paper format)
 # Each example contains:
 # - problem: The natural language premises
 # - question: The statement to evaluate (true/false/uncertain)
 # - predicates: List of predicate definitions
-# - premises: FOL encoding of premises
+# - premises: FOL encoding of premises (NO delimiters - CRANE paper format)
 # - conclusion: FOL encoding of the conclusion
 # - answer: True/False/Uncertain
 
@@ -42,12 +42,12 @@ FOLIO_FEW_SHOT_EXAMPLES = [
             ("Student(x)", "x is a student."),
         ],
         "premises": [
-            ("<<{forall} x (Drinks(x) {implies} Dependent(x))>>", "All people who regularly drink coffee are dependent on caffeine."),
-            ("<<{forall} x (Drinks(x) {xor} Jokes(x))>>", "People either regularly drink coffee or joke about being addicted to caffeine."),
-            ("<<{forall} x (Jokes(x) {implies} {not}Unaware(x))>>", "No one who jokes about being addicted to caffeine is unaware that caffeine is a drug."),
-            ("<<(Student(rina) {and} Unaware(rina)) {xor} {not}(Student(rina) {or} Unaware(rina))>>", "Rina is either a student and unaware that caffeine is a drug, or neither a student nor unaware that caffeine is a drug."),
+            ("{forall} x (Drinks(x) {implies} Dependent(x))", "All people who regularly drink coffee are dependent on caffeine."),
+            ("{forall} x (Drinks(x) {xor} Jokes(x))", "People either regularly drink coffee or joke about being addicted to caffeine."),
+            ("{forall} x (Jokes(x) {implies} {not}Unaware(x))", "No one who jokes about being addicted to caffeine is unaware that caffeine is a drug."),
+            ("(Student(rina) {and} Unaware(rina)) {xor} {not}(Student(rina) {or} Unaware(rina))", "Rina is either a student and unaware that caffeine is a drug, or neither a student nor unaware that caffeine is a drug."),
         ],
-        "conclusion": ("<<Jokes(rina) {xor} Unaware(rina)>>", "Rina is either a person who jokes about being addicted to caffeine or is unaware that caffeine is a drug."),
+        "conclusion": ("Jokes(rina) {xor} Unaware(rina)", "Rina is either a person who jokes about being addicted to caffeine or is unaware that caffeine is a drug."),
         "answer": "True",
     },
     {
@@ -64,12 +64,12 @@ FOLIO_FEW_SHOT_EXAMPLES = [
             ("Specialize(x, y)", "x specializes in y."),
         ],
         "premises": [
-            ("<<Czech(miroslav) {and} ChoralConductor(miroslav) {and} Specialize(miroslav, renaissance) {and} Specialize(miroslav, baroque)>>", "Miroslav Venhoda was a Czech choral conductor who specialized in the performance of Renaissance and Baroque music."),
-            ("<<{forall} x (ChoralConductor(x) {implies} Musician(x))>>", "Any choral conductor is a musician."),
-            ("<<{exists} x (Musician(x) {and} Love(x, music))>>", "Some musicians love music."),
-            ("<<Book(methodOfStudyingGregorianChant) {and} Author(miroslav, methodOfStudyingGregorianChant) {and} Publish(methodOfStudyingGregorianChant, year1946)>>", "Miroslav Venhoda published a book in 1946 called Method of Studying Gregorian Chant."),
+            ("Czech(miroslav) {and} ChoralConductor(miroslav) {and} Specialize(miroslav, renaissance) {and} Specialize(miroslav, baroque)", "Miroslav Venhoda was a Czech choral conductor who specialized in the performance of Renaissance and Baroque music."),
+            ("{forall} x (ChoralConductor(x) {implies} Musician(x))", "Any choral conductor is a musician."),
+            ("{exists} x (Musician(x) {and} Love(x, music))", "Some musicians love music."),
+            ("Book(methodOfStudyingGregorianChant) {and} Author(miroslav, methodOfStudyingGregorianChant) {and} Publish(methodOfStudyingGregorianChant, year1946)", "Miroslav Venhoda published a book in 1946 called Method of Studying Gregorian Chant."),
         ],
-        "conclusion": ("<<Love(miroslav, music)>>", "Miroslav Venhoda loved music."),
+        "conclusion": ("Love(miroslav, music)", "Miroslav Venhoda loved music."),
         "answer": "Uncertain",
     },
     {
@@ -88,14 +88,14 @@ FOLIO_FEW_SHOT_EXAMPLES = [
             ("Teenager(x)", "x is a teenager."),
         ],
         "premises": [
-            ("<<{forall} x (InClub(x) {and} Perform(x) {implies} Attend(x) {and} Engaged(x))>>", "People in this club who perform in school talent shows often attend and are very engaged with school events."),
-            ("<<{forall} x (InClub(x) {implies} (Perform(x) {xor} Inactive(x)))>>", "People in this club either perform in school talent shows often or are inactive and disinterested community members."),
-            ("<<{forall} x (InClub(x) {and} Chaperone(x) {implies} {not}Student(x))>>", "People in this club who chaperone high school dances are not students who attend the school."),
-            ("<<{forall} x (InClub(x) {and} Inactive(x) {implies} Chaperone(x))>>", "All people in this club who are inactive and disinterested members of their community chaperone high school dances."),
-            ("<<{forall} x (InClub(x) {and} (Young(x) {or} Teenager(x)) {and} Wish(x) {implies} Student(x))>>", "All young children and teenagers in this club who wish to further their academic careers and educational opportunities are students who attend the school."),
-            ("<<InClub(bonnie) {and} ((Attend(bonnie) {and} Engaged(bonnie) {and} Student(bonnie)) {xor} ({not}(Attend(bonnie) {and} Engaged(bonnie)) {and} {not}Student(bonnie)))>>", "Bonnie is in this club and she either both attends and is very engaged with school events and is a student who attends the school or is not someone who both attends and is very engaged with school events and is not a student who attends the school."),
+            ("{forall} x (InClub(x) {and} Perform(x) {implies} Attend(x) {and} Engaged(x))", "People in this club who perform in school talent shows often attend and are very engaged with school events."),
+            ("{forall} x (InClub(x) {implies} (Perform(x) {xor} Inactive(x)))", "People in this club either perform in school talent shows often or are inactive and disinterested community members."),
+            ("{forall} x (InClub(x) {and} Chaperone(x) {implies} {not}Student(x))", "People in this club who chaperone high school dances are not students who attend the school."),
+            ("{forall} x (InClub(x) {and} Inactive(x) {implies} Chaperone(x))", "All people in this club who are inactive and disinterested members of their community chaperone high school dances."),
+            ("{forall} x (InClub(x) {and} (Young(x) {or} Teenager(x)) {and} Wish(x) {implies} Student(x))", "All young children and teenagers in this club who wish to further their academic careers and educational opportunities are students who attend the school."),
+            ("InClub(bonnie) {and} ((Attend(bonnie) {and} Engaged(bonnie) {and} Student(bonnie)) {xor} ({not}(Attend(bonnie) {and} Engaged(bonnie)) {and} {not}Student(bonnie)))", "Bonnie is in this club and she either both attends and is very engaged with school events and is a student who attends the school or is not someone who both attends and is very engaged with school events and is not a student who attends the school."),
         ],
-        "conclusion": ("<<InClub(bonnie) {and} Perform(bonnie)>>", "Bonnie performs in school talent shows often."),
+        "conclusion": ("InClub(bonnie) {and} Perform(bonnie)", "Bonnie performs in school talent shows often."),
         "answer": "Uncertain",
     },
 ]
@@ -165,33 +165,43 @@ def format_conclusion_section(conclusion: Tuple[str, str]) -> str:
 def format_example_solution(example: Dict) -> str:
     """
     Format a complete example solution for few-shot prompting.
-    
-    This uses << >> delimiters for constrained decoding windows around FOL expressions.
+
+    Matches the CRANE paper format (no << >> delimiters in examples).
     """
+    # Get the question text for the introduction
+    question_text = example["question"]
+    # Extract just the statement part after "true, false, or uncertain?"
+    if "uncertain?" in question_text:
+        statement = question_text.split("uncertain?")[-1].strip()
+    else:
+        statement = example.get("conclusion", ("", ""))[1]
+
     # Format the predicates
     predicates_section = format_predicates_section(example["predicates"])
-    
+
     # Format the premises
     premises_section = format_premises_section(example["premises"])
-    
+
     # Format the conclusion
     conclusion_section = format_conclusion_section(example["conclusion"])
-    
-    # Combine all sections
-    solution = f"""FOL Solution:
+
+    # Combine all sections with CRANE-style introduction
+    # Include Answer at the end so the model learns to output it
+    answer = example.get("answer", "")
+    solution = f"""We take three steps: first, we define the necessary predicates and premises, and finally, we encode the question '{statement}' in the conclusion. Now, we will write only the logic program, nothing else.
 {predicates_section}
 {premises_section}
 {conclusion_section}
+Answer: {answer}"""
 
-Answer: {example["answer"]}"""
-    
     return solution
 
 
 def format_example(example: Dict) -> str:
-    """Format a complete few-shot example (problem + solution)."""
-    return f"""Question:
+    """Format a complete few-shot example (problem + solution) in CRANE paper format."""
+    return f"""Problem:
 {example["problem"]}
+Question:
 {example["question"]}
 ###
 
@@ -205,51 +215,46 @@ def make_folio_prompt(
     include_grammar_description: bool = True,
 ) -> str:
     """
-    Create a prompt for FOLIO evaluation with dynamic CSD.
-    
+    Create a prompt for FOLIO evaluation matching the CRANE paper format.
+
     Args:
         problem: The natural language premises
         question: The statement to evaluate
         num_examples: Number of few-shot examples to include
         include_grammar_description: Whether to include the FOL grammar description
-    
+
     Returns:
         The formatted prompt string
     """
-    # Start with the system instruction
+    # Start with the system instruction (CRANE paper format)
     parts = [
         "Given a problem description and a question. The task is to parse the problem and the question into first-order logic formulas."
     ]
-    
+
     # Add grammar description if requested
     if include_grammar_description:
         parts.append(FOL_GRAMMAR_DESCRIPTION)
-    
+
     parts.append("------")
     parts.append("")
-    parts.append("IMPORTANT: Follow the EXACT format shown in the examples:")
-    parts.append("1. Every FOL formula MUST be enclosed in << >> delimiters")
-    parts.append("2. Use {forall}, {exists}, {and}, {or}, {not}, {implies}, {iff}, {xor} for logical operators")
-    parts.append("3. Predicates start with uppercase letters: Predicate(x)")
-    parts.append("4. Variables are single lowercase letters: x, y, z")
+    parts.append("Answer the question EXACTLY like the examples.")
     parts.append("")
-    
+
     # Add few-shot examples
     examples_to_use = FOLIO_FEW_SHOT_EXAMPLES[:num_examples]
     for example in examples_to_use:
         parts.append(format_example(example))
         parts.append("------")
         parts.append("")
-    
-    # Add the actual problem
-    parts.append(f"""Question:
+
+    # Add the actual problem (CRANE paper format)
+    parts.append(f"""Problem:
 {problem}
+Question:
 {question}
 ###
-
-Parse this problem into FOL. Define predicates, encode premises with <<FOL>> ::: description format, encode conclusion, then give Answer: True/False/Uncertain.
 """)
-    
+
     return "\n".join(parts)
 
 

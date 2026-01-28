@@ -38,6 +38,8 @@ from evaluations.folio.prompts import make_folio_prompt
 from evaluations.folio.answer_extraction import (
     extract_answer,
     is_valid_fol_structure,
+    is_valid_fol_semantics,
+    validate_fol_predicates,
     check_answer_correctness,
 )
 from evaluations.folio.grammar import (
@@ -57,6 +59,8 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
 def main():
+    import os
+
     ap = argparse.ArgumentParser(
         description="Evaluate FOLIO with CRANE-CSD",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -99,6 +103,8 @@ Examples:
                     help="Show per-example details")
     ap.add_argument("--debug-delimiters", action="store_true",
                     help="Debug delimiter detection")
+    ap.add_argument("--debug-csd", action="store_true",
+                    help="Debug CSD constrained generation")
     ap.add_argument("--synthetic", action="store_true",
                     help="Use synthetic examples for testing")
     ap.add_argument("--json-path", type=Path,
@@ -108,6 +114,12 @@ Examples:
     ap.add_argument("--unconstrained", action="store_true",
                     help="Run unconstrained baseline instead of CSD")
     args = ap.parse_args()
+
+    # Enable debug environment variables if --debug-csd is set
+    if args.debug_csd:
+        os.environ['CSD_MASK_DEBUG'] = '1'
+        os.environ['CSD_FOL_DEBUG'] = '1'
+        print("[DEBUG] CSD debug mode enabled")
 
     # Load dataset
     print("Loading dataset...")
@@ -214,24 +226,39 @@ Examples:
                 dafny_env, prompt, args.max_steps, args.grammar,
                 debug_delimiters=args.debug_delimiters,
                 dynamic_parser=dynamic_parser,
+                debug_csd=args.debug_csd,
             )
 
         # Extract answer
         pred_answer = extract_answer(out_text)
         
-        # Check structure validity
+        # Check structure validity (has all required sections)
         valid_structure = is_valid_fol_structure(out_text)
+        
+        # Check semantic validity (uses only defined predicates)
+        valid_semantics = is_valid_fol_semantics(out_text)
+        pred_valid, defined_preds, undefined_preds = validate_fol_predicates(out_text)
+        
+        # Re-validate constrained segments using semantic check
+        # A segment is semantically valid only if all predicates it uses are defined
+        from evaluations.folio.answer_extraction import extract_used_predicates
+        semantically_valid_segments = []
+        for segment_text, syntactic_valid in constrained_segments:
+            used_preds = extract_used_predicates(segment_text)
+            undefined_in_segment = used_preds - defined_preds
+            semantic_valid = len(undefined_in_segment) == 0 and syntactic_valid
+            semantically_valid_segments.append((segment_text, semantic_valid))
         
         # Check correctness
         is_correct = check_answer_correctness(pred_answer, gold_label)
 
-        # Update metrics
+        # Update metrics - use semantically validated segments
         metrics.update(
             predicted=pred_answer,
             gold=gold_label,
             is_correct=is_correct,
             valid_structure=valid_structure,
-            fol_segments=constrained_segments,
+            fol_segments=semantically_valid_segments,  # Use semantic validation
             time_seconds=dt,
             tokens=tok_count,
             example_id=example.id,
@@ -243,10 +270,10 @@ Examples:
         eta_seconds = avg_time * remaining
         eta_str = f"{eta_seconds:.0f}s" if eta_seconds < 60 else f"{eta_seconds/60:.1f}m"
 
-        # Progress
+        # Progress - show semantic validity which is stricter
         print(f"  -> Tokens: {tok_count} | Time: {dt:.2f}s | "
               f"Pred: {pred_answer} | Gold: {gold_label} | "
-              f"Correct: {is_correct} | Valid: {valid_structure} | "
+              f"Correct: {is_correct} | Struct: {valid_structure} | Semantic: {valid_semantics} | "
               f"Acc: {metrics.accuracy * 100:.1f}% | ETA: {eta_str}", flush=True)
 
         if args.verbose or (not is_correct and i < 5):
@@ -255,6 +282,9 @@ Examples:
             print(f"  Output: {out_text[:500]}...")
             if constrained_segments:
                 print(f"  FOL segments: {constrained_segments[:3]}")
+            if undefined_preds:
+                print(f"  WARNING - Undefined predicates used: {undefined_preds}")
+                print(f"  Defined predicates: {defined_preds}")
             print()
 
     # Final results

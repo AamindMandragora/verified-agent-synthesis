@@ -306,3 +306,89 @@ def run_crane_csd(
             print(f"  [DEBUG] WARNING: Hit max_steps limit ({max_steps})")
     
     return output_text, len(result_tokens), end_time - start_time, constrained_segments
+
+
+def run_unconstrained(
+    env: dict,
+    prompt_text: str,
+    max_steps: int,
+    debug: bool = False,
+) -> Tuple[str, int, float]:
+    """
+    Run unconstrained generation without CSD.
+    
+    This is the baseline CRANE approach - generates freely without
+    grammar constraints in the << >> windows.
+    
+    Args:
+        env: Environment dict with Dafny modules and model
+        prompt_text: The prompt text
+        max_steps: Maximum generation steps
+        debug: Whether to print debug output
+        
+    Returns:
+        Tuple of (output_text, token_count, time_seconds)
+    """
+    _dafny = env["_dafny"]
+    lm = env["lm"]
+    
+    result_tokens: List[str] = []
+    
+    lm.instruction_text = make_chatml_instruction(prompt_text)
+    start_time = time.time()
+    
+    eos_tokens = ["<EOS>", "<|im_end|>", "</s>"]
+    min_tokens_before_eos = 20
+    
+    # Repetition detection
+    recent_text_window = []
+    
+    for step in range(max_steps):
+        dafny_prefix = _dafny.SeqWithoutIsStrInference(result_tokens)
+        lm.GenerateLogits(dafny_prefix)
+        token = lm.ChooseNextTokenUnconstrained()
+        token_str = dafny_seq_to_str(token)
+        result_tokens.append(token_str)
+        
+        # Check for EOS
+        if token_str in eos_tokens and step >= min_tokens_before_eos:
+            break
+        
+        # Check for #### termination (GSM-specific)
+        joined = "".join(result_tokens[-30:])
+        if "####" in joined:
+            # Continue for a few more tokens to capture the answer
+            for _ in range(min(15, max_steps - step - 1)):
+                dafny_prefix = _dafny.SeqWithoutIsStrInference(result_tokens)
+                lm.GenerateLogits(dafny_prefix)
+                token = lm.ChooseNextTokenUnconstrained()
+                token_str = dafny_seq_to_str(token)
+                result_tokens.append(token_str)
+                if token_str in eos_tokens or token_str == "\n":
+                    break
+            break
+        
+        # Detect repetitive loops
+        recent_text_window.append(token_str)
+        if len(recent_text_window) > 100:
+            recent_text_window.pop(0)
+        
+        if step > 20:
+            for pattern_len in [5, 10, 15, 20]:
+                if len(result_tokens) >= pattern_len * 3:
+                    last_pattern = result_tokens[-pattern_len:]
+                    prev_pattern = result_tokens[-pattern_len*2:-pattern_len]
+                    prev_prev_pattern = result_tokens[-pattern_len*3:-pattern_len*2]
+                    if last_pattern == prev_pattern == prev_prev_pattern:
+                        if debug:
+                            pattern_text = "".join(last_pattern)
+                            print(f"  [DEBUG] WARNING: Detected repetitive loop at step {step}")
+                        break
+            else:
+                continue
+            break
+    
+    end_time = time.time()
+    output_text = "".join(result_tokens)
+    
+    return output_text, len(result_tokens), end_time - start_time

@@ -1,0 +1,8 @@
+{
+  "strategy_code": "// CSD_RATIONALE_BEGIN\n// For the given use-case, we need to generate short symbolic mathematical expressions that strictly adhere to a recursive arithmetic grammar with variables and numeric constants. Since the expressions must be complete and contain at least one variable, and the grammar is recursive but depth-bounded, a hybrid approach seems appropriate. We want to mostly stay constrained while occasionally allowing some unconstrained tokens to explore new possibilities safely. An interval of N=5 balances exploration versus constraint adherence well.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 5);",
+  "tool_choice_rationale": "For the given use-case, we need to generate short symbolic mathematical expressions that strictly adhere to a recursive arithmetic grammar with variables and numeric constants. Since the expressions must be complete and contain at least one variable, and the grammar is recursive but depth-bounded, a hybrid approach seems appropriate. We want to mostly stay constrained while occasionally allowing some unconstrained tokens to explore new possibilities safely. An interval of N=5 balances exploration versus constraint adherence well.",
+  "dafny_file": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260122_161258_d0a463/gsm_csd_1.dfy",
+  "compiled_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260122_161258_d0a463/gsm_csd_1",
+  "total_attempts": 1,
+  "timestamp": "2026-01-22T16:13:19.643974"
+}
