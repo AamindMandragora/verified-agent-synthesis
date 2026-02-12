@@ -98,6 +98,18 @@ python run_synthesis.py --compile-only --output-name my_strategy
 
 ---
 
+## Formal Verification with Dafny
+
+The core of the synthesis pipeline is the VerifiedAgentSynthesis.dfy module, which defines the formal semantics of:
+- **Language Models (LM)**: Modeled as stateful agents that produce logits and can be masked.
+- **Parsers**: Defined by their ability to validate prefixes and suggest valid next tokens.
+- **Decoding Steps**: Formally specified unconstrained and constrained steps that preserve safety invariants.
+- **Hybrid Strategies**: Complex generation loops like `CraneGeneration` that are proven to terminate and satisfy cost bounds.
+
+By synthesizing strategies in Dafny, we ensure that the generated Python code is not only correct by construction but also adheres to the formal constraints required by the task.
+
+---
+
 ## Project Structure
 
 ```
@@ -447,16 +459,17 @@ python scripts/comprehensive_eval.py --skip-baseline --output results.json
 | `prompts.py` | CRANE-style prompt formatting, variable extraction |
 | `answer_extraction.py` | Answer extraction with multiple fallback strategies |
 | `grammar.py` | Dynamic grammar construction for specific variables |
-| `generation.py` | CSD generation method (CRANE-CSD) |
+| `generation.py` | Unified generation using verified Dafny `CraneGeneration` |
 | `environment.py` | Dafny environment setup and module loading |
 | `metrics.py` | Evaluation metrics (accuracy, format validity, etc.) |
 | `cli.py` | Command-line interface |
 
 **Key Features**:
-- **CRANE-style dynamic switching**: Unconstrained reasoning until `<<` delimiter detected, then CSD-constrained math generation, resume unconstrained until `####`
-- **Robust answer extraction**: Multiple fallback strategies (from `####`, from `<< >>` calculations, from last numbers)
-- **Smart delimiter detection**: Handles tokenization issues (split delimiters, cooldown to prevent re-detection)
-- **Repetition detection**: Early stopping when model gets stuck in loops
+- **Verified CRANE-style Generation**: The entire reasoning-math-reasoning loop is now formally verified in Dafny (`CraneGeneration`). It handles unconstrained reasoning until `<<` is detected, then switches to grammar-constrained math, and resumes unconstrained reasoning after `>>`.
+- **Early EOS Handling**: The verified strategy correctly handles end-of-sequence tokens during both unconstrained and constrained phases, preventing infinite loops.
+- **Robust Delimiter Detection**: Uses substring matching (`Contains`) to detect delimiters even when they are part of larger tokens (e.g., `" <<"`), ensuring reliable state transitions.
+- **Draconian Math Constraints**: The parser implementation includes strict limits on expression depth and repetition to prevent common failure modes in LLM math generation.
+- **Robust Answer Extraction**: Multiple fallback strategies (from `####`, from `<< >>` calculations, from last numbers).
 
 **Metrics**:
 - Answer accuracy (exact numeric match)

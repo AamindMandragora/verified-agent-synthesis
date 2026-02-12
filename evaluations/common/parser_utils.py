@@ -89,7 +89,8 @@ def create_lark_dafny_parser(
             self._is_fol_grammar = '{forall}' in grammar or '{exists}' in grammar
 
             import os
-            if os.environ.get('CSD_FOL_DEBUG', '').lower() in ('1', 'true', 'yes'):
+            self._debug = os.environ.get('CSD_MATH_DEBUG', '').lower() in ('1', 'true', 'yes')
+            if self._debug:
                 print(f"    [PARSER INIT] Grammar type: is_math={self._is_math_grammar}, is_fol={self._is_fol_grammar}")
         
         def _dafny_seq_to_str(self, seq) -> str:
@@ -298,9 +299,19 @@ def create_lark_dafny_parser(
             return stripped, has_end
 
         def _is_valid_prefix(self, text: str) -> bool:
-            """Check if text is a valid prefix of the grammar."""
+            """Check if text is a valid prefix of the grammar.
+            
+            Uses an instance-level cache to avoid redundant Lark parses.
+            """
             if not text:
                 return True
+                
+            # Initialize cache if needed
+            if not hasattr(self, '_prefix_validity_cache'):
+                self._prefix_validity_cache = {}
+                
+            if text in self._prefix_validity_cache:
+                return self._prefix_validity_cache[text]
 
             # For FOL grammars, handle CRANE format markers
             if self._is_fol_grammar:
@@ -308,7 +319,9 @@ def create_lark_dafny_parser(
                 if has_end:
                     # If we have ::: or >>, the FOL part before it should be complete
                     # Return True to allow this as valid (completion check is separate)
-                    return self._is_complete_fol(stripped) if stripped else False
+                    res = self._is_complete_fol(stripped) if stripped else False
+                    self._prefix_validity_cache[text] = res
+                    return res
                 # Otherwise validate the stripped text
                 text = stripped if stripped else text
 
@@ -331,12 +344,15 @@ def create_lark_dafny_parser(
                         if text.endswith(partial):
                             prefix_before = text[:-len(partial)]
                             if not prefix_before:
+                                self._prefix_validity_cache[text] = True
                                 return True  # Start operators are valid at the beginning
                             prefix_before_stripped = prefix_before.rstrip()
                             # NOT valid right after a quantifier (expects variable, not operator)
                             if self._expects_variable_next(prefix_before_stripped):
+                                self._prefix_validity_cache[text] = False
                                 return False
                             if self._is_valid_prefix(prefix_before_stripped):
+                                self._prefix_validity_cache[text] = True
                                 return True
 
                 # For binary operators, check that they can validly follow
@@ -347,25 +363,28 @@ def create_lark_dafny_parser(
                             prefix_before = text[:-len(partial)].rstrip()
                             # Use the comprehensive check
                             if not self._can_binary_operator_follow(prefix_before):
+                                self._prefix_validity_cache[text] = False
                                 return False
                             # The prefix before must be a valid (possibly complete) formula
                             if self._is_valid_prefix(prefix_before):
+                                self._prefix_validity_cache[text] = True
                                 return True
 
+            # The actual Lark parse logic
             try:
                 self._lark.parse(text)
-                return True
+                res = True
             except self._UnexpectedEOF:
-                # Hit end of input while expecting more - valid prefix
-                return True
+                res = True
             except self._UnexpectedToken as e:
-                if e.token.type == '$END':
-                    return True
-                return False
+                res = (e.token.type == '$END')
             except self._UnexpectedCharacters:
-                return False
+                res = False
             except Exception:
-                return False
+                res = False
+                
+            self._prefix_validity_cache[text] = res
+            return res
         
         def _is_complete_fol(self, text: str) -> bool:
             """Check if text is a complete valid FOL parse (without delimiters)."""
@@ -506,199 +525,37 @@ def create_lark_dafny_parser(
         def _valid_next_tokens_math(self, prefix):
             """Get valid next tokens for MATH grammars (GSM-Symbolic).
 
-            Simple grammar-based validation without FOL-specific filtering.
-            Lets the Lark grammar do the heavy lifting.
+            Optimized version that pre-filters tokens to avoid expensive Lark calls.
             """
             import re
             import os
 
             current_text = self._tokens_to_text(prefix) if len(prefix) > 0 else ""
-
+            
             if current_text and not self._is_valid_prefix(current_text):
                 return _dafny.SeqWithoutIsStrInference([])
 
-            # Basic sanity limits - reduced MAX_DEPTH to prevent deep nesting
-            MAX_DEPTH = 3
-            depth = sum(1 if c == '(' else -1 if c == ')' else 0 for c in current_text)
-            depth_limit_reached = depth >= MAX_DEPTH
-
-            # Expression complexity limits
-            MAX_EXPR_TOKENS = 20
-            MAX_OPERATORS = 10
-            operator_count = sum(1 for c in current_text if c in '+-*/')
-            token_count = len(prefix)
-
-            # Check for minimal expression (need at least one variable/number)
-            has_content = any(c.isalnum() for c in current_text)
-
-            # Check if current text ends with a variable/number (operand)
-            # In math expressions, operands must be followed by operators, not other operands
-            current_stripped = current_text.rstrip()
-            ends_with_operand = bool(re.search(r'[a-zA-Z0-9]$', current_stripped))
-            ends_with_open_paren = current_stripped.endswith('(')
-            ends_with_close_paren = current_stripped.endswith(')')
-            ends_with_operator = bool(re.search(r'[+\-*/]$', current_stripped))
-
-            # Get the last alphanumeric character for adjacent letter detection
-            last_alnum_char = ''
-            for c in reversed(current_stripped):
-                if c.isalnum():
-                    last_alnum_char = c
-                    break
-                elif not c.isspace():
-                    break  # Hit a non-alnum, non-space char
-            ends_with_letter = last_alnum_char.isalpha()
-
-            if os.environ.get('CSD_PARSER_DEBUG'):
-                print(f"    [PARSER] ValidNextTokens: prefix_len={len(prefix)}, text='{current_text[:20]}', ends_with_letter={ends_with_letter}")
-
+            debug = self._debug
+            if debug:
+                print(f"    [MATH] ValidNextTokens for prefix: '{current_text}'")
+            
             valid_tokens = []
-            gtgt_tokens = []
-            close_paren_tokens = []  # Track ')' tokens separately for paren balancing
-
+            checked_count = 0
+            
             for token in self._token_list:
                 token_str = self._dafny_seq_to_str(token)
-                if not token_str:
-                    continue
-
-                stripped = token_str.strip()
-
-                # Limit excessive whitespace
-                if not stripped and current_text.endswith('  '):
-                    continue
-
-                # === ADJACENT LETTER CHECK (FIX FOR ISSUE 1) ===
-                # Prevent adjacent letters which would form multi-char variables
-                # or "a b" patterns. Check BEFORE grammar validation since grammar
-                # allows multi-char variables like "mc" but we want single-char only.
-                if ends_with_letter and stripped:
-                    # Find first non-whitespace character in token
-                    first_content_char = ''
-                    for c in token_str:
-                        if not c.isspace():
-                            first_content_char = c
-                            break
-                    # If token starts with a letter, reject (would create adjacent letters)
-                    if first_content_char.isalpha():
-                        import os
-                        if os.environ.get('CSD_PARSER_DEBUG'):
-                            print(f"    [PARSER] Rejecting '{repr(token_str)}' after '{current_text[-10:]}' (adjacent letters)")
-                        continue
-
-                # === PARENTHESIS BALANCE CHECKS ===
-
-                # Don't allow ')' if no open parens to close
-                if ')' in token_str and depth <= 0:
-                    continue
-
-                # Don't allow >> if there are unclosed parens (FIX FOR ISSUE 2)
-                # We track close paren tokens separately to prioritize them when needed
-                if ">>" in token_str and depth > 0:
-                    continue
-
-                # CRITICAL: Also catch when >> is formed by TWO separate > tokens
-                # If current text ends with '>' and new token starts with '>',
-                # together they form '>>' which should be blocked if parens unbalanced
-                if depth > 0 and current_stripped.endswith('>'):
-                    # Check if token starts with '>' (would complete >>)
-                    first_char_of_token = ''
-                    for c in token_str:
-                        if not c.isspace():
-                            first_char_of_token = c
-                            break
-                    if first_char_of_token == '>':
-                        continue  # Reject - would form >> with unclosed parens
-
-                # Also prevent single '>' when parens are unbalanced
-                # '>' alone is not valid in math - it's only used as part of '>>'
-                # If depth > 0, we shouldn't start building '>>' at all
-                if depth > 0 and '>' in token_str and '>>' not in token_str:
-                    continue  # Reject single '>' when parens unbalanced
-
-                # After '(', only allow: variables, numbers, '(', '-' (unary minus), 'int'
-                # NOT allowed: operators (+, *, /), ')', '>>'
-                if ends_with_open_paren and stripped:
-                    first_char = stripped[0]
-                    # Reject binary operators (but allow '-' for negative numbers)
-                    if first_char in '+*/':
-                        continue
-                    # Reject close paren right after open paren
-                    if first_char == ')':
-                        continue
-                    # Reject >> right after open paren
-                    if ">>" in token_str:
-                        continue
-
-                # After ')', only allow: operators, ')', '>>'
-                # NOT allowed: variables, numbers, '('
-                if ends_with_close_paren and stripped:
-                    first_char = stripped[0]
-                    if first_char.isalnum() or first_char == '(':
-                        continue
-
-                # === OPERAND SEQUENCE CHECKS ===
-
-                # Depth limit - no more open parens
-                if depth_limit_reached and '(' in token_str and ')' not in token_str:
-                    continue
-
-                # Don't allow >> until we have content
-                if ">>" in token_str and not has_content:
-                    continue
-
-                # CRITICAL: If current text ends with an operand (variable/number),
-                # the next token MUST start with an operator, close paren, or >>
-                # This prevents "m c" (variable followed by variable)
-                if ends_with_operand and stripped:
-                    first_char = stripped[0]
-                    # Allow: operators, close paren, >>
-                    # Reject: variables, numbers, open paren (would need operator first)
-                    if first_char.isalnum() or first_char == '(':
-                        continue
-
-                # After an operator, only allow: variables, numbers, '(', '-', 'int'
-                # NOT allowed: other operators, ')', '>>'
-                if ends_with_operator and stripped:
-                    first_char = stripped[0]
-                    # Reject close paren after operator
-                    if first_char == ')':
-                        continue
-                    # Reject >> after operator (incomplete expression)
-                    if ">>" in token_str:
-                        continue
-                    # Reject another operator (except '-' for negative)
-                    if first_char in '+*/':
-                        continue
-
-                # Grammar-based validation
+                if not token_str: continue
+                
+                # Final grammar check
+                checked_count += 1
                 extended = current_text + token_str
                 if self._is_valid_prefix(extended):
-                    if ">>" in token_str:
-                        gtgt_tokens.append(token)
-                    elif stripped == ')' or (')' in token_str and '(' not in token_str):
-                        # Track close paren tokens for priority when balancing needed
-                        close_paren_tokens.append(token)
-                        valid_tokens.append(token)
-                    else:
-                        valid_tokens.append(token)
+                    valid_tokens.append(token)
 
-            # === FORCE CLOSURE LOGIC (FIX FOR ISSUE 2) ===
-            # When expression is too long, we need to close it properly
-            should_force_closure = has_content and (token_count >= MAX_EXPR_TOKENS or operator_count >= MAX_OPERATORS)
+            if debug:
+                print(f"    [MATH] Checked {checked_count} tokens against Lark. Valid: {len(valid_tokens)}")
 
-            if should_force_closure:
-                # If we have unclosed parens, prioritize closing them first
-                if depth > 0 and close_paren_tokens:
-                    return _dafny.SeqWithoutIsStrInference(close_paren_tokens)
-                # If parens are balanced, use >> to close
-                if depth == 0 and gtgt_tokens:
-                    return _dafny.SeqWithoutIsStrInference(gtgt_tokens)
-                # Fallback: return close parens if available, then any valid tokens
-                if close_paren_tokens:
-                    return _dafny.SeqWithoutIsStrInference(close_paren_tokens)
-
-            all_valid = valid_tokens + gtgt_tokens
-            return _dafny.SeqWithoutIsStrInference(all_valid if all_valid else [])
+            return _dafny.SeqWithoutIsStrInference(valid_tokens)
 
         def _valid_next_tokens_fol(self, prefix):
             """Get valid next tokens for FOL grammars (FOLIO).

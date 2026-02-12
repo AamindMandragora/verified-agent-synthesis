@@ -52,15 +52,19 @@ def load_compiled_modules(run_dir: Path):
     
     module_dir = run_dir / "generated_csd"
     if not module_dir.exists():
-        # Fallback to gsm_crane_csd or try to find the directory
-        module_dir = run_dir / "gsm_crane_csd"
-        if not module_dir.exists():
-            # Try to find any directory that contains GeneratedCSD.py
-            found = list(run_dir.glob("*/GeneratedCSD.py"))
-            if found:
-                module_dir = found[0].parent
-            else:
-                raise FileNotFoundError(f"Compiled module directory not found in {run_dir}")
+        # Check if GeneratedCSD.py is directly in run_dir
+        if (run_dir / "GeneratedCSD.py").exists():
+            module_dir = run_dir
+        else:
+            # Fallback to gsm_crane_csd or try to find the directory
+            module_dir = run_dir / "gsm_crane_csd"
+            if not module_dir.exists():
+                # Try to find any directory that contains GeneratedCSD.py
+                found = list(run_dir.glob("*/GeneratedCSD.py"))
+                if found:
+                    module_dir = found[0].parent
+                else:
+                    raise FileNotFoundError(f"Compiled module directory not found in {run_dir}")
     
     if str(module_dir) not in sys.path:
         sys.path.insert(0, str(module_dir))

@@ -134,11 +134,36 @@ def create_huggingface_lm(
             # Store full logits for unconstrained generation
             self._full_logits = None
 
+        def _to_str(self, obj):
+            """Convert a Dafny object (potentially a Seq of chars) to a Python string."""
+            if isinstance(obj, str):
+                return obj
+            try:
+                # Dafny Seqs of chars can be converted by joining their elements
+                return "".join(obj[i] for i in range(len(obj)))
+            except:
+                return str(obj)
+
         def GenerateLogits(self, input_prefix):
             """Compute logits for the next token given a prefix."""
-            prefix_text = "".join(str(input_prefix[i]) for i in range(len(input_prefix)))
+            import os
+            debug = os.environ.get('CSD_MASK_DEBUG', '').lower() in ('1', 'true', 'yes')
+
+            # Correctly handle Dafny sequences which might contain char sequences
+            prefix_parts = []
+            for i in range(len(input_prefix)):
+                prefix_parts.append(self._to_str(input_prefix[i]))
+            prefix_text = "".join(prefix_parts)
+            
+            full_prompt = self.instruction_text + prefix_text
+            
+            if debug and len(input_prefix) <= 5:
+                print(f"    [GENERATE DEBUG] Step {len(input_prefix)} prompt tail:\n...{full_prompt[-200:]}")
+                if len(input_prefix) == 0:
+                    print(f"    [GENERATE DEBUG] Full initial prompt length: {len(full_prompt)}")
+
             inputs = self.tokenizer(
-                self.instruction_text + prefix_text,
+                full_prompt,
                 return_tensors="pt",
                 add_special_tokens=False,
             )
@@ -183,34 +208,35 @@ def create_huggingface_lm(
         
         def ChooseNextTokenUnconstrained(self):
             """Return the token with the highest logit score from FULL vocabulary."""
+            import os
+            debug = os.environ.get('CSD_MASK_DEBUG', '').lower() in ('1', 'true', 'yes')
+
             if self._full_logits is None:
                 raise RuntimeError("Must call GenerateLogits before ChooseNextTokenUnconstrained")
             best_idx = int(self._full_logits.argmax().item())
             token_text = self.tokenizer.decode([best_idx])
+            
+            if debug:
+                print(f"    [UNCONSTRAINED DEBUG] chosen_token={repr(token_text)}")
+
             return _dafny.Seq(token_text)
         
         def MaskTokensExcept(self, valid_tokens, debug=False):
             """Mask all tokens except those in valid_tokens.
-
-            SAFETY: If valid_tokens is empty, falls back to keeping '>>' unmasked
-            to allow graceful closure of constrained regions.
+            
+            This implementation follows the Dafny specification strictly.
             """
             import os
             debug = debug or os.environ.get('CSD_MASK_DEBUG', '').lower() in ('1', 'true', 'yes')
 
             # Helper to convert Dafny Seq to string
-            # IMPORTANT: Dafny.Seq has __len__ and __getitem__ but NOT __iter__
-            # So ''.join(seq) fails - we must use index-based iteration
             def seq_to_str(seq):
                 try:
-                    # First try direct join (works for Python strings/lists)
                     return ''.join(seq)
                 except TypeError:
-                    # Dafny.Seq doesn't support iteration - use index-based access
                     try:
                         return ''.join(seq[i] for i in range(len(seq)))
-                    except (TypeError, AttributeError, IndexError):
-                        # Last resort - shouldn't happen but be safe
+                    except:
                         return str(seq)
 
             # Get the set of valid token strings
@@ -218,36 +244,17 @@ def create_huggingface_lm(
             for i in range(len(valid_tokens)):
                 valid_set.add(seq_to_str(valid_tokens[i]))
 
-            # SAFETY: If no valid tokens, fall back to allowing '>>' for graceful closure
-            # This prevents infinite garbage loops when parser returns empty
-            if len(valid_set) == 0:
-                if debug:
-                    print(f"    [MASK DEBUG] WARNING: No valid tokens! Adding '>>' as fallback")
-                # Find any token containing '>>' and add it to valid set
-                for i in range(self.Logits.length(0)):
-                    token_str = seq_to_str(self._Tokens[i])
-                    if '>>' in token_str:
-                        valid_set.add(token_str)
-                        if debug:
-                            print(f"    [MASK DEBUG] Added fallback token: {repr(token_str)}")
-                        break  # Just need one
-
-            # Set logits of invalid tokens to large negative value (matches Dafny IsMasked check)
-            # Use float for BigRational, not string
-            mask_value = _dafny.BigRational(float(-1e9))
+            # Mask everything not in the valid set
+            masked_val = _dafny.BigRational(-1000000000, 1) # -1e9
+            
             masked_count = 0
-            kept_count = 0
             for i in range(self.Logits.length(0)):
                 token_str = seq_to_str(self._Tokens[i])
                 if token_str not in valid_set:
-                    self.Logits[i] = mask_value
+                    self.Logits[i] = masked_val
                     masked_count += 1
-                else:
-                    kept_count += 1
-
+            
             if debug:
-                print(f"    [MASK DEBUG] Valid tokens: {len(valid_set)}, Masked: {masked_count}, Kept: {kept_count}")
-                if len(valid_set) <= 10:
-                    print(f"    [MASK DEBUG] Valid set: {valid_set}")
+                print(f"    [MASK DEBUG] Masked {masked_count} tokens, {len(valid_set)} remain valid.")
 
     return HuggingFaceLM(model, tokenizer, tokens_dafny, token_ids, input_device)

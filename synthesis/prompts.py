@@ -19,7 +19,8 @@ The generator expects these entrypoints:
 #
 # The output may be a multi-line Dafny method body. It must assign the out-parameter
 # `generated` and satisfy the method's contract. A common minimal shape is:
-#   generated := CSDHelpers.<Strategy>(lm, parser, prompt, maxSteps, ...);
+#   generated := helpers.<Strategy>(lm, parser, prompt, maxSteps, ...);
+#   cost := helpers.cost;
 
 
 SYSTEM_PROMPT = """\
@@ -28,7 +29,7 @@ You are generating a *constrained decoding strategy implementation* for a specif
 
 You must output ONLY the Dafny method body for:
 
-  method MyCSDStrategy(lm: LM, parser: Parser, prompt: Prefix, maxSteps: nat) returns (generated: Prefix)
+  method MyCSDStrategy(lm: LM, parser: Parser, prompt: Prefix, maxSteps: nat) returns (generated: Prefix, cost: int)
     modifies lm.Logits
     requires lm.ValidTokensIdsLogits()
     requires parser.IsValidPrefix([])
@@ -37,97 +38,81 @@ You must output ONLY the Dafny method body for:
     ensures |generated| <= maxSteps
     ensures parser.IsValidPrefix(generated)
     ensures |generated| == maxSteps || parser.IsCompletePrefix(generated)
+    // PLUS a user-defined cost contract (ensures clause)
+    // PLUS a default cost bound like `ensures cost <= 2 * maxSteps`
 
 Important constraints:
 - Output MUST be valid Dafny statements (end statements with ';').
 - Initialize/assign the out-parameter `generated`.
-- Do NOT redeclare `generated` as a local variable. It is already the method out-parameter.
-- Prefer using the verified helper strategies in `CSDHelpers` (below). You may write
-  multiple statements (locals, loops, if/else) and compose helper calls, but do NOT
-  invent new helpers.
+- Initialize/assign the out-parameter `cost` (e.g., `cost := helpers.cost;`).
+- Do NOT redeclare `generated` or `cost` as local variables. They are already method out-parameters.
+- You MUST use the `helpers` instance (type `CSDHelpers`) which is already instantiated for you.
+- Do NOT use `CSDHelpers.<Method>` (static call); use `helpers.<Method>` (instance call).
+- `CSDHelpers` now tracks `cost: int`. Every helper call increments `helpers.cost`.
+- Your generated code will be checked against the cost contract.
 - Be constraint-driven: choose the strategy/parameters based on the parser strictness
-  and the method contract (valid prefix, completion, and maxSteps bound), not based
-  on any canned examples.
+  and the method contract, not based on any canned examples.
 
 CRITICAL TYPE CONSTRAINTS:
-- `prompt` is type `Prefix` (which is `seq<Token>`), NOT a string. You CANNOT concatenate
-  strings to it (e.g., `prompt + "\\n"` is a TYPE ERROR).
+- `prompt` is type `Prefix` (which is `seq<Token>`), NOT a string.
 - Do NOT try to manually construct output by appending text. The CSDHelpers methods handle
-  token generation - you just call them with the right parameters.
+  token generation.
 - The `parser` enforces structural validity automatically during generation.
+
 CRITICAL DAFNY SYNTAX:
-- In Dafny, sequence concatenation uses `+` (e.g., `a + b`). Do NOT use `++` (it is invalid
-  and commonly triggers parse errors like `invalid UnaryExpression`).
-
-## Non-triviality (encouraged)
-If more than one helper could reasonably fit the use-case, prefer a **multi-statement** method body
-(e.g., `var` locals + if/else composition) rather than a single one-line helper call. This helps
-express adaptive behavior (e.g., based on `maxSteps`) while remaining verification-friendly.
-Avoid writing custom loops unless truly necessary; prefer composing verified helpers.
-
-To avoid "fake" multi-line outputs, note:
-- A local-temp wrapper around a single helper call (e.g., `var temp; temp := Helper(...); generated := temp;`) is considered **too trivial**.
-- Prefer an `if/else` where the branches **meaningfully differ** (different helper and/or different parameters), typically gated on `maxSteps`.
+- In Dafny, sequence concatenation uses `+` (e.g., `a + b`). Do NOT use `++`.
 
 ## REQUIRED: rationale block (must be included in EVERY output)
-Your output MUST begin with a short, parseable rationale comment block explaining why you chose the
-specific helper(s)/patterns/parameters you did:
+Your output MUST begin with a short, parseable rationale comment block:
 
 // CSD_RATIONALE_BEGIN
-// <1-6 lines of explanation. Must mention which CSDHelpers helper(s) you chose and why.
-//  If you used a numeric parameter N (interval/window/steps), explain why that value/range fits.>
+// <explanation of strategy and parameters>
 // CSD_RATIONALE_END
 
-After this comment block, output the Dafny statements for the strategy body.
-Do NOT omit these markers. Do NOT use /* */ for this block. Use '//' on every rationale line.
+After this, output the Dafny statements for the strategy body.
 
-## Available VERIFIED strategy helpers (pick what fits; tune parameters)
+## Available VERIFIED strategy helpers (use `helpers.<Method>`)
 
-1) Pure constrained (static baseline-like):
-  generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
+1) Pure constrained:
+  generated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
 
 2) Optimistic then fallback:
-  generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, N);
-N in [1..20], and MUST satisfy N <= maxSteps (guard with if/else or use a small N like 3-5).
+  generated := helpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, N);
+N in [1..20], N <= maxSteps.
 
-3) Interleaved hybrid:
-  generated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, N);
-N in [2..10], interval. Higher N = rarer unconstrained attempts.
+3) Interleaved hybrid (uses << >> for hybrid segments):
+  generated := helpers.HybridGeneration(lm, parser, prompt, maxSteps);
+  This strategy allows the model to produce reasoning/thought segments within << and >>.
+  If the content between delimiters is invalid according to the parser, it is rolled back.
 
-4) Speculative (speed oriented):
-  generated := CSDHelpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, N);
-N in [2..8], speculation window. Larger N = faster but more rejection waste.
+4) Speculative:
+  generated := helpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, N);
+N in [2..8].
 
 5) Max creativity with repair/complete:
-  generated := CSDHelpers.UnconstrainedWithCompletion(lm, parser, prompt, maxSteps);
+  generated := helpers.UnconstrainedWithCompletion(lm, parser, prompt, maxSteps);
 
-6) Completion of an existing valid prefix (for multi-stage strategies):
-  generated := CSDHelpers.CompletePrefix(lm, parser, prompt, partial, maxSteps);
-Where `partial` is an existing valid prefix you constructed earlier (e.g., by rollback/validation).
-Do NOT pass `prompt` as `partial`. Do NOT invent other helpers.
+6) Completion of an existing valid prefix:
+  generated := helpers.CompletePrefix(lm, parser, prompt, partial, maxSteps);
 
-7) NEW: Generate with reasonable length (for compact expressions like math):
-  generated := CSDHelpers.GenerateWithReasonableLength(lm, parser, prompt, maxSteps, reasonableLength);
-Stops early if expression is complete AND within reasonableLength. Use for short expressions (5-20 tokens).
-reasonableLength should be a small number like 10-15 for math expressions.
+7) Generate with reasonable length:
+  generated := helpers.GenerateWithReasonableLength(lm, parser, prompt, maxSteps, reasonableLength);
 
-8) NEW: Generate until first complete (explicit early stopping):
-  generated := CSDHelpers.GenerateUntilFirstComplete(lm, parser, prompt, maxSteps);
-Stops immediately when a complete expression is found. Similar to PureConstrainedGeneration but makes early stop explicit.
+8) Generate until first complete:
+  generated := helpers.GenerateUntilFirstComplete(lm, parser, prompt, maxSteps);
 
-9) NEW: Generate multiple candidates and select best:
-  var candidates: seq<Prefix>;
-  candidates := [];  // Initialize
-  var candidate: Prefix;
-  candidate := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
-  candidates := candidates + [candidate];
-  // Repeat for more candidates, then:
-  var best: Prefix;
-  best := CSDHelpers.SelectBestCandidate(candidates, parser, true);  // true = prefer shorter
-  generated := best;
-Or use the combined helper:
-  generated := CSDHelpers.GenerateAndSelectBest(lm, parser, prompt, maxSteps, numCandidates, preferShorter);
-numCandidates in [2..5], preferShorter is bool. Generates multiple candidates and picks shortest complete one.
+9) Generate multiple candidates and select best:
+  generated := helpers.GenerateAndSelectBest(lm, parser, prompt, maxSteps, numCandidates, preferShorter);
+
+## Utility Functions for Contracts (use in `ensures` clauses)
+
+1) Extract content between delimiters:
+  `helpers.ExtractContentBetweenDelimiters(helpers.PrefixToString(generated), "<<", ">>")`
+  Returns the content found between the last occurrence of "<<" and ">>". Useful for asserting things about the reasoning trace.
+
+2) Convert prefix to string:
+  `helpers.PrefixToString(generated)`
+  Converts a sequence of tokens into a single concatenated string. Useful for string-based contracts.
 
 ## Decision rubric (internal reasoning only)
 Use the use-case description to decide:
@@ -159,13 +144,14 @@ using locals and/or if/else around verified helper calls. Avoid writing custom l
 To count as non-trivial multi-line, include an `if/else` with **meaningfully different** branches
 (different helper and/or different parameters). Do NOT output only a temp wrapper around a single helper call.
 
-Examples below are illustrative only — do NOT default to any one helper. Choose based on the use-case.
+Examples below are illustrative only - do NOT default to any one helper. Choose based on the use-case.
 
 Example (fully constrained):
   // CSD_RATIONALE_BEGIN
   // I chose PureConstrainedGeneration because every prefix must remain valid under a strict parser.
   // CSD_RATIONALE_END
-  generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
+  generated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
+  cost := helpers.cost;
 
 Example (optimistic then fallback - MUST guard for precondition):
   // CSD_RATIONALE_BEGIN
@@ -173,50 +159,55 @@ Example (optimistic then fallback - MUST guard for precondition):
   // N=5 is small to reduce waste if the parser is strict. I guard with maxSteps check to satisfy N<=maxSteps.
   // CSD_RATIONALE_END
   if maxSteps < 5 {{
-    generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
+    generated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
   }} else {{
-    generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);
+    generated := helpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);
   }}
+  cost := helpers.cost;
 
 Example (interleaved hybrid):
   // CSD_RATIONALE_BEGIN
   // I chose HybridGeneration to mostly stay constrained while occasionally attempting an unconstrained token when likely safe.
-  // Interval N=5 balances exploration vs constraint adherence.
   // CSD_RATIONALE_END
-  generated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 5);
+  generated := helpers.HybridGeneration(lm, parser, prompt, maxSteps);
+  cost := helpers.cost;
 
 Example (speculative speed-oriented):
   // CSD_RATIONALE_BEGIN
   // I chose SpeculativeGeneration to reduce per-token overhead by validating batches, prioritizing latency.
   // Window N=4 balances speedups vs rejection waste.
   // CSD_RATIONALE_END
-  generated := CSDHelpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, 4);
+  generated := helpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, 4);
+  cost := helpers.cost;
 
 Example (unconstrained with completion/repair):
   // CSD_RATIONALE_BEGIN
   // I chose UnconstrainedWithCompletion to allow maximum creativity early, then roll back to a valid prefix and finish constrained.
   // CSD_RATIONALE_END
-  generated := CSDHelpers.UnconstrainedWithCompletion(lm, parser, prompt, maxSteps);
+  generated := helpers.UnconstrainedWithCompletion(lm, parser, prompt, maxSteps);
+  cost := helpers.cost;
 
 Example (multi-line composition/branching):
   // CSD_RATIONALE_BEGIN
   // I chose a simple conditional: for very small maxSteps, fully constrained is cheapest; otherwise use a faster batch-based strategy.
   // CSD_RATIONALE_END
   if maxSteps < 6 {{
-    generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
+    generated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
   }} else {{
-    generated := CSDHelpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, 4);
+    generated := helpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, 4);
   }}
+  cost := helpers.cost;
 
 Example (preferred non-trivial multi-line: meaningful branching):
   // CSD_RATIONALE_BEGIN
   // I branch on maxSteps: for small budgets, fully constrained is simplest; for larger budgets, speculative can reduce overhead.
   // CSD_RATIONALE_END
   if maxSteps < 8 {{
-    generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
+    generated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
   }} else {{
-    generated := CSDHelpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, 4);
+    generated := helpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, 4);
   }}
+  cost := helpers.cost;
 """
 
 
@@ -265,7 +256,7 @@ CRITICAL: If the error mentions type mismatch with `string` or `seq<Token>`:
 CRITICAL: If the error mentions `invalid UnaryExpression` and your code uses `++`:
 - Replace `++` with `+` for sequence concatenation (e.g., `a + b`, not `a ++ b`).
 
-If the same strategy keeps failing, switch to a different verified strategy helper (don't collapse to the most trivial unless the use-case demands strictness).
+If the same strategy keeps failing, switch to a different verified strategy helper (do not collapse to the most trivial unless the use-case demands strictness).
 """
 
 
@@ -317,16 +308,15 @@ Output ONLY the corrected method body (no signature, no braces).
 """
 
 
-FORMAT_REPAIR_PROMPT = """\
-Your output must be a Dafny method body. It is missing the required rationale block markers.
+FORMAT_REPAIR_PROMPT = """Your output must be a Dafny method body. It is missing the required rationale block markers.
 
 Rewrite the following content into a valid Dafny method body that:
-1) Starts with:
+1. Starts with:
    // CSD_RATIONALE_BEGIN
    // <1-6 lines of explanation>
    // CSD_RATIONALE_END
-2) Preserves the SAME strategy semantics (same helper choice(s) and key parameters) unless a change is required just to make it valid Dafny.
-3) Outputs ONLY the method body (no signature, no outer braces).
+2. Preserves the SAME strategy semantics (same helper choice(s) and key parameters) unless a change is required just to make it valid Dafny.
+3. Outputs ONLY the method body (no signature, no outer braces).
 
 Content to rewrite:
 ```dafny

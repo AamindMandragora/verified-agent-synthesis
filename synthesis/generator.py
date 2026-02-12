@@ -37,7 +37,8 @@ class StrategyGenerator:
     
     # Marker in template to replace
     STRATEGY_MARKER = "// QWEN_INSERT_STRATEGY_HERE"
-    
+    COST_CONTRACT_MARKER = "// QWEN_INSERT_COST_CONTRACT_HERE"
+
     def __init__(
         self,
         model_name: Optional[str] = None,
@@ -262,17 +263,22 @@ class StrategyGenerator:
             "(// CSD_RATIONALE_BEGIN ... // CSD_RATIONALE_END)."
         )
     
-    def generate_initial(self, task_description: str) -> str:
+    def generate_initial(self, task_description: str, cost_contract: str = "") -> str:
         """
         Generate an initial strategy for the given task.
         
         Args:
             task_description: Description of what the strategy should accomplish
+            cost_contract: Optional cost contract (e.g. "ensures helpers.cost <= 10")
             
         Returns:
             Strategy expression (Dafny code)
         """
-        system_prompt, user_prompt = build_initial_prompt(task_description)
+        full_task = task_description
+        if cost_contract:
+            full_task += f"\n\nYour strategy MUST satisfy this cost contract:\n{cost_contract}"
+
+        system_prompt, user_prompt = build_initial_prompt(full_task)
         raw_output = self._generate_text(system_prompt, user_prompt)
         strategy = self._extract_strategy(raw_output)
         return self._ensure_rationale_block(strategy)
@@ -343,17 +349,23 @@ class StrategyGenerator:
         strategy = self._extract_strategy(raw_output)
         return self._ensure_rationale_block(strategy)
     
-    def inject_strategy(self, strategy: str) -> str:
+    def inject_strategy(self, strategy: str, cost_contract: str = "") -> str:
         """
-        Inject a strategy into the template to create complete Dafny code.
+        Inject a strategy and optional cost contract into the template.
         
         Args:
             strategy: Strategy expression to inject
+            cost_contract: Optional cost contract (e.g. "ensures helpers.cost <= 10")
             
         Returns:
             Complete Dafny source code
         """
-        return self._template.replace(self.STRATEGY_MARKER, strategy)
+        code = self._template.replace(self.STRATEGY_MARKER, strategy)
+        if cost_contract:
+            code = code.replace(self.COST_CONTRACT_MARKER, cost_contract)
+        else:
+            code = code.replace(self.COST_CONTRACT_MARKER, "")
+        return code
     
     def get_template(self) -> str:
         """Get the raw template content."""

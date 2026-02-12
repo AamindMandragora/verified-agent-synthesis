@@ -26,8 +26,9 @@ def extract_symbolic_expression(text: str) -> Optional[str]:
     """
     # Look for << expression >> pattern - use greedy match up to >>
     # This handles cases where expression might contain single > characters
+    # Use re.DOTALL to match across newlines
     pattern = r'<<\s*(.+?)\s*>>'
-    matches = list(re.finditer(pattern, text))
+    matches = list(re.finditer(pattern, text, re.DOTALL))
 
     if matches:
         # Take the last match (most recent expression)

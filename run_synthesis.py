@@ -42,6 +42,13 @@ Examples:
         required=True,
         help="Task description for strategy generation"
     )
+
+    parser.add_argument(
+        "--cost-contract", "-c",
+        type=str,
+        default="",
+        help="Optional cost contract (e.g. 'ensures helpers.cost <= 10')"
+    )
     
     parser.add_argument(
         "--max-iterations", "-n",
@@ -74,8 +81,8 @@ Examples:
     parser.add_argument(
         "--dafny-path",
         type=str,
-        default="dafny",
-        help="Path to Dafny executable (default: dafny)"
+        default="/home/advayth2/projects/verified-agent-synthesis/dafny-lang/dafny/dafny",
+        help="Path to Dafny executable (default: /home/advayth2/projects/verified-agent-synthesis/dafny-lang/dafny/dafny)"
     )
     
     parser.add_argument(
@@ -125,6 +132,10 @@ Examples:
         run_verification_only(args)
         return
     
+    # Normalize output_dir if provided (handle potential backslashes from user input)
+    if args.output_dir:
+        args.output_dir = Path(str(args.output_dir).replace("\\", "/"))
+
     # Import here to avoid loading heavy dependencies if just showing help
     from synthesis.generator import StrategyGenerator
     from synthesis.verifier import DafnyVerifier
@@ -162,7 +173,8 @@ Examples:
     try:
         result = pipeline.synthesize(
             task_description=args.task,
-            output_name=args.output_name
+            output_name=args.output_name,
+            cost_contract=args.cost_contract
         )
         
         print("\n" + "=" * 60)

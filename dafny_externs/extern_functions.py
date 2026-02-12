@@ -425,8 +425,29 @@ Strategy = Window | TryK | Cascade | BestOfN | Constrained | Free
 
 
 # =============================================================================
-# Extern Function Implementations
+# CSDHelpers Externs
 # =============================================================================
+
+class CSDHelpers:
+    """
+    Extern implementations for CSDHelpers static methods.
+    """
+    
+    @staticmethod
+    def ExtractContentExtern(input_str: str, start_delim: str, end_delim: str) -> str:
+        """
+        Extract the last occurrence of content between start and end delimiters.
+        """
+        import re
+        # Escape delimiters for regex
+        start = re.escape(start_delim)
+        end = re.escape(end_delim)
+        # Find all occurrences
+        pattern = f"{start}(.*?){end}"
+        matches = re.findall(pattern, input_str, re.DOTALL)
+        if matches:
+            return matches[-1]
+        return ""
 
 def AllowedNext(
     c: TokenConstraint,

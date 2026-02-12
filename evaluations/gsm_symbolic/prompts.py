@@ -21,59 +21,52 @@ from typing import Dict, List, Optional, Tuple
 # CRITICAL: Keep expressions SIMPLE - avoid nested parens, use step-by-step decomposition
 CRANE_FEW_SHOT_EXAMPLES = """Q: There are {t} trees in the grove. Grove workers will plant trees in the grove today. After they are done, there will be {f} trees. How many trees did the grove workers plant today?
 
-A: Trees planted = final - initial = <<f - t>>
+A: We need to find the number of new trees planted. We start with t trees and end with f trees.
+The number of trees planted is the difference between the final count and the initial count.
+Trees planted = f - t = <<f - t>>
 #### f - t
 
 Q: If there are {c} cars in the parking lot and {n} more cars arrive, how many cars are in the parking lot?
 
-A: Total = initial + arrivals = <<c + n>>
+A: The initial number of cars is c. Then n more cars arrive.
+To find the total, we add the arriving cars to the initial count.
+Total cars = c + n = <<c + n>>
 #### c + n
 
 Q: Amy has ${m}. Amy bought {q} items for ${p} each. How much money does Amy have left?
 
-A: Cost = <<q * p>>
-Remaining = <<m - q * p>>
+A: First, let's calculate the total cost of the items Amy bought.
+She bought q items at a price of p each.
+Total cost = <<q * p>>
+Now, we subtract this cost from her initial amount m to find what's left.
+Remaining money = m - cost = <<m - q * p>>
 #### m - q * p
 
 Q: Tom gave {g} marbles to his friend. His friend then gave Tom {b} marbles back. Tom now has {t} marbles. How many marbles did Tom start with?
 
-A: Starting = final + given - received = <<t + g - b>>
+A: Let x be the number of marbles Tom started with.
+After giving g marbles, he had x - g.
+After receiving b marbles, he had (x - g) + b = t.
+To find x, we reverse the operations: x = t + g - b.
+Starting marbles = <<t + g - b>>
 #### t + g - b
 
 Q: A rope is {f} feet long. How many inches is that? (1 foot = 12 inches)
 
-A: Inches = <<f * 12>>
+A: To convert feet to inches, we multiply the number of feet by 12.
+Length in inches = f * 12 = <<f * 12>>
 #### f * 12
-
-Q: A person rents a car from {s} AM to {e} PM. They get {f} hours free. The first paid hour costs ${p} and each hour after that costs twice as much. How much do they pay?
-
-A: Total hours = <<e - s>>
-Paid hours = <<e - s - f>>
-First hour = p
-Second hour = <<p * 2>>
-Third hour = <<p * 2 * 2>>
-For 3 paid hours, cost = <<p + p * 2 + p * 2 * 2>>
-#### p + p * 2 + p * 2 * 2
 
 Q: A taxi charges ${b} base fare plus ${r} per mile. A {m}-mile trip with a ${t} tip costs how much total?
 
-A: Mile cost = <<m * r>>
-Before tip = <<b + m * r>>
+A: First, calculate the cost for the distance traveled.
+The taxi charges r per mile for m miles.
+Distance cost = <<m * r>>
+Next, add the base fare b to this distance cost.
+Subtotal = <<b + m * r>>
+Finally, add the tip t to get the total cost.
 Total = <<b + m * r + t>>
 #### b + m * r + t
-
-Q: A pool fills at {f} gallons per hour. After {h} hours, it has {c} gallons. How many gallons were there initially?
-
-A: Added = <<f * h>>
-Initial = <<c - f * h>>
-#### c - f * h
-
-Q: A worker earns ${w} per hour. They work {h} hours with {o} overtime hours at double pay. What is their total pay?
-
-A: Regular = <<w * h>>
-Overtime = <<w * 2 * o>>
-Total = <<w * h + w * 2 * o>>
-#### w * h + w * 2 * o
 """
 
 
@@ -291,15 +284,17 @@ def make_gsm_prompt(question: str, symbolic_question: Optional[str] = None) -> s
             q = q.rstrip() + " Remember: convert feet to inches by multiplying by 12."
 
     return (
-        "Solve math problems using symbolic variables.\n\n"
-        "CRITICAL FORMAT:\n"
-        "- ALWAYS wrap math in << >>: Result = <<a + b>>\n"
-        "- Use plain letters inside << >>: <<a * b>> (correct), <<{a} * {b}>> (WRONG)\n"
-        "- NEVER write {a} or {b} in your answer - only use plain a, b, c\n"
-        "- End with #### and the symbolic expression\n\n"
+        "Solve math problems using step-by-step symbolic reasoning.\n\n"
+        "INSTRUCTIONS:\n"
+        "1. First, reason about the problem in plain text.\n"
+        "2. When you need to calculate something, wrap the symbolic expression in << >>.\n"
+        "3. Inside << >>, use ONLY the single-letter variables provided in the question.\n"
+        "4. DO NOT use {a} or {b} inside << >> - use plain a or b.\n"
+        "5. Show your work clearly with multiple steps if needed.\n"
+        "6. End your response with #### followed by the final symbolic expression.\n\n"
         f"{CRANE_FEW_SHOT_EXAMPLES}\n"
         f"Q: {q}\n\n"
-        f"A:"
+        f"A: "
     )
 
 
@@ -313,5 +308,6 @@ def make_chatml_instruction(prompt_text: str) -> str:
     Returns:
         ChatML-formatted instruction string
     """
-    # Note: prompt_text ends with "A:" so assistant continues directly
-    return f"<|im_start|>user\n{prompt_text}<|im_end|>\n<|im_start|>assistant\n "
+    # Note: prompt_text ends with "A: " so assistant continues directly
+    # We add a reasoning prefix to force the model to think before math
+    return f"<|im_start|>user\n{prompt_text}<|im_end|>\n<|im_start|>assistant\nTo solve this problem, we need to "

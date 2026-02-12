@@ -165,6 +165,7 @@ class SynthesisAttempt:
                 "output_length": len(self.runtime_result.output)
                 if self.runtime_result and self.runtime_result.output
                 else 0,
+                "cost": self.runtime_result.cost if self.runtime_result else 0,
                 "execution_time_ms": self.runtime_result.execution_time_ms if self.runtime_result else 0,
             }
             if self.runtime_result
@@ -314,13 +315,19 @@ class SynthesisPipeline:
         # Add more task types as needed (sql, math, etc.)
         return "permissive"
 
-    def synthesize(self, task_description: str, output_name: str = "generated_csd") -> SynthesisResult:
+    def synthesize(
+        self,
+        task_description: str,
+        output_name: str = "generated_csd",
+        cost_contract: str = "",
+    ) -> SynthesisResult:
         """
         Synthesize a CSD strategy for the given task.
 
         Args:
             task_description: Description of what the strategy should accomplish
             output_name: Name for the output module
+            cost_contract: Optional cost contract (e.g. "ensures helpers.cost <= 10")
 
         Returns:
             SynthesisResult on success
@@ -341,13 +348,12 @@ class SynthesisPipeline:
         else:
             runner = self.runner
 
-        # Create an isolated output directory for this run so multiple runs can
-        # exist concurrently under the same base output directory.
+        # Create an isolated output directory for this run
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + secrets.token_hex(3)
         run_dir = self.output_dir / "runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
 
-        # Update a convenience pointer to the most recent run (does not delete older runs).
+        # Update a convenience pointer to the most recent run
         try:
             (self.output_dir / "latest_run.txt").write_text(str(run_dir) + "\n")
         except Exception:
@@ -363,7 +369,9 @@ class SynthesisPipeline:
 
         # Initial generation
         print(f"Generating initial strategy for: {task_description}")
-        strategy_code = self.generator.generate_initial(task_description)
+        if cost_contract:
+            print(f"Using cost contract: {cost_contract}")
+        strategy_code = self.generator.generate_initial(task_description, cost_contract)
 
         for iteration in range(self.max_iterations):
             attempt_num = iteration + 1
@@ -373,7 +381,7 @@ class SynthesisPipeline:
             print(f"Strategy: {strategy_code}")
 
             # Create full Dafny code
-            full_code = self.generator.inject_strategy(strategy_code)
+            full_code = self.generator.inject_strategy(strategy_code, cost_contract)
 
             # Create attempt record
             attempt = SynthesisAttempt(
@@ -518,6 +526,17 @@ class SynthesisPipeline:
             json.dump(report, f, indent=2)
 
         print(f"Failure report saved to: {report_path}")
+
+        # Create 'latest' symlink in the runs directory even on failure
+        try:
+            latest_link = run_dir.parent / "latest"
+            if latest_link.exists() or latest_link.is_symlink():
+                latest_link.unlink()
+            latest_link.symlink_to(run_dir.name, target_is_directory=True)
+            print(f"Latest run link (failed) updated: {latest_link}")
+        except Exception as e:
+            print(f"Warning: Could not create 'latest' symlink: {e}")
+
         return report_path
 
     def _save_success_report(
@@ -534,6 +553,15 @@ class SynthesisPipeline:
         dafny_path = run_dir / f"{output_name}.dfy"
         with open(dafny_path, "w") as f:
             f.write(full_code)
+
+        # Also update the main GeneratedCSD.dfy in the dafny/ directory for convenience
+        try:
+            main_dafny_path = Path(__file__).parent.parent / "dafny" / "GeneratedCSD.dfy"
+            with open(main_dafny_path, "w") as f:
+                f.write(full_code)
+            print(f"Main Dafny file updated: {main_dafny_path}")
+        except Exception as e:
+            print(f"Warning: Could not update main Dafny file: {e}")
 
         rationale_extracted = extract_rationale(strategy_code)
 
@@ -553,6 +581,16 @@ class SynthesisPipeline:
 
         print(f"Strategy saved to: {dafny_path}")
         print(f"Success report saved to: {report_path}")
+
+        # Create 'latest' symlink in the runs directory
+        try:
+            latest_link = run_dir.parent / "latest"
+            if latest_link.exists() or latest_link.is_symlink():
+                latest_link.unlink()
+            latest_link.symlink_to(run_dir.name, target_is_directory=True)
+            print(f"Latest run link updated: {latest_link}")
+        except Exception as e:
+            print(f"Warning: Could not create 'latest' symlink: {e}")
 
     def _analyze_failure_patterns(self, attempts: list[SynthesisAttempt]) -> dict:
         """Analyze common failure patterns across attempts."""
