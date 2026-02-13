@@ -49,6 +49,10 @@ def main():
                     help="Randomly sample examples instead of taking first N")
     ap.add_argument("--unconstrained", action="store_true",
                     help="Run unconstrained baseline instead of CSD")
+    ap.add_argument("--load-in-4bit", action="store_true",
+                    help="Load model in 4-bit quantization")
+    ap.add_argument("--load-in-8bit", action="store_true",
+                    help="Load model in 8-bit quantization")
     args = ap.parse_args()
 
     ds = load_gsm_symbolic(args.config, limit=args.limit, random_sample=args.random_sample)
@@ -62,6 +66,8 @@ def main():
         device=args.device,
         vocab_size=args.vocab_size,
         grammar_file=args.grammar,
+        load_in_4bit=args.load_in_4bit,
+        load_in_8bit=args.load_in_8bit,
     )
     verify_critical_tokens(dafny_env["tokenizer"])
     print("Model loaded. Starting evaluation...\n")

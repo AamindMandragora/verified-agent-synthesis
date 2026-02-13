@@ -82,6 +82,8 @@ def setup_dafny_environment(
     device: str,
     vocab_size: int,
     grammar_file: Path,
+    load_in_4bit: bool = False,
+    load_in_8bit: bool = False,
 ) -> Dict[str, Any]:
     """
     Load model and setup Dafny environment once.
@@ -93,6 +95,8 @@ def setup_dafny_environment(
         device: Device to run on ("cuda" or "cpu")
         vocab_size: Size of constrained vocabulary
         grammar_file: Path to grammar file
+        load_in_4bit: Whether to load in 4-bit quantization
+        load_in_8bit: Whether to load in 8-bit quantization
         
     Returns:
         Environment dict with:
