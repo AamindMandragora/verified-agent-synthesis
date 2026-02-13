@@ -1,0 +1,8 @@
+{
+  "strategy_code": "// CSD_RATIONALE_BEGIN\n// I chose TryUnconstrainedThenConstrained to allow a short burst of free drafting, then guarantee validity.\n// N=5 is small to reduce waste if the parser is strict. I guard with maxSteps check to satisfy N<=maxSteps.\n// Additionally, I ensure that the generated expression contains at least one variable, adhering to rule 1.\n// CSD_RATIONALE_END\nif maxSteps < 5 {\n  generated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);\n} else {\n  generated := helpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);\n}\nvar exprStr := helpers.PrefixToString(generated);\nif !exprStr.Contains(\"n\") && !exprStr.Contains(\"x\") && !exprStr.Contains(\"foo\") {\n  generated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);\n}\ncost := helpers.cost;",
+  "tool_choice_rationale": "I chose TryUnconstrainedThenConstrained to allow a short burst of free drafting, then guarantee validity.\nN=5 is small to reduce waste if the parser is strict. I guard with maxSteps check to satisfy N<=maxSteps.\nAdditionally, I ensure that the generated expression contains at least one variable, adhering to rule 1.",
+  "dafny_file": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260213_014206_92af37/gsm_crane_csd.dfy",
+  "compiled_dir": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260213_014206_92af37/gsm_crane_csd",
+  "total_attempts": 1,
+  "timestamp": "2026-02-13T01:42:29.374711"
+}

@@ -9,6 +9,7 @@ Supports both permissive testing mode and real JSON parsing mode.
 import importlib.util
 import sys
 import traceback
+import inspect
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Literal
@@ -266,6 +267,37 @@ class StrategyRunner:
                         best_idx = i
                 
                 return self._Tokens[best_idx]
+
+            def ChooseNextTokenUnconstrained(self):
+                """Extern: Choose highest logit token regardless of masking."""
+                best_idx = 0
+                best_logit = _dafny.BigRational('-1e10')
+                
+                for i in range(self.Logits.length(0)):
+                    if self.Logits[i] > best_logit:
+                        best_logit = self.Logits[i]
+                        best_idx = i
+                
+                return self._Tokens[best_idx]
+            
+            def MaskTokensExcept(self, valid_tokens):
+                """Extern: Mask all tokens except those in valid_tokens."""
+                masked_val = _dafny.BigRational('-1e9')
+                # Convert valid_tokens (Dafny Seq) to a set for fast lookup
+                valid_set = set(valid_tokens)
+                
+                for i in range(self.Logits.length(0)):
+                    if self._Tokens[i] not in valid_set:
+                        self.Logits[i] = masked_val
+
+            def HasEOSToken(self):
+                """Extern: Check if LM has an EOS token."""
+                return True
+            
+            def get_eos_token(self):
+                """Get the EOS token for the LM."""
+                import _dafny
+                return _dafny.SeqWithoutIsStrInference("<EOS>")
         
         # Create a Dafny-compatible Parser with extern implementations
         class TestParser(VerifiedDecoderAgent.Parser):
@@ -431,7 +463,17 @@ class StrategyRunner:
             
             # Call the strategy method directly - it performs constrained decoding
             # and returns (generated sequence, cost)
-            result = csd_strategy_method(lm, parser, test_prompt, max_steps)
+            
+            # Check signature of MyCSDStrategy to handle different template versions
+            # Some versions expect (lm, parser, prompt, maxSteps)
+            # Others expect (lm, parser, prompt, maxSteps, eosToken)
+            sig = inspect.signature(csd_strategy_method)
+            if len(sig.parameters) >= 5:
+                # Get EOS token from LM
+                eos_token = lm.get_eos_token()
+                result = csd_strategy_method(lm, parser, test_prompt, max_steps, eos_token)
+            else:
+                result = csd_strategy_method(lm, parser, test_prompt, max_steps)
             
             # Dafny returns a tuple (output, cost) for methods with multiple returns
             # MyCSDStrategy is now defined as: returns (generated: Prefix, cost: int)
