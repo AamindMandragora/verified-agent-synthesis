@@ -67,7 +67,9 @@ def create_huggingface_lm(
     vocab_size: int,
     VerifiedDecoderAgent,
     _dafny,
-    token_ids=None
+    token_ids=None,
+    load_in_4bit: bool = False,
+    load_in_8bit: bool = False,
 ):
     """
     Create a HuggingFace LM wrapped with a Dafny-compatible interface.
@@ -79,21 +81,41 @@ def create_huggingface_lm(
         VerifiedDecoderAgent: Imported Dafny module for LM interface
         _dafny: Dafny runtime module
         token_ids: Optional list of token IDs for constrained vocabulary
+        load_in_4bit: Whether to load in 4-bit quantization
+        load_in_8bit: Whether to load in 8-bit quantization
 
     Returns:
         A Dafny-compatible LM wrapper
     """
-    print(f"Loading model: {model_name} on {device}... (FP16)")
+    prec_str = "FP16"
+    if load_in_4bit: prec_str = "4-bit"
+    elif load_in_8bit: prec_str = "8-bit"
+    
+    print(f"Loading model: {model_name} on {device}... ({prec_str})")
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
     
     # Always use device_map="auto" for CUDA to leverage all available GPUs
     if device.startswith("cuda"):
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            torch_dtype=torch.float16,
-            device_map="auto",
-        )
+        kwargs = {
+            "pretrained_model_name_or_path": model_name,
+            "trust_remote_code": True,
+            "device_map": "auto",
+        }
+        
+        if load_in_4bit:
+            from transformers import BitsAndBytesConfig
+            kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+            )
+        elif load_in_8bit:
+            kwargs["load_in_8bit"] = True
+        else:
+            kwargs["torch_dtype"] = torch.float16
+            
+        model = AutoModelForCausalLM.from_pretrained(**kwargs)
         input_device = get_model_input_device(model)
         num_gpus = torch.cuda.device_count()
         print(f"Model loaded across {num_gpus} GPU(s), inputs go to {input_device}")
