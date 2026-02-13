@@ -109,8 +109,7 @@ def create_huggingface_lm(
     model.eval()
 
     if token_ids is None:
-        from evaluations.common.token_selection import select_math_token_ids
-        token_ids = select_math_token_ids(tokenizer, vocab_size)
+        token_ids = list(range(vocab_size))
 
     tokens_dafny = _dafny.SeqWithoutIsStrInference(
         [_dafny.Seq(tokenizer.decode([tid])) for tid in token_ids]

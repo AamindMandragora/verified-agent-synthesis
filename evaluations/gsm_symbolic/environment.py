@@ -2,7 +2,7 @@
 Environment setup utilities for GSM-Symbolic evaluation.
 
 Handles loading compiled CSD modules and setting up the Dafny environment
-for CRANE-style generation.
+for constrained generation.
 """
 
 from __future__ import annotations
@@ -108,12 +108,10 @@ def setup_dafny_environment(
     from transformers import AutoTokenizer
     from evaluations.common.model_utils import create_huggingface_lm
     from evaluations.common.parser_utils import create_lark_dafny_parser
-    from evaluations.common.token_selection import select_math_token_ids
 
     tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
-    token_ids = select_math_token_ids(tok, vocab_size)
-    lm = create_huggingface_lm(model_name, device, vocab_size, VerifiedDecoderAgent, _dafny, token_ids=token_ids)
+    lm = create_huggingface_lm(model_name, device, vocab_size, VerifiedDecoderAgent, _dafny)
 
     # Create grammar parser
     grammar_text = grammar_file.read_text()
@@ -133,43 +131,5 @@ def setup_dafny_environment(
 
 
 def verify_critical_tokens(tokenizer, verbose: bool = True) -> Dict[str, Any]:
-    """
-    Verify that critical tokens for CRANE format are in the vocabulary.
-    
-    Args:
-        tokenizer: HuggingFace tokenizer
-        verbose: Whether to print warnings
-        
-    Returns:
-        Dict with "found" and "missing" lists
-    """
-    test_tokens = ["####", "<<", ">>"]
-    vocab = tokenizer.get_vocab()
-    found_critical = []
-    missing_critical = []
-    
-    for test_tok in test_tokens:
-        if test_tok in vocab:
-            found_critical.append(test_tok)
-        else:
-            # Check if any token contains it
-            found_as_part = False
-            for tok_str, tok_id in vocab.items():
-                if test_tok in tok_str:
-                    found_critical.append(f"{test_tok} (as part of '{tok_str}')")
-                    found_as_part = True
-                    break
-            if not found_as_part:
-                missing_critical.append(test_tok)
-    
-    if verbose and missing_critical:
-        print(f"WARNING: Critical tokens missing from vocabulary: {missing_critical}")
-        print(f"  This may cause the model to not generate delimiters correctly.")
-        print(f"  Found tokens: {found_critical}")
-        if "<<" in missing_critical:
-            if "<" in vocab:
-                print(f"  Note: Single '<' token exists, but '<<' does not. Delimiter may be split across tokens.")
-            else:
-                print(f"  Note: Neither '<<' nor '<' found in vocabulary!")
-    
-    return {"found": found_critical, "missing": missing_critical}
+    """No-op — critical token verification removed (was dataset-specific)."""
+    return {"found": [], "missing": []}

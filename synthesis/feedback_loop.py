@@ -307,14 +307,6 @@ class SynthesisPipeline:
         # Ensure output directory exists
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def _detect_parser_mode(self, task_description: str) -> str:
-        """Detect appropriate parser mode based on task description."""
-        task_lower = task_description.lower()
-        if "json" in task_lower:
-            return "json"
-        # Add more task types as needed (sql, math, etc.)
-        return "permissive"
-
     def synthesize(
         self,
         task_description: str,
@@ -340,11 +332,9 @@ class SynthesisPipeline:
         start_time = time.time()
         attempts: list[SynthesisAttempt] = []
 
-        # Create task-appropriate runner if not already provided
+        # Create runner if not already provided
         if self.runner is None:
-            parser_mode = self._detect_parser_mode(task_description)
-            print(f"Detected parser mode: {parser_mode}")
-            runner = StrategyRunner(parser_mode=parser_mode)
+            runner = StrategyRunner(parser_mode="permissive")
         else:
             runner = self.runner
 

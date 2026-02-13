@@ -32,9 +32,8 @@ def extract_predicates_from_generation(text: str) -> List[Tuple[str, int]]:
     """
     predicates = []
     
-    # Pattern to match predicate definitions like "PredicateName(x)" or "PredicateName(x, y)"
-    # In the Predicates section
-    predicate_pattern = r'([A-Z][a-zA-Z0-9]*)\(([^)]*)\)\s*:::'
+    # Pattern to match predicate calls like "PredicateName(x)" or "PredicateName(x, y)"
+    predicate_pattern = r'([A-Z][a-zA-Z0-9]*)\(([^)]*)\)'
     
     for match in re.finditer(predicate_pattern, text):
         pred_name = match.group(1)
@@ -130,74 +129,3 @@ def build_dynamic_grammar(
     return grammar
 
 
-def build_grammar_from_context(
-    generated_so_far: str,
-    problem_text: str,
-    question_text: str,
-) -> str:
-    """
-    Build a dynamic grammar based on the context of generation.
-    
-    This analyzes what predicates and constants have been defined so far
-    and restricts future generation to use only those symbols.
-    
-    Args:
-        generated_so_far: Text generated so far
-        problem_text: The problem premises
-        question_text: The question being answered
-    
-    Returns:
-        Dynamic grammar string
-    """
-    # Extract predicates from the Predicates section if present
-    predicates = extract_predicates_from_generation(generated_so_far)
-    
-    # Extract constants from usage
-    constants = extract_constants_from_generation(generated_so_far)
-    
-    # If we haven't defined predicates yet, use unrestricted grammar
-    if not predicates:
-        return load_base_grammar()
-    
-    # Build restricted grammar
-    return build_dynamic_grammar(
-        allowed_predicates=predicates,
-        allowed_constants=constants if constants else None,
-        # Allow standard variables x, y, z
-        allowed_variables={'x', 'y', 'z'},
-    )
-
-
-def is_in_predicates_section(text: str) -> bool:
-    """Check if the generation is currently in the Predicates section."""
-    # Find last occurrence of key markers
-    pred_pos = text.rfind("Predicates:")
-    prem_pos = text.rfind("Premises:")
-    
-    if pred_pos == -1:
-        return False
-    
-    # We're in Predicates section if it's been started but Premises hasn't
-    return prem_pos == -1 or pred_pos > prem_pos
-
-
-def is_in_premises_section(text: str) -> bool:
-    """Check if the generation is currently in the Premises section."""
-    prem_pos = text.rfind("Premises:")
-    conc_pos = text.rfind("Conclusion:")
-    
-    if prem_pos == -1:
-        return False
-    
-    return conc_pos == -1 or prem_pos > conc_pos
-
-
-def is_in_conclusion_section(text: str) -> bool:
-    """Check if the generation is currently in the Conclusion section."""
-    conc_pos = text.rfind("Conclusion:")
-    ans_pos = text.rfind("Answer:")
-    
-    if conc_pos == -1:
-        return False
-    
-    return ans_pos == -1 or conc_pos > ans_pos
