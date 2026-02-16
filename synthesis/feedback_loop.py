@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from .compiler import CompilationResult, DafnyCompiler
+from .evaluator import Evaluator, EvaluationResult
 from .generator import StrategyGenerator
 from .rationale import extract_rationale
 from .runner import RuntimeResult, StrategyRunner
@@ -26,6 +27,7 @@ class FailureStage(Enum):
     VERIFICATION = "verification"
     COMPILATION = "compilation"
     RUNTIME = "runtime"
+    EVALUATION = "evaluation"
 
 
 def parse_strategy_type(strategy_code: str) -> dict:
@@ -115,6 +117,7 @@ class SynthesisAttempt:
     verification_result: Optional[VerificationResult] = None
     compilation_result: Optional[CompilationResult] = None
     runtime_result: Optional[RuntimeResult] = None
+    eval_result: Optional[EvaluationResult] = None
 
     # Failure information
     failed_at: Optional[FailureStage] = None
@@ -170,6 +173,7 @@ class SynthesisAttempt:
             }
             if self.runtime_result
             else None,
+            "evaluation": self.eval_result.to_dict() if self.eval_result else None,
         }
 
 
@@ -269,13 +273,15 @@ class SynthesisPipeline:
     2. Dafny verification
     3. Compilation to Python
     4. Runtime testing
-    5. Feedback-based refinement on failure
+    5. Evaluation on dataset sample (optional)
+    6. Feedback-based refinement on failure
     """
 
     DEFAULT_OUTPUT_DIR = Path(__file__).parent.parent / "outputs" / "generated-csd"
 
     def __init__(
         self,
+        evaluator: Evaluator,
         generator: Optional[StrategyGenerator] = None,
         verifier: Optional[DafnyVerifier] = None,
         compiler: Optional[DafnyCompiler] = None,
@@ -283,11 +289,17 @@ class SynthesisPipeline:
         max_iterations: int = 5,
         output_dir: Optional[Path] = None,
         save_reports: bool = True,
+        # Evaluation thresholds
+        min_accuracy: float = 0.0,
+        min_format_rate: float = 0.0,
+        min_syntax_rate: float = 0.0,
+        eval_sample_size: int = 10,
     ):
         """
         Initialize the synthesis pipeline.
 
         Args:
+            evaluator: Evaluator for dataset-based feedback (required)
             generator: Strategy generator (creates default if None)
             verifier: Dafny verifier (creates default if None)
             compiler: Dafny compiler (creates default if None)
@@ -295,7 +307,12 @@ class SynthesisPipeline:
             max_iterations: Maximum refinement iterations
             output_dir: Directory for outputs and reports
             save_reports: Whether to save failure reports to disk
+            min_accuracy: Minimum accuracy threshold for evaluation
+            min_format_rate: Minimum format validity rate threshold
+            min_syntax_rate: Minimum syntax validity rate threshold
+            eval_sample_size: Number of examples to evaluate on
         """
+        self.evaluator = evaluator
         self.generator = generator or StrategyGenerator()
         self.verifier = verifier or DafnyVerifier()
         self.compiler = compiler or DafnyCompiler()
@@ -303,6 +320,12 @@ class SynthesisPipeline:
         self.max_iterations = max_iterations
         self.output_dir = output_dir or self.DEFAULT_OUTPUT_DIR
         self.save_reports = save_reports
+
+        # Evaluation thresholds
+        self.min_accuracy = min_accuracy
+        self.min_format_rate = min_format_rate
+        self.min_syntax_rate = min_syntax_rate
+        self.eval_sample_size = eval_sample_size
 
         # Ensure output directory exists
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -382,7 +405,7 @@ class SynthesisPipeline:
             )
 
             # Stage 1: Verification
-            print("\n[1/3] Verifying with Dafny...")
+            print("\n[1/4] Verifying with Dafny...")
             verification_result = self.verifier.verify(full_code)
             attempt.verification_result = verification_result
 
@@ -392,17 +415,38 @@ class SynthesisPipeline:
                 attempt.error_summary = verification_result.get_error_summary()
                 attempts.append(attempt)
 
+                # Check if we're stuck on the same error repeatedly
+                error_msg = verification_result.get_error_summary()
+                consecutive_same = 0
+                for prev in reversed(attempts[:-1]):
+                    if prev.failed_at == FailureStage.VERIFICATION and prev.error_summary == error_msg:
+                        consecutive_same += 1
+                    else:
+                        break
+
+                if consecutive_same >= 2:
+                    # After 3+ identical errors, prepend strong guidance
+                    error_msg = (
+                        f"WARNING: This is the SAME error for {consecutive_same + 1} consecutive attempts. "
+                        f"Your previous fixes did NOT work. You MUST use a COMPLETELY DIFFERENT strategy. "
+                        f"Do NOT use any method that doesn't exist. Use ONLY: PureConstrainedGeneration, "
+                        f"TryUnconstrainedThenConstrained, HybridGeneration, SpeculativeGeneration, "
+                        f"UnconstrainedWithCompletion, CompletePrefix, GenerateWithReasonableLength, "
+                        f"GenerateUntilFirstComplete, GenerateAndSelectBest.\n\n"
+                        f"Original error:\n{error_msg}"
+                    )
+
                 # Refine based on verification error
                 print("  Refining based on verification error...")
                 strategy_code = self.generator.refine_after_verification_error(
-                    strategy_code, verification_result.get_error_summary()
+                    strategy_code, error_msg
                 )
                 continue
 
             print("  ✓ Verification passed")
 
             # Stage 2: Compilation
-            print("\n[2/3] Compiling to Python...")
+            print("\n[2/4] Compiling to Python...")
             compilation_result = compiler.compile(full_code, output_name)
             attempt.compilation_result = compilation_result
 
@@ -422,7 +466,7 @@ class SynthesisPipeline:
             print(f"  ✓ Compiled to {compilation_result.output_dir}")
 
             # Stage 3: Runtime test
-            print("\n[3/3] Testing runtime execution...")
+            print("\n[3/4] Testing runtime execution...")
 
             if compilation_result.main_module_path is None:
                 print("  ✗ No main module found")
@@ -454,6 +498,51 @@ class SynthesisPipeline:
 
             print(f"  ✓ Execution successful ({runtime_result.execution_time_ms:.1f}ms)")
             print(f"  Output length: {len(runtime_result.output or [])} tokens")
+
+            # Stage 4: Evaluation
+            print("\n[4/4] Evaluating on dataset sample...")
+            eval_result = self.evaluator.evaluate_sample(
+                compiled_module_path=compilation_result.main_module_path,
+                sample_size=self.eval_sample_size,
+            )
+            attempt.eval_result = eval_result
+
+            if not eval_result.success:
+                print(f"  ✗ Evaluation failed: {eval_result.error}")
+                attempt.failed_at = FailureStage.EVALUATION
+                attempt.error_summary = eval_result.error or "Evaluation failed"
+                attempts.append(attempt)
+
+                print("  Refining based on evaluation error...")
+                strategy_code = self.generator.refine_after_evaluation_failure(
+                    strategy_code, eval_result.get_feedback_summary()
+                )
+                continue
+
+            # Check if evaluation meets thresholds
+            if not eval_result.meets_threshold(
+                min_accuracy=self.min_accuracy,
+                min_format_rate=self.min_format_rate,
+                min_syntax_rate=self.min_syntax_rate,
+            ):
+                print(f"  ✗ Evaluation below threshold:")
+                print(f"    Accuracy: {eval_result.accuracy:.1%} (min: {self.min_accuracy:.1%})")
+                print(f"    Format: {eval_result.format_rate:.1%} (min: {self.min_format_rate:.1%})")
+                print(f"    Syntax: {eval_result.syntax_rate:.1%} (min: {self.min_syntax_rate:.1%})")
+                attempt.failed_at = FailureStage.EVALUATION
+                attempt.error_summary = eval_result.get_feedback_summary()
+                attempts.append(attempt)
+
+                print("  Refining based on evaluation results...")
+                strategy_code = self.generator.refine_after_evaluation_failure(
+                    strategy_code, eval_result.get_feedback_summary()
+                )
+                continue
+
+            print(f"  ✓ Evaluation passed:")
+            print(f"    Accuracy: {eval_result.accuracy:.1%}")
+            print(f"    Format: {eval_result.format_rate:.1%}")
+            print(f"    Syntax: {eval_result.syntax_rate:.1%}")
 
             # Success!
             attempts.append(attempt)
@@ -544,14 +633,9 @@ class SynthesisPipeline:
         with open(dafny_path, "w") as f:
             f.write(full_code)
 
-        # Also update the main GeneratedCSD.dfy in the dafny/ directory for convenience
-        try:
-            main_dafny_path = Path(__file__).parent.parent / "dafny" / "GeneratedCSD.dfy"
-            with open(main_dafny_path, "w") as f:
-                f.write(full_code)
-            print(f"Main Dafny file updated: {main_dafny_path}")
-        except Exception as e:
-            print(f"Warning: Could not update main Dafny file: {e}")
+        # NOTE: We do NOT overwrite dafny/GeneratedCSD.dfy here because it contains
+        # the template markers (QWEN_INSERT_STRATEGY_HERE) needed for future runs.
+        # The final Dafny code is saved in the run directory instead.
 
         rationale_extracted = extract_rationale(strategy_code)
 

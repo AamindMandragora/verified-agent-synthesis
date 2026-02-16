@@ -1,0 +1,8 @@
+{
+  "strategy_code": "// CSD_RATIONALE_BEGIN\n// Refined strategy\n// CSD_RATIONALE_END\ngenerated := helpers.HybridGeneration(lm, parser, prompt, maxSteps);\ncost := helpers.cost;",
+  "tool_choice_rationale": "Refined strategy",
+  "dafny_file": "/Users/aadivyaraushan/Documents/GitHub/focal-lab/outputs/generated-csd/runs/20260215_010026_eb7d84/test_csd.dfy",
+  "compiled_dir": "/Users/aadivyaraushan/Documents/GitHub/focal-lab/outputs/generated-csd/runs/20260215_010026_eb7d84/test_csd_20260215_010027_f61316",
+  "total_attempts": 2,
+  "timestamp": "2026-02-15T01:00:27.553848"
+}

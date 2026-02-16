@@ -17,6 +17,7 @@ from .prompts import (
     build_runtime_error_prompt,
     build_compilation_error_prompt,
     build_format_repair_prompt,
+    build_evaluation_failure_prompt,
 )
 from .rationale import extract_rationale
 
@@ -348,7 +349,33 @@ class StrategyGenerator:
         raw_output = self._generate_text(system_prompt, user_prompt)
         strategy = self._extract_strategy(raw_output)
         return self._ensure_rationale_block(strategy)
-    
+
+    def refine_after_evaluation_failure(
+        self,
+        previous_strategy: str,
+        evaluation_feedback: str
+    ) -> str:
+        """
+        Generate a refined strategy after evaluation failure.
+
+        The strategy passed verification, compilation, and runtime testing,
+        but performed poorly on actual dataset evaluation (low accuracy,
+        format rate, syntax rate, or semantic rate).
+
+        Args:
+            previous_strategy: The strategy that failed evaluation
+            evaluation_feedback: Feedback summary from the evaluator
+
+        Returns:
+            New strategy expression
+        """
+        system_prompt, user_prompt = build_evaluation_failure_prompt(
+            previous_strategy, evaluation_feedback
+        )
+        raw_output = self._generate_text(system_prompt, user_prompt)
+        strategy = self._extract_strategy(raw_output)
+        return self._ensure_rationale_block(strategy)
+
     def inject_strategy(self, strategy: str, cost_contract: str = "") -> str:
         """
         Inject a strategy and optional cost contract into the template.

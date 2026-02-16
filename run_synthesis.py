@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """
-CLI entry point for CSD synthesis pipeline.
+CLI entry point for CSD synthesis pipeline with evaluation feedback loop.
+
+The pipeline runs: generate → verify → compile → runtime → evaluate → refine
+until evaluation thresholds are met or max iterations exhausted.
 
 Usage:
-    python run_synthesis.py --task "Generate a strategy that..."
-    python run_synthesis.py --task "..." --max-iterations 10
-    python run_synthesis.py --task "..." --model Qwen/Qwen2.5-Coder-3B-Instruct
+    python run_synthesis.py --task "..." --dataset gsm_symbolic \\
+        --cost-contract "ensures helpers.cost <= 10" \\
+        --min-accuracy 0.3 --min-format-rate 0.5 --min-syntax-rate 0.5
+
+    python run_synthesis.py --task "..." --dataset folio \\
+        --cost-contract "ensures helpers.cost <= 8" \\
+        --min-accuracy 0.5 --min-format-rate 0.8 --min-syntax-rate 0.7
 """
 
 import argparse
 import sys
 from pathlib import Path
-from datetime import datetime
-import secrets
 
 
 def main():
@@ -21,18 +26,21 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage
-  python run_synthesis.py --task "Generate a strategy for JSON output"
-  
-  # With custom iterations
-  python run_synthesis.py --task "Generate a CRANE-style strategy" --max-iterations 10
-  
-  # Use a smaller model for faster testing
-  python run_synthesis.py --task "Generate a simple retry strategy" \\
-      --model Qwen/Qwen2.5-Coder-3B-Instruct
-  
-  # Specify output name
-  python run_synthesis.py --task "..." --output-name my_strategy
+  # GSM-Symbolic
+  python run_synthesis.py --task "Generate math reasoning strategy" \\
+      --dataset gsm_symbolic --cost-contract "ensures helpers.cost <= 10" \\
+      --min-accuracy 0.3 --min-format-rate 0.5 --min-syntax-rate 0.5
+
+  # FOLIO
+  python run_synthesis.py --task "Generate FOL reasoning strategy" \\
+      --dataset folio --cost-contract "ensures helpers.cost <= 8" \\
+      --min-accuracy 0.5 --min-format-rate 0.8 --min-syntax-rate 0.7
+
+  # With more iterations and custom eval sample size
+  python run_synthesis.py --task "..." --dataset gsm_symbolic \\
+      --cost-contract "ensures helpers.cost <= 10" \\
+      --min-accuracy 0.3 --min-format-rate 0.5 --min-syntax-rate 0.5 \\
+      --output-name my_strategy --max-iterations 10 --eval-sample-size 20
 """
     )
     
@@ -46,8 +54,8 @@ Examples:
     parser.add_argument(
         "--cost-contract", "-c",
         type=str,
-        default="",
-        help="Optional cost contract (e.g. 'ensures helpers.cost <= 10')"
+        required=True,
+        help="Cost contract for Dafny verification (e.g. 'ensures helpers.cost <= 10')"
     )
     
     parser.add_argument(
@@ -81,8 +89,8 @@ Examples:
     parser.add_argument(
         "--dafny-path",
         type=str,
-        default="/home/advayth2/projects/verified-agent-synthesis/dafny-lang/dafny/dafny",
-        help="Path to Dafny executable (default: /home/advayth2/projects/verified-agent-synthesis/dafny-lang/dafny/dafny)"
+        default="/home/aadivyar/.dotnet/tools/dafny",
+        help="Path to Dafny executable"
     )
     
     parser.add_argument(
@@ -95,8 +103,8 @@ Examples:
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=256,
-        help="Maximum tokens to generate per attempt (default: 256)"
+        default=512,
+        help="Maximum tokens to generate per attempt (default: 512)"
     )
     
     parser.add_argument(
@@ -113,25 +121,59 @@ Examples:
         help="Device for model inference (default: auto)"
     )
     
+    # Evaluation arguments (required - evaluation is part of the synthesis loop)
     parser.add_argument(
-        "--verify-only",
-        action="store_true",
-        help="Only verify existing GeneratedCSD.dfy without generating"
+        "--dataset", "-d",
+        type=str,
+        choices=["gsm_symbolic", "folio"],
+        required=True,
+        help="Dataset to use for evaluation feedback (required)"
     )
-    
+
     parser.add_argument(
-        "--compile-only",
-        action="store_true",
-        help="Verify and compile existing GeneratedCSD.dfy without generating"
+        "--min-accuracy",
+        type=float,
+        required=True,
+        help="Minimum accuracy threshold for evaluation (e.g. 0.3)"
+    )
+
+    parser.add_argument(
+        "--min-format-rate",
+        type=float,
+        required=True,
+        help="Minimum format validity rate threshold (e.g. 0.5)"
+    )
+
+    parser.add_argument(
+        "--min-syntax-rate",
+        type=float,
+        required=True,
+        help="Minimum syntax validity rate threshold (e.g. 0.5)"
+    )
+
+    parser.add_argument(
+        "--eval-sample-size",
+        type=int,
+        default=10,
+        help="Number of examples to evaluate on per iteration (default: 10)"
+    )
+
+    parser.add_argument(
+        "--eval-max-steps",
+        type=int,
+        default=150,
+        help="Maximum generation steps during evaluation (default: 150)"
+    )
+
+    parser.add_argument(
+        "--eval-vocab-size",
+        type=int,
+        default=2000,
+        help="Vocabulary size for evaluation (default: 2000)"
     )
 
     args = parser.parse_args()
-    
-    # Handle verify-only mode
-    if args.verify_only or args.compile_only:
-        run_verification_only(args)
-        return
-    
+
     # Normalize output_dir if provided (handle potential backslashes from user input)
     if args.output_dir:
         args.output_dir = Path(str(args.output_dir).replace("\\", "/"))
@@ -140,33 +182,51 @@ Examples:
     from synthesis.generator import StrategyGenerator
     from synthesis.verifier import DafnyVerifier
     from synthesis.compiler import DafnyCompiler
+    from synthesis.evaluator import Evaluator
     from synthesis.feedback_loop import SynthesisPipeline, SynthesisExhaustionError
-    
+
     # Create components
     print("Initializing synthesis pipeline...")
-    
+
     device = None if args.device == "auto" else args.device
-    
+
     generator = StrategyGenerator(
         model_name=args.model,
         device=device,
         max_new_tokens=args.max_tokens,
         temperature=args.temperature
     )
-    
+
     verifier = DafnyVerifier(dafny_path=args.dafny_path)
     # Compiler output dir is set per-run inside the pipeline (so runs don't overwrite each other).
     compiler = DafnyCompiler(dafny_path=args.dafny_path, output_dir=args.output_dir)
     # Runner is created by the pipeline with task-appropriate parser mode
-    
+
+    # Create evaluator for the feedback loop
+    print(f"Setting up evaluator for dataset: {args.dataset}")
+    evaluator = Evaluator(
+        dataset_name=args.dataset,
+        model_name=args.model,
+        device=device or "cuda",
+        vocab_size=args.eval_vocab_size,
+        sample_size=args.eval_sample_size,
+        max_steps=args.eval_max_steps,
+    )
+
     pipeline = SynthesisPipeline(
+        evaluator=evaluator,
         generator=generator,
         verifier=verifier,
         compiler=compiler,
         runner=None,  # Let pipeline create task-appropriate runner
         max_iterations=args.max_iterations,
         output_dir=args.output_dir,
-        save_reports=not args.no_save_reports
+        save_reports=not args.no_save_reports,
+        # Evaluation thresholds
+        min_accuracy=args.min_accuracy,
+        min_format_rate=args.min_format_rate,
+        min_syntax_rate=args.min_syntax_rate,
+        eval_sample_size=args.eval_sample_size,
     )
     
     # Run synthesis
@@ -207,76 +267,6 @@ Examples:
         import traceback
         traceback.print_exc()
         sys.exit(1)
-
-
-def run_verification_only(args):
-    """Run verification/compilation on existing file without generation."""
-    from synthesis.verifier import DafnyVerifier
-    from synthesis.compiler import DafnyCompiler
-    from synthesis.runner import StrategyRunner
-    
-    dafny_file = Path(__file__).parent / "dafny" / "GeneratedCSD.dfy"
-    
-    if not dafny_file.exists():
-        print(f"Error: {dafny_file} not found")
-        sys.exit(1)
-    
-    print(f"Processing: {dafny_file}")
-    
-    # Verification
-    print("\n[1/3] Verifying...")
-    verifier = DafnyVerifier(dafny_path=args.dafny_path)
-    result = verifier.verify_file(dafny_file)
-    
-    if not result.success:
-        print("✗ Verification failed:")
-        print(result.get_error_summary())
-        sys.exit(1)
-    
-    print("✓ Verification passed")
-    
-    if args.verify_only:
-        sys.exit(0)
-    
-    # Compilation
-    print("\n[2/3] Compiling to Python...")
-    base_output_dir = args.output_dir or (Path(__file__).parent / "outputs" / "generated-csd")
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + secrets.token_hex(3)
-    run_dir = base_output_dir / "runs" / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        (base_output_dir / "latest_run.txt").write_text(str(run_dir) + "\n")
-    except Exception:
-        pass
-
-    compiler = DafnyCompiler(dafny_path=args.dafny_path, output_dir=run_dir)
-    compile_result = compiler.compile_file(dafny_file, args.output_name)
-    
-    if not compile_result.success:
-        print("✗ Compilation failed:")
-        print(compile_result.get_error_summary())
-        sys.exit(1)
-    
-    print(f"✓ Compiled to {compile_result.output_dir}")
-    print(f"Run directory: {run_dir}")
-    
-    # Runtime test
-    print("\n[3/3] Testing runtime...")
-    if compile_result.main_module_path:
-        runner = StrategyRunner()
-        runtime_result = runner.run(compile_result.main_module_path)
-        
-        if not runtime_result.success:
-            print("✗ Runtime error:")
-            print(runtime_result.get_error_summary())
-            sys.exit(1)
-        
-        print(f"✓ Execution successful ({runtime_result.execution_time_ms:.1f}ms)")
-    else:
-        print("⚠ No main module found for runtime testing")
-    
-    print("\n✓ All checks passed")
-    sys.exit(0)
 
 
 if __name__ == "__main__":

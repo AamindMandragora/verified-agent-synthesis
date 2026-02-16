@@ -11,16 +11,11 @@ module GeneratedCSD {
     requires "<<" in lm.Tokens && ">>" in lm.Tokens
     ensures lm.ValidTokensIdsLogits()
     ensures |generated| <= maxSteps
-    
+    // QWEN_INSERT_COST_CONTRACT_HERE
+
   {
     var helpers := new CSDHelpers();
-    // CSD_RATIONALE_BEGIN
-    // I chose CraneGeneration for the GSM-Symbolic dataset because it matches the 
-    // CRANE-style windowing requirement: unconstrained reasoning segments outside
-    // of << and >> delimiters, and constrained math expressions inside them.
-    // CSD_RATIONALE_END
-
-    generated := helpers.CraneGeneration(lm, parser, prompt, maxSteps, 50, eosToken);
+    // QWEN_INSERT_STRATEGY_HERE
     cost := helpers.cost;
   }
 }

@@ -14,10 +14,13 @@ from pathlib import Path
 
 import torch
 
+import re
+
 from evaluations.folio.dataset import (
     load_folio,
     load_folio_from_json,
     create_synthetic_folio_examples,
+    normalize_label,
 )
 from evaluations.common.parser_utils import create_lark_dafny_parser
 from evaluations.folio.metrics import FOLIOMetrics
@@ -25,6 +28,51 @@ from evaluations.folio.generation import run_crane_csd, run_unconstrained
 from evaluations.folio.environment import setup_dafny_environment, verify_critical_tokens
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
+
+_KEYWORD_TO_UNICODE = {
+    "{forall}": "∀", "{exists}": "∃", "{and}": "∧", "{or}": "∨",
+    "{xor}": "⊕", "{not}": "¬", "{implies}": "→", "{iff}": "↔",
+}
+
+
+def _solve_fol(constrained_segments: list[str]) -> str | None:
+    """
+    Run Prover9 on constrained FOL segments to determine True/False/Unknown.
+
+    All segments except the last are treated as premises; the last is the conclusion.
+    Returns None if the solver fails.
+    """
+    if not constrained_segments:
+        return None
+
+    # Convert {keyword} syntax to Unicode
+    fol_segments = []
+    for seg in constrained_segments:
+        text = seg.strip()
+        for kw, sym in _KEYWORD_TO_UNICODE.items():
+            text = text.replace(kw, sym)
+        fol_segments.append(text)
+
+    if len(fol_segments) >= 2:
+        premises, conclusion = fol_segments[:-1], fol_segments[-1]
+    else:
+        premises, conclusion = [], fol_segments[0]
+
+    lines = ["Premises:"]
+    for p in premises:
+        lines.append(f"{p} ::: premise")
+    lines.append("Conclusion:")
+    lines.append(f"{conclusion} ::: conclusion")
+
+    try:
+        from symbolic_solvers.fol_solver.prover9_solver import FOL_Prover9_Program
+        program = FOL_Prover9_Program("\n".join(lines), dataset_name="FOLIO")
+        if not program.flag:
+            return None
+        answer, _ = program.execute_program()
+        return answer if answer in ("True", "False", "Unknown") else None
+    except Exception:
+        return None
 
 
 def main():
@@ -123,11 +171,18 @@ def main():
                 debug_csd=args.debug_csd,
             )
 
+        # Run Prover9 solver on constrained FOL segments
+        predicted = _solve_fol(constrained_segments)
+        gold_norm = normalize_label(gold_label)
+        pred_norm = normalize_label(predicted) if predicted else None
+        is_correct = pred_norm is not None and pred_norm == gold_norm
+        valid_structure = len(constrained_segments) > 0
+
         metrics.update(
-            predicted=None,
+            predicted=predicted,
             gold=gold_label,
-            is_correct=False,
-            valid_structure=False,
+            is_correct=is_correct,
+            valid_structure=valid_structure,
             fol_segments=constrained_segments,
             time_seconds=dt,
             tokens=tok_count,
@@ -140,7 +195,8 @@ def main():
         eta_str = f"{eta_seconds:.0f}s" if eta_seconds < 60 else f"{eta_seconds/60:.1f}m"
 
         print(f"  -> Tokens: {tok_count} | Time: {dt:.2f}s | "
-              f"Gold: {gold_label} | ETA: {eta_str}", flush=True)
+              f"Gold: {gold_label} | Predicted: {predicted or 'N/A'} | "
+              f"Correct: {is_correct} | ETA: {eta_str}", flush=True)
 
         if args.verbose:
             print(f"  Problem: {problem}")

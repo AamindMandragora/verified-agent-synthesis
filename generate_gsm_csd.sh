@@ -1,7 +1,7 @@
 #!/bin/bash
 # Generate a GSM-specific CSD for CRANE-style math reasoning
 #
-# Usage: bash scripts/generate_gsm_csd.sh
+# Usage: bash generate_gsm_csd.sh
 
 set -e
 
@@ -17,7 +17,7 @@ CRITICAL RULES: \
 5. The grammar includes the closing delimiter '>>' - expressions must be complete and compact. \
 6. Avoid trivial outputs (e.g., just a single variable) unless the problem truly requires it; include necessary operators."
 
-echo "🚀 Generating GSM-specific CSD for CRANE math windows..."
+echo "Generating GSM-specific CSD for CRANE math windows..."
 echo ""
 echo "Task description:"
 echo "  $TASK_DESC"
@@ -26,29 +26,27 @@ echo ""
 # Run synthesis
 python run_synthesis.py \
     --task "$TASK_DESC" \
+    --dataset gsm_symbolic \
+    --cost-contract "" \
     --max-iterations 10 \
     --model "Qwen/Qwen2.5-Coder-7B-Instruct" \
     --output-name "gsm_crane_csd" \
     --temperature 0.7 \
-    --device auto
+    --device auto \
+    --min-accuracy 0.8 \
+    --min-format-rate 1.0 \
+    --min-syntax-rate 1.0 \
+    --eval-sample-size 10
 
 echo ""
-echo "✅ GSM CSD generation complete!"
+echo "GSM CSD generation complete!"
 echo ""
 echo "To use the generated CSD, run:"
-echo "  python -m evaluations.gsm_symbolic.cli \\"
-echo "    --method crane-csd \\"
-echo "    --run-dir outputs/generated-csd/latest \\"
-echo "    --model Qwen/Qwen2.5-Coder-7B-Instruct \\"
-echo "    --device cuda \\"
-echo "    --limit 50 \\"
-echo "    --max-steps 1024 \\"
-echo "    --vocab-size 2000"
-echo ""
-echo "Or using the backward-compatible wrapper:"
-echo "  python scripts/evaluate_gsm_symbolic.py \\"
-echo "    --method crane-csd \\"
-echo "    --run-dir outputs/generated-csd/latest \\"
-echo "    --model Qwen/Qwen2.5-Coder-7B-Instruct \\"
-echo "    --device cuda \\"
-echo "    --limit 50"
+echo "CUDA_VISIBLE_DEVICES=0,1 python -m evaluations.gsm_symbolic.cli \\"
+echo "   --run-dir outputs/generated-csd/runs/latest \\"
+echo "   --model Qwen/Qwen2.5-Coder-7B-Instruct \\"
+echo "   --device cuda \\"
+echo "   --limit 50 \\"
+echo "   --max-steps 1024 \\"
+echo "   --vocab-size 2000 \\"
+echo "   --load-in-4bit"

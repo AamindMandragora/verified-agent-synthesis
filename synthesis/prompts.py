@@ -114,13 +114,6 @@ N in [2..8].
   `helpers.PrefixToString(generated)`
   Converts a sequence of tokens into a single concatenated string. Useful for string-based contracts.
 
-## Decision rubric (internal reasoning only)
-Use the use-case description to decide:
-- How strict the output format is (parser restrictive vs permissive)
-- Whether you need early flexibility (drafting/planning) vs always-valid prefixes
-- Whether you care about latency (speculation) vs simplicity/robustness
-Then pick helper(s) and parameters accordingly, staying within the stated ranges.
-
 Output format:
 - Return ONLY the method body (no signature, no outer braces).
 - Multi-line bodies are allowed and encouraged when useful (e.g., locals, branching, loops).
@@ -138,74 +131,23 @@ Output MUST start with the required rationale block (see system prompt), then ou
 Output ONLY the method body (no signature, no outer braces). Do NOT wrap output in markdown code fences (no ```dafny).
 Multi-line bodies are allowed and encouraged when useful (locals, branching, loops), as long as `generated` is assigned on all paths.
 
-Unless the use-case strongly demands the simplest baseline, prefer a **multi-statement** body (at least 2 statements),
-using locals and/or if/else around verified helper calls. Avoid writing custom loops unless necessary.
+Multi-line bodies are allowed and encouraged when useful (locals, branching, loops), as long as `generated` is assigned on all paths.
 
-To count as non-trivial multi-line, include an `if/else` with **meaningfully different** branches
-(different helper and/or different parameters). Do NOT output only a temp wrapper around a single helper call.
-
-Examples below are illustrative only - do NOT default to any one helper. Choose based on the use-case.
-
-Example (fully constrained):
+Example format (showing the required rationale + a simple call):
   // CSD_RATIONALE_BEGIN
-  // I chose PureConstrainedGeneration because every prefix must remain valid under a strict parser.
+  // <your reasoning here>
   // CSD_RATIONALE_END
-  generated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
+  generated := helpers.<SomeHelper>(lm, parser, prompt, maxSteps, ...);
   cost := helpers.cost;
 
-Example (optimistic then fallback - MUST guard for precondition):
+Example format (branching):
   // CSD_RATIONALE_BEGIN
-  // I chose TryUnconstrainedThenConstrained to allow a short burst of free drafting, then guarantee validity.
-  // N=5 is small to reduce waste if the parser is strict. I guard with maxSteps check to satisfy N<=maxSteps.
+  // <your reasoning here>
   // CSD_RATIONALE_END
   if maxSteps < 5 {{
-    generated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
+    generated := helpers.<HelperA>(lm, parser, prompt, maxSteps);
   }} else {{
-    generated := helpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);
-  }}
-  cost := helpers.cost;
-
-Example (interleaved hybrid):
-  // CSD_RATIONALE_BEGIN
-  // I chose HybridGeneration to mostly stay constrained while occasionally attempting an unconstrained token when likely safe.
-  // CSD_RATIONALE_END
-  generated := helpers.HybridGeneration(lm, parser, prompt, maxSteps);
-  cost := helpers.cost;
-
-Example (speculative speed-oriented):
-  // CSD_RATIONALE_BEGIN
-  // I chose SpeculativeGeneration to reduce per-token overhead by validating batches, prioritizing latency.
-  // Window N=4 balances speedups vs rejection waste.
-  // CSD_RATIONALE_END
-  generated := helpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, 4);
-  cost := helpers.cost;
-
-Example (unconstrained with completion/repair):
-  // CSD_RATIONALE_BEGIN
-  // I chose UnconstrainedWithCompletion to allow maximum creativity early, then roll back to a valid prefix and finish constrained.
-  // CSD_RATIONALE_END
-  generated := helpers.UnconstrainedWithCompletion(lm, parser, prompt, maxSteps);
-  cost := helpers.cost;
-
-Example (multi-line composition/branching):
-  // CSD_RATIONALE_BEGIN
-  // I chose a simple conditional: for very small maxSteps, fully constrained is cheapest; otherwise use a faster batch-based strategy.
-  // CSD_RATIONALE_END
-  if maxSteps < 6 {{
-    generated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
-  }} else {{
-    generated := helpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, 4);
-  }}
-  cost := helpers.cost;
-
-Example (preferred non-trivial multi-line: meaningful branching):
-  // CSD_RATIONALE_BEGIN
-  // I branch on maxSteps: for small budgets, fully constrained is simplest; for larger budgets, speculative can reduce overhead.
-  // CSD_RATIONALE_END
-  if maxSteps < 8 {{
-    generated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
-  }} else {{
-    generated := helpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, 4);
+    generated := helpers.<HelperB>(lm, parser, prompt, maxSteps, 5);
   }}
   cost := helpers.cost;
 """
@@ -236,6 +178,17 @@ Rules:
   - HybridGeneration interval N: 2..10
   - SpeculativeGeneration window N: 2..8
 
+**CRITICAL: If the error says "member X does not exist in class 'CSDHelpers'":**
+- That method DOES NOT EXIST. Do NOT try to use it again, even with different arguments.
+- You MUST use ONLY the methods listed in the system prompt under "Available VERIFIED strategy helpers".
+- The ONLY methods on `helpers` are: PureConstrainedGeneration, TryUnconstrainedThenConstrained,
+  HybridGeneration, SpeculativeGeneration, UnconstrainedWithCompletion, CompletePrefix,
+  GenerateWithReasonableLength, GenerateUntilFirstComplete, GenerateAndSelectBest,
+  PrefixToString, ExtractContentBetweenDelimiters.
+- There is NO ContainsArithmeticExpression, ContainsAnyVar, ContainsExpression, or similar method.
+- Do NOT write loops or conditionals that check output content. The parser handles validation automatically.
+- Instead, use a COMPLETELY DIFFERENT approach: just call a verified helper directly.
+
 Common fixes:
 - Do NOT write `var generated: Prefix;` (duplicate/shadowing). Assign to the existing out-parameter `generated` instead.
 - Avoid subtracting from `maxSteps` (e.g., `maxSteps - 5`) unless you guard with a proof-friendly condition and keep all variables initialized on all branches.
@@ -256,7 +209,7 @@ CRITICAL: If the error mentions type mismatch with `string` or `seq<Token>`:
 CRITICAL: If the error mentions `invalid UnaryExpression` and your code uses `++`:
 - Replace `++` with `+` for sequence concatenation (e.g., `a + b`, not `a ++ b`).
 
-If the same strategy keeps failing, switch to a different verified strategy helper (do not collapse to the most trivial unless the use-case demands strictness).
+If the same strategy keeps failing, switch to a COMPLETELY DIFFERENT verified strategy helper. Do not keep trying the same approach with minor tweaks.
 """
 
 
@@ -325,6 +278,46 @@ Content to rewrite:
 """
 
 
+EVALUATION_FAILURE_REFINEMENT_PROMPT = """\
+Your method body passed verification, compilation, and runtime testing, but performed poorly on actual dataset evaluation.
+
+Previous attempt:
+```dafny
+{previous_strategy}
+```
+
+Evaluation results:
+```
+{evaluation_feedback}
+```
+
+The strategy runs correctly but produces outputs that don't meet quality thresholds. Consider:
+
+1. **Format issues**: If format rate is low, the model may not be generating proper `<< >>` delimited content.
+   - HybridGeneration is designed for this - it allows free text with constrained segments in `<< >>`.
+   - Make sure the strategy doesn't exit too early before generating the constrained content.
+
+2. **Accuracy issues**: If accuracy is low, the model's reasoning within constrained segments may be wrong.
+   - Consider strategies that give the model more flexibility (UnconstrainedWithCompletion, TryUnconstrainedThenConstrained).
+   - The model may need more steps to reason before producing the constrained output.
+
+3. **Syntax/Semantic issues**: If these rates are low, the constrained content doesn't match the grammar.
+   - PureConstrainedGeneration guarantees syntax validity but may be too restrictive.
+   - HybridGeneration validates content within `<< >>` and rolls back invalid segments.
+
+4. **Strategy selection**: Different tasks benefit from different strategies:
+   - Math problems (GSM): HybridGeneration allows reasoning text + constrained expressions
+   - Logic problems (FOLIO): HybridGeneration for reasoning + constrained FOL formulas
+   - Simple extraction: PureConstrainedGeneration if output is purely structured
+
+Rules:
+- Output ONLY a corrected method body (no signature, no braces).
+- The corrected body MUST include the required rationale block at the top.
+- Try a DIFFERENT strategy or different parameters than the previous attempt.
+- If you've tried multiple strategies without success, try adjusting parameters (e.g., increase maxSteps budget, change speculative window size).
+"""
+
+
 def build_initial_prompt(task_description: str) -> tuple[str, str]:
     user_prompt = INITIAL_GENERATION_PROMPT.format(task_description=task_description)
     return SYSTEM_PROMPT, user_prompt
@@ -356,6 +349,14 @@ def build_compilation_error_prompt(previous_strategy: str, error_message: str) -
 
 def build_format_repair_prompt(previous_strategy: str) -> tuple[str, str]:
     user_prompt = FORMAT_REPAIR_PROMPT.format(previous_strategy=previous_strategy)
+    return SYSTEM_PROMPT, user_prompt
+
+
+def build_evaluation_failure_prompt(previous_strategy: str, evaluation_feedback: str) -> tuple[str, str]:
+    user_prompt = EVALUATION_FAILURE_REFINEMENT_PROMPT.format(
+        previous_strategy=previous_strategy,
+        evaluation_feedback=evaluation_feedback,
+    )
     return SYSTEM_PROMPT, user_prompt
 
 
