@@ -293,7 +293,7 @@ class SynthesisPipeline:
         min_accuracy: float = 0.0,
         min_format_rate: float = 0.0,
         min_syntax_rate: float = 0.0,
-        eval_sample_size: int = 10,
+        eval_sample_size: int = 1,
     ):
         """
         Initialize the synthesis pipeline.

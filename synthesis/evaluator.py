@@ -100,7 +100,7 @@ class Evaluator:
         model_name: str = "Qwen/Qwen2.5-0.5B-Instruct",
         device: str = "cuda",
         vocab_size: int = 2000,
-        sample_size: int = 10,
+        sample_size: int = 1,
         max_steps: int = 150,
     ):
         """
@@ -389,7 +389,9 @@ class Evaluator:
         """
         if sample_size is not None:
             self.sample_size = sample_size
-            self._dataset = None
+
+        # Always re-sample so each iteration gets a fresh random example
+        self._dataset = None
 
         start_time = time.time()
         sample_outputs: List[Dict[str, Any]] = []

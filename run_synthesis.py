@@ -154,8 +154,8 @@ Examples:
     parser.add_argument(
         "--eval-sample-size",
         type=int,
-        default=10,
-        help="Number of examples to evaluate on per iteration (default: 10)"
+        default=1,
+        help="Number of examples to evaluate on per iteration (default: 1)"
     )
 
     parser.add_argument(

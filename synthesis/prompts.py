@@ -29,17 +29,15 @@ You are generating a *constrained decoding strategy implementation* for a specif
 
 You must output ONLY the Dafny method body for:
 
-  method MyCSDStrategy(lm: LM, parser: Parser, prompt: Prefix, maxSteps: nat) returns (generated: Prefix, cost: int)
+  method MyCSDStrategy(lm: LM, parser: Parser, prompt: Prefix, maxSteps: nat, eosToken: Token) returns (generated: Prefix, cost: int)
     modifies lm.Logits
     requires lm.ValidTokensIdsLogits()
     requires parser.IsValidPrefix([])
     requires forall t: Token :: t in parser.ValidNextTokens([]) ==> t in lm.Tokens
+    requires "<<" in lm.Tokens && ">>" in lm.Tokens
     ensures lm.ValidTokensIdsLogits()
     ensures |generated| <= maxSteps
-    ensures parser.IsValidPrefix(generated)
-    ensures |generated| == maxSteps || parser.IsCompletePrefix(generated)
     // PLUS a user-defined cost contract (ensures clause)
-    // PLUS a default cost bound like `ensures cost <= 2 * maxSteps`
 
 Important constraints:
 - Output MUST be valid Dafny statements (end statements with ';').
@@ -80,28 +78,35 @@ After this, output the Dafny statements for the strategy body.
   generated := helpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, N);
 N in [1..20], N <= maxSteps.
 
-3) Interleaved hybrid (uses << >> for hybrid segments):
+3) Interleaved hybrid (starts in constrained mode, switches to unconstrained inside << >>):
   generated := helpers.HybridGeneration(lm, parser, prompt, maxSteps);
-  This strategy allows the model to produce reasoning/thought segments within << and >>.
-  If the content between delimiters is invalid according to the parser, it is rolled back.
+  Starts constrained. When << is generated (must be valid per grammar), switches to unconstrained.
+  When >> is generated, validates and switches back. Best when << is a valid grammar token.
 
-4) Speculative:
+4) CRANE-style generation (starts unconstrained, switches to constrained inside << >>):
+  generated := helpers.CraneGeneration(lm, parser, prompt, maxSteps, minReasoningSteps, eosToken);
+  Starts unconstrained (free-form text). When the model generates <<, switches to constrained
+  (parser-enforced) until the parser completes (e.g., expression + >>). Then switches back.
+  `minReasoningSteps` (nat): minimum unconstrained tokens before << is allowed.
+  `eosToken` is available as a method parameter.
+
+5) Speculative:
   generated := helpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, N);
 N in [2..8].
 
-5) Max creativity with repair/complete:
+6) Max creativity with repair/complete:
   generated := helpers.UnconstrainedWithCompletion(lm, parser, prompt, maxSteps);
 
-6) Completion of an existing valid prefix:
+7) Completion of an existing valid prefix:
   generated := helpers.CompletePrefix(lm, parser, prompt, partial, maxSteps);
 
-7) Generate with reasonable length:
+8) Generate with reasonable length:
   generated := helpers.GenerateWithReasonableLength(lm, parser, prompt, maxSteps, reasonableLength);
 
-8) Generate until first complete:
+9) Generate until first complete:
   generated := helpers.GenerateUntilFirstComplete(lm, parser, prompt, maxSteps);
 
-9) Generate multiple candidates and select best:
+10) Generate multiple candidates and select best:
   generated := helpers.GenerateAndSelectBest(lm, parser, prompt, maxSteps, numCandidates, preferShorter);
 
 ## Utility Functions for Contracts (use in `ensures` clauses)
