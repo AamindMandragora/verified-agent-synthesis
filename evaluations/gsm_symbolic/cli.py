@@ -9,6 +9,7 @@ Prompt formatting and answer extraction must be provided externally.
 from __future__ import annotations
 
 import argparse
+import re
 import time
 from pathlib import Path
 
@@ -35,10 +36,8 @@ def main():
                     help="GSM-Symbolic difficulty level")
     ap.add_argument("--limit", type=int, default=100,
                     help="Max examples to evaluate")
-    ap.add_argument("--max-steps", type=int, default=1024,
+    ap.add_argument("--max-steps", type=int, default=2000,
                     help="Max steps for generation")
-    ap.add_argument("--vocab-size", type=int, default=2000,
-                    help="Token vocabulary size limit")
     ap.add_argument("--grammar", type=Path, default=PROJECT_ROOT / "grammars" / "gsm.lark",
                     help="Grammar file for math validation")
     ap.add_argument("--verbose", action="store_true",
@@ -64,7 +63,6 @@ def main():
         run_dir=args.run_dir,
         model_name=args.model,
         device=args.device,
-        vocab_size=args.vocab_size,
         grammar_file=args.grammar,
         load_in_4bit=args.load_in_4bit,
         load_in_8bit=args.load_in_8bit,
@@ -83,8 +81,21 @@ def main():
 
         print(f"[{i+1}/{n}] Processing example...", flush=True)
 
-        # The prompt is just the raw question — no hardcoded formatting
-        prompt = question
+        prompt = (
+            "Solve the following math problem step by step. "
+            "Assign a single-letter variable to each quantity and state its numeric value. "
+            "Write each computation step as a SHORT expression inside << >> delimiters — "
+            "one step per << >> window, closing >> before starting the next step.\n\n"
+            "Example:\n"
+            "Q: A store sells pens for $3 each and notebooks for $8 each. "
+            "Bob buys 4 pens and 2 notebooks. How much does he spend?\n"
+            "A: Let p = 3, n = 8, a = 4, b = 2.\n"
+            "Pen total = <<a * p>>\n"
+            "Notebook total = <<b * n>>\n"
+            "Total spent = <<a * p + b * n>>\n"
+            "The answer is a * p + b * n.\n\n"
+            f"Q: {question}\nA:"
+        )
 
         if args.unconstrained:
             out_text, tok_count, dt = run_unconstrained(
@@ -98,9 +109,57 @@ def main():
                 debug_delimiters=args.debug_delimiters,
             )
 
+        # Evaluate format: output must contain at least one <<...>> segment
+        is_valid_format = bool(re.search(r"<<[^<>]+>>", out_text))
+
+        # Evaluate accuracy: extract expected answer, extract actual from last <<>> segment
+        expected = None
+        m = re.search(r"####\s*([-+]?\d*\.?\d+)", example.get("answer", ""))
+        if m:
+            expected = m.group(1)
+
+        actual = None
+        seg_matches = re.findall(r"<<\s*([^<>]+?)\s*>>", out_text)
+        if seg_matches:
+            last_expr = seg_matches[-1].strip()
+            # Parse variable assignments from the output (e.g. "a = 5")
+            var_values = {}
+            for vm in re.finditer(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([-+]?\d+(?:\.\d+)?)\b', out_text):
+                try:
+                    var_values[vm.group(1)] = float(vm.group(2))
+                except ValueError:
+                    pass
+            # Substitute variables and evaluate
+            if var_values:
+                substituted = last_expr
+                for var in sorted(var_values, key=len, reverse=True):
+                    substituted = re.sub(r'\b' + re.escape(var) + r'\b', str(var_values[var]), substituted)
+                if not re.search(r'[a-zA-Z_]', substituted):
+                    try:
+                        import ast, operator as op
+                        _ops = {ast.Add: op.add, ast.Sub: op.sub, ast.Mult: op.mul,
+                                ast.Div: op.truediv, ast.FloorDiv: op.floordiv,
+                                ast.Mod: op.mod, ast.USub: op.neg, ast.UAdd: op.pos}
+                        def _eval(node):
+                            if isinstance(node, (ast.Constant, ast.Num)):
+                                return float(getattr(node, 'value', getattr(node, 'n', 0)))
+                            elif isinstance(node, ast.BinOp) and type(node.op) in _ops:
+                                return _ops[type(node.op)](_eval(node.left), _eval(node.right))
+                            elif isinstance(node, ast.UnaryOp) and type(node.op) in _ops:
+                                return _ops[type(node.op)](_eval(node.operand))
+                            raise ValueError
+                        result = _eval(ast.parse(substituted.strip(), mode='eval').body)
+                        val = int(result) if result == int(result) else result
+                        actual = str(val)
+                    except Exception:
+                        pass
+
+        is_correct = (actual is not None and expected is not None and
+                      str(actual).strip() == str(expected).strip())
+
         metrics.update(
-            is_correct=False,
-            is_valid_format=False,
+            is_correct=is_correct,
+            is_valid_format=is_valid_format,
             token_count=tok_count,
             time_seconds=dt,
             constrained_segments=constrained_segments,
@@ -115,6 +174,7 @@ def main():
 
         if args.verbose:
             print(f"  Question: {question}")
+            print(f"  Expected: {expected} | Actual: {actual} | Correct: {is_correct}")
             print(f"  Output: {out_text}")
             print()
 

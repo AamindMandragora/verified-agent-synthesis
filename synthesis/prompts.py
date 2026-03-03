@@ -37,7 +37,7 @@ You must output ONLY the Dafny method body for:
     requires "<<" in lm.Tokens && ">>" in lm.Tokens
     ensures lm.ValidTokensIdsLogits()
     ensures |generated| <= maxSteps
-    // PLUS a user-defined cost contract (ensures clause)
+    ensures cost <= maxSteps  // built-in: total LM calls must not exceed maxSteps
 
 Important constraints:
 - Output MUST be valid Dafny statements (end statements with ';').
@@ -47,7 +47,8 @@ Important constraints:
 - You MUST use the `helpers` instance (type `CSDHelpers`) which is already instantiated for you.
 - Do NOT use `CSDHelpers.<Method>` (static call); use `helpers.<Method>` (instance call).
 - `CSDHelpers` now tracks `cost: int`. Every helper call increments `helpers.cost`.
-- Your generated code will be checked against the cost contract.
+- The cost contract `ensures cost <= maxSteps` is built-in. Every strategy must satisfy it.
+  All verified strategy helpers already guarantee `cost <= old(cost) + maxSteps`.
 - Be constraint-driven: choose the strategy/parameters based on the parser strictness
   and the method contract, not based on any canned examples.
 
@@ -71,43 +72,49 @@ After this, output the Dafny statements for the strategy body.
 
 ## Available VERIFIED strategy helpers (use `helpers.<Method>`)
 
-1) Pure constrained:
+All helpers below satisfy `cost <= maxSteps` (the built-in cost contract).
+
+1) Pure constrained (cost == |generated| <= maxSteps):
   generated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
 
-2) Optimistic then fallback:
+2) Optimistic then fallback (cost <= maxSteps):
   generated := helpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, N);
-N in [1..20], N <= maxSteps.
+  N in [1..20], N <= maxSteps. Uses N tokens unconstrained, then up to maxSteps-N constrained.
 
-3) Interleaved hybrid (starts in constrained mode, switches to unconstrained inside << >>):
+3) Interleaved hybrid (cost <= maxSteps):
   generated := helpers.HybridGeneration(lm, parser, prompt, maxSteps);
   Starts constrained. When << is generated (must be valid per grammar), switches to unconstrained.
-  When >> is generated, validates and switches back. Best when << is a valid grammar token.
+  When >> is generated, validates and switches back. Shares a single cost budget = maxSteps.
+  WARNING: Only use this when << is itself a valid first token in the grammar. If the grammar
+  starts with an expression (e.g., s_expr), << will never be generated in constrained mode, so
+  the strategy just generates a short expression and exits — it will NOT produce reasoning text.
 
-4) CRANE-style generation (starts unconstrained, switches to constrained inside << >>):
+4) CRANE-style generation (cost <= maxSteps):
   generated := helpers.CraneGeneration(lm, parser, prompt, maxSteps, minReasoningSteps, eosToken);
   Starts unconstrained (free-form text). When the model generates <<, switches to constrained
-  (parser-enforced) until the parser completes (e.g., expression + >>). Then switches back.
-  `minReasoningSteps` (nat): minimum unconstrained tokens before << is allowed.
+  (parser-enforced) until the parser completes (e.g., expression + >>). Then switches back to
+  unconstrained. Repeats until EOS or maxSteps.
+  `minReasoningSteps` (nat): minimum unconstrained tokens before << is allowed (use 5-20).
   `eosToken` is available as a method parameter.
+  USE THIS for tasks where the model generates reasoning text interspersed with << expr >> windows.
+  This is the correct strategy for GSM-Symbolic and CRANE-style math reasoning.
 
-5) Speculative:
+5) Speculative (cost <= maxSteps):
   generated := helpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, N);
-N in [2..8].
+  N in [2..8]. Rejected speculations still cost tokens from the shared budget.
 
-6) Max creativity with repair/complete:
-  generated := helpers.UnconstrainedWithCompletion(lm, parser, prompt, maxSteps);
-
-7) Completion of an existing valid prefix:
+6) Completion of an existing valid prefix (cost == |generated| - |partial|):
   generated := helpers.CompletePrefix(lm, parser, prompt, partial, maxSteps);
 
-8) Generate with reasonable length:
+7) Generate with reasonable length (cost == |generated| <= maxSteps):
   generated := helpers.GenerateWithReasonableLength(lm, parser, prompt, maxSteps, reasonableLength);
 
-9) Generate until first complete:
+8) Generate until first complete (cost == |generated| <= maxSteps):
   generated := helpers.GenerateUntilFirstComplete(lm, parser, prompt, maxSteps);
 
-10) Generate multiple candidates and select best:
+9) Generate multiple candidates and select best (cost <= maxSteps):
   generated := helpers.GenerateAndSelectBest(lm, parser, prompt, maxSteps, numCandidates, preferShorter);
+  Requires numCandidates <= maxSteps. Each candidate gets maxSteps/numCandidates budget.
 
 ## Utility Functions for Contracts (use in `ensures` clauses)
 
@@ -134,8 +141,6 @@ Use-case description: {task_description}
 Output MUST start with the required rationale block (see system prompt), then output ONLY the Dafny code.
 
 Output ONLY the method body (no signature, no outer braces). Do NOT wrap output in markdown code fences (no ```dafny).
-Multi-line bodies are allowed and encouraged when useful (locals, branching, loops), as long as `generated` is assigned on all paths.
-
 Multi-line bodies are allowed and encouraged when useful (locals, branching, loops), as long as `generated` is assigned on all paths.
 
 Example format (showing the required rationale + a simple call):
@@ -187,7 +192,7 @@ Rules:
 - That method DOES NOT EXIST. Do NOT try to use it again, even with different arguments.
 - You MUST use ONLY the methods listed in the system prompt under "Available VERIFIED strategy helpers".
 - The ONLY methods on `helpers` are: PureConstrainedGeneration, TryUnconstrainedThenConstrained,
-  HybridGeneration, SpeculativeGeneration, UnconstrainedWithCompletion, CompletePrefix,
+  HybridGeneration, CraneGeneration, SpeculativeGeneration, CompletePrefix,
   GenerateWithReasonableLength, GenerateUntilFirstComplete, GenerateAndSelectBest,
   PrefixToString, ExtractContentBetweenDelimiters.
 - There is NO ContainsArithmeticExpression, ContainsAnyVar, ContainsExpression, or similar method.
@@ -199,11 +204,11 @@ Common fixes:
 - Avoid subtracting from `maxSteps` (e.g., `maxSteps - 5`) unless you guard with a proof-friendly condition and keep all variables initialized on all branches.
 - **CRITICAL**: When using TryUnconstrainedThenConstrained with a constant N, you MUST guard it with `if maxSteps >= N` or use PureConstrainedGeneration when maxSteps is too small. Otherwise Dafny cannot prove the precondition `N <= maxSteps`.
   Example fix for "precondition could not be proved" error:
-    WRONG: generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);
+    WRONG: generated := helpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);
     RIGHT: if maxSteps < 5 {{
-             generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
+             generated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
            }} else {{
-             generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);
+             generated := helpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);
            }}
 
 CRITICAL: If the error mentions type mismatch with `string` or `seq<Token>`:
@@ -239,7 +244,8 @@ Rules:
 - Preserve non-triviality when possible: keep a meaningful multi-statement structure (prefer `if/else` with different branches). Do not collapse to a single helper call unless required to make runtime succeed.
 - Keep parameters in-range (see verification prompt).
 - If the runtime error suggests the environment is strict, move toward safer strategies:
-  SpeculativeGeneration -> HybridGeneration -> TryUnconstrainedThenConstrained -> PureConstrainedGeneration
+  SpeculativeGeneration -> CraneGeneration -> TryUnconstrainedThenConstrained -> PureConstrainedGeneration
+- For CRANE-style tasks (math/logic with << >> delimiters in free text), prefer CraneGeneration.
 """
 
 
@@ -298,22 +304,28 @@ Evaluation results:
 
 The strategy runs correctly but produces outputs that don't meet quality thresholds. Consider:
 
-1. **Format issues**: If format rate is low, the model may not be generating proper `<< >>` delimited content.
-   - HybridGeneration is designed for this - it allows free text with constrained segments in `<< >>`.
-   - Make sure the strategy doesn't exit too early before generating the constrained content.
+1. **Format issues (format rate = 0%)**: The model is not generating any `<< >>` delimiters at all.
+   - This almost certainly means the strategy is starting in constrained mode (e.g., HybridGeneration,
+     PureConstrainedGeneration), which forces the grammar immediately and never generates free text.
+   - The grammar starts with `s_expr` (an arithmetic expression), so constrained mode generates a
+     short expression and terminates — it never reaches `<<`.
+   - FIX: Switch to `CraneGeneration`. It starts UNCONSTRAINED (free text), watches for `<<`,
+     then switches to constrained mode for the expression, then back to unconstrained.
+   - CraneGeneration is the ONLY strategy that correctly handles CRANE-style `<< expr >>` generation
+     where the model produces reasoning text alongside constrained expression windows.
 
-2. **Accuracy issues**: If accuracy is low, the model's reasoning within constrained segments may be wrong.
-   - Consider strategies that give the model more flexibility (UnconstrainedWithCompletion, TryUnconstrainedThenConstrained).
-   - The model may need more steps to reason before producing the constrained output.
+2. **Accuracy issues**: If format rate > 0 but accuracy is low, the model's constrained expressions may be wrong.
+   - Consider increasing `minReasoningSteps` in CraneGeneration to let the model reason more.
+   - The expressions must contain variables (not just numbers). The grammar enforces this.
 
-3. **Syntax/Semantic issues**: If these rates are low, the constrained content doesn't match the grammar.
-   - PureConstrainedGeneration guarantees syntax validity but may be too restrictive.
-   - HybridGeneration validates content within `<< >>` and rolls back invalid segments.
+3. **Syntax issues**: If syntax rate is low but format rate is OK, the expressions don't match the grammar.
+   - CraneGeneration with constrained mode inside << >> guarantees grammar-valid expressions.
+   - PureConstrainedGeneration guarantees syntax but won't produce reasoning text.
 
-4. **Strategy selection**: Different tasks benefit from different strategies:
-   - Math problems (GSM): HybridGeneration allows reasoning text + constrained expressions
-   - Logic problems (FOLIO): HybridGeneration for reasoning + constrained FOL formulas
-   - Simple extraction: PureConstrainedGeneration if output is purely structured
+4. **Strategy selection**:
+   - GSM-Symbolic (math reasoning with `<< expr >>` windows): USE CraneGeneration
+   - FOLIO (logic with `<< formula >>` windows): USE CraneGeneration
+   - Simple structured output only: PureConstrainedGeneration
 
 Rules:
 - Output ONLY a corrected method body (no signature, no braces).

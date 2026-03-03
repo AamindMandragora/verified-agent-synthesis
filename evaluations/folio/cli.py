@@ -90,8 +90,6 @@ def main():
                     help="Max examples to evaluate")
     ap.add_argument("--max-steps", type=int, default=1500,
                     help="Max steps for generation")
-    ap.add_argument("--vocab-size", type=int, default=2000,
-                    help="Token vocabulary size limit")
     ap.add_argument("--grammar", type=Path, default=PROJECT_ROOT / "grammars" / "folio.lark",
                     help="Grammar file for FOL validation")
     ap.add_argument("--verbose", action="store_true",
@@ -140,7 +138,6 @@ def main():
         run_dir=args.run_dir,
         model_name=args.model,
         device=args.device,
-        vocab_size=args.vocab_size,
         grammar_file=args.grammar,
     )
     verify_critical_tokens(dafny_env["tokenizer"])

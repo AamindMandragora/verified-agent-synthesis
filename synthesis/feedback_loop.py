@@ -68,10 +68,10 @@ def parse_strategy_type(strategy_code: str) -> dict:
             "category": "speculative",
             "comparable_to": "SpecDec-like",
         },
-        "UnconstrainedWithCompletion": {
-            "pattern": r"UnconstrainedWithCompletion",
-            "category": "unconstrained_then_repair",
-            "comparable_to": "PICARD-like",
+        "CraneGeneration": {
+            "pattern": r"CraneGeneration",
+            "category": "crane_style",
+            "comparable_to": "CRANE",
         },
     }
 
@@ -293,7 +293,7 @@ class SynthesisPipeline:
         min_accuracy: float = 0.0,
         min_format_rate: float = 0.0,
         min_syntax_rate: float = 0.0,
-        eval_sample_size: int = 1,
+        eval_sample_size: int = 10,
     ):
         """
         Initialize the synthesis pipeline.
@@ -334,7 +334,6 @@ class SynthesisPipeline:
         self,
         task_description: str,
         output_name: str = "generated_csd",
-        cost_contract: str = "",
     ) -> SynthesisResult:
         """
         Synthesize a CSD strategy for the given task.
@@ -342,7 +341,6 @@ class SynthesisPipeline:
         Args:
             task_description: Description of what the strategy should accomplish
             output_name: Name for the output module
-            cost_contract: Optional cost contract (e.g. "ensures helpers.cost <= 10")
 
         Returns:
             SynthesisResult on success
@@ -382,9 +380,7 @@ class SynthesisPipeline:
 
         # Initial generation
         print(f"Generating initial strategy for: {task_description}")
-        if cost_contract:
-            print(f"Using cost contract: {cost_contract}")
-        strategy_code = self.generator.generate_initial(task_description, cost_contract)
+        strategy_code = self.generator.generate_initial(task_description)
 
         for iteration in range(self.max_iterations):
             attempt_num = iteration + 1
@@ -394,7 +390,7 @@ class SynthesisPipeline:
             print(f"Strategy: {strategy_code}")
 
             # Create full Dafny code
-            full_code = self.generator.inject_strategy(strategy_code, cost_contract)
+            full_code = self.generator.inject_strategy(strategy_code)
 
             # Create attempt record
             attempt = SynthesisAttempt(
@@ -430,8 +426,8 @@ class SynthesisPipeline:
                         f"WARNING: This is the SAME error for {consecutive_same + 1} consecutive attempts. "
                         f"Your previous fixes did NOT work. You MUST use a COMPLETELY DIFFERENT strategy. "
                         f"Do NOT use any method that doesn't exist. Use ONLY: PureConstrainedGeneration, "
-                        f"TryUnconstrainedThenConstrained, HybridGeneration, SpeculativeGeneration, "
-                        f"UnconstrainedWithCompletion, CompletePrefix, GenerateWithReasonableLength, "
+                        f"TryUnconstrainedThenConstrained, HybridGeneration, CraneGeneration, SpeculativeGeneration, "
+                        f"CompletePrefix, GenerateWithReasonableLength, "
                         f"GenerateUntilFirstComplete, GenerateAndSelectBest.\n\n"
                         f"Original error:\n{error_msg}"
                     )

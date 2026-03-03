@@ -43,69 +43,21 @@ class RuntimeResult:
 class StrategyRunner:
     """
     Executes compiled Dafny strategies in Python.
-    
-    Loads the generated Python module, injects runtime stubs,
-    and executes the strategy with test inputs.
-    
+
+    Loads the generated Python module and executes the strategy with test inputs.
+
     Supports two parser modes:
     - "permissive": Accepts all tokens (for testing compilation)
     - "json": Uses real JSON prefix validation
     """
-    
+
     def __init__(
         self,
-        extern_functions_path: Optional[Path] = None,
-        vocab_size: int = 1000,
         max_steps: int = 100,
         parser_mode: ParserMode = "permissive"
     ):
-        """
-        Initialize the runner.
-        
-        Args:
-            extern_functions_path: Path to extern_functions.py (auto-detected if None)
-            vocab_size: Vocabulary size for the LM stub
-            max_steps: Maximum generation steps
-            parser_mode: "permissive" for testing, "json" for real JSON validation
-        """
-        self.vocab_size = vocab_size
         self.max_steps = max_steps
         self.parser_mode = parser_mode
-        
-        # Auto-detect extern functions path
-        if extern_functions_path is None:
-            extern_functions_path = (
-                Path(__file__).parent.parent / 
-                "dafny_externs" / 
-                "extern_functions.py"
-            )
-        
-        if not extern_functions_path.exists():
-            raise FileNotFoundError(
-                f"Extern functions not found at {extern_functions_path}. "
-                "Make sure extern_functions.py exists in dafny_externs/"
-            )
-        
-        self.extern_functions_path = extern_functions_path
-        self._externs_module = None
-    
-    def _load_externs(self) -> Any:
-        """Load the Dafny extern functions module."""
-        if self._externs_module is None:
-            spec = importlib.util.spec_from_file_location(
-                "extern_functions",
-                self.extern_functions_path
-            )
-            if spec is None or spec.loader is None:
-                raise RuntimeError(
-                    f"Could not load extern functions from {self.extern_functions_path}"
-                )
-            
-            self._externs_module = importlib.util.module_from_spec(spec)
-            sys.modules["extern_functions"] = self._externs_module
-            spec.loader.exec_module(self._externs_module)
-        
-        return self._externs_module
     
     def _load_compiled_module(self, module_path: Path) -> Any:
         """
@@ -135,29 +87,6 @@ class StrategyRunner:
         
         return module
     
-    def _create_test_environment(self) -> tuple[Any, Any, list[str], set[str]]:
-        """
-        Create a test environment with LM, Parser, prompt, and tokens.
-        
-        Returns:
-            Tuple of (lm, parser, prompt, allTokens)
-        """
-        externs = self._load_externs()
-        
-        # Create LM with test vocabulary
-        lm = externs.LM(vocab_size=self.vocab_size)
-        
-        # Create parser (permissive for testing)
-        parser = externs.Parser()
-        
-        # Simple test prompt
-        prompt = ["<START>"]
-        
-        # All tokens from LM vocabulary
-        all_tokens = set(lm.Tokens)
-        
-        return lm, parser, prompt, all_tokens
-    
     def _create_dafny_test_environment(self, module_dir: Path) -> tuple[Any, Any, Any, int]:
         """
         Create a Dafny-compatible test environment.
@@ -175,71 +104,47 @@ class StrategyRunner:
         
         # Create a Dafny-compatible LM with extern implementations
         class TestLM(VerifiedDecoderAgent.LM):
-            def __init__(self, vocab_size=100, json_mode=False):
+            def __init__(self, json_mode=False):
                 super().__init__()
                 self.json_mode = json_mode
                 # Initialize vocabulary
-                tokens = self._create_vocabulary(vocab_size, json_mode)
-                
+                tokens = self._create_vocabulary(json_mode)
+
                 # Convert tokens to Dafny strings (seq<char>)
                 import _dafny
                 dafny_tokens = [_dafny.SeqWithoutIsStrInference(t) for t in tokens]
-                
+
                 self._Tokens = _dafny.SeqWithoutIsStrInference(dafny_tokens)
                 self._Ids = _dafny.SeqWithoutIsStrInference(list(range(len(tokens))))
                 self.Logits = _dafny.Array(None, len(tokens))
                 for i in range(len(tokens)):
                     self.Logits[i] = _dafny.BigRational(0)
-            
-            def _create_vocabulary(self, vocab_size, json_mode):
+                # Precompute token string -> indices mapping for fast masking
+                self._token_str_to_indices = {}
+                for i, t in enumerate(tokens):
+                    self._token_str_to_indices.setdefault(t, []).append(i)
+
+            @staticmethod
+            def _create_vocabulary(json_mode):
                 """Create vocabulary, optionally with JSON tokens."""
                 if not json_mode:
-                    tokens = ["<<", ">>"]
-                    for i in range(vocab_size - 2):
-                        if i == 0:
-                            tokens.append("<EOS>")
-                        elif i < 26:
-                            tokens.append(chr(ord('a') + i - 1))
-                        else:
-                            tokens.append(f"<T{i}>")
+                    tokens = ["<<", ">>", "<EOS>"]
+                    for i in range(25):
+                        tokens.append(chr(ord('a') + i))
                     return tokens
-                
+
                 # JSON-friendly vocabulary
-                tokens = []
-                
-                # Hybrid delimiters
-                tokens.extend(["<<", ">>"])
-                
-                # Structural tokens
-                structural = ["{", "}", "[", "]", ":", ",", " ", "\n", "\t", '"']
-                tokens.extend(structural)
-                
-                # Escape sequences
-                escapes = ["\\", "\\n", "\\t", "\\r", '\\"', "\\\\"]
-                tokens.extend(escapes)
-                
-                # Numbers
+                tokens = ["<<", ">>"]
+                tokens.extend(["{", "}", "[", "]", ":", ",", " ", "\n", "\t", '"'])
+                tokens.extend(["\\", "\\n", "\\t", "\\r", '\\"', "\\\\"])
                 tokens.extend(list("0123456789"))
                 tokens.extend([".", "-", "+", "e", "E"])
-                
-                # JSON literals
                 tokens.extend(["true", "false", "null"])
-                
-                # Letters
                 for c in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ":
                     tokens.append(c)
-                
-                # Common keys
                 tokens.extend(["name", "value", "id", "type", "data", "message"])
-                
-                # EOS
                 tokens.append("<EOS>")
-                
-                # Fill to vocab_size
-                while len(tokens) < vocab_size:
-                    tokens.append(f"<T{len(tokens)}>")
-                
-                return tokens[:vocab_size]
+                return tokens
             
             def _bigrational_to_float(self, br) -> float:
                 """Convert BigRational to float."""
@@ -281,13 +186,22 @@ class StrategyRunner:
                 return self._Tokens[best_idx]
             
             def MaskTokensExcept(self, valid_tokens):
-                """Extern: Mask all tokens except those in valid_tokens."""
+                """Extern: Mask all tokens except those in valid_tokens.
+
+                Uses a precomputed token-string-to-index mapping to avoid
+                converting every vocabulary token on each call.
+                """
                 masked_val = _dafny.BigRational('-1e9')
-                # Convert valid_tokens (Dafny Seq) to a set for fast lookup
-                valid_set = set(valid_tokens)
-                
+                # Build set of valid indices using precomputed mapping
+                valid_indices = set()
+                for vt in valid_tokens:
+                    s = str(vt) if not isinstance(vt, str) else vt
+                    indices = self._token_str_to_indices.get(s)
+                    if indices is not None:
+                        valid_indices.update(indices)
+
                 for i in range(self.Logits.length(0)):
-                    if self._Tokens[i] not in valid_set:
+                    if i not in valid_indices:
                         self.Logits[i] = masked_val
 
             def HasEOSToken(self):
@@ -391,7 +305,7 @@ class StrategyRunner:
         
         # Create instances based on parser mode
         is_json_mode = self.parser_mode == "json"
-        lm = TestLM(vocab_size=self.vocab_size, json_mode=is_json_mode)
+        lm = TestLM(json_mode=is_json_mode)
         
         if is_json_mode:
             parser = JsonParser(lm._Tokens)
@@ -494,7 +408,7 @@ class StrategyRunner:
             
             # Note: We no longer manually validate the output here.
             # The Dafny strategy is formally verified to maintain parser validity
-            # and satisfy cost contracts.
+            # and satisfy the built-in cost contract (cost <= maxSteps).
             
             return RuntimeResult(
                 success=True,
@@ -514,92 +428,4 @@ class StrategyRunner:
                 execution_time_ms=execution_time
             )
     
-    def _is_strategy_like(self, obj: Any) -> bool:
-        """Check if an object looks like a Strategy."""
-        externs = self._load_externs()
-        
-        # Check if it's an instance of any Strategy type
-        strategy_types = (
-            externs.Window,
-            externs.TryK,
-            externs.Cascade,
-            externs.BestOfN,
-            externs.Constrained,
-            externs.Free
-        )
-        
-        return isinstance(obj, strategy_types)
-    
-    def run_with_strategy(
-        self,
-        strategy: Any,
-        prompt: Optional[list[str]] = None
-    ) -> RuntimeResult:
-        """
-        Execute a strategy object directly (not from a compiled module).
-        
-        Useful for testing strategies constructed in Python.
-        
-        Args:
-            strategy: A Strategy object from extern_functions
-            prompt: Optional custom prompt
-            
-        Returns:
-            RuntimeResult
-        """
-        import time
-        
-        start_time = time.time()
-        
-        try:
-            externs = self._load_externs()
-            lm, parser, test_prompt, all_tokens = self._create_test_environment()
-            
-            if prompt is not None:
-                test_prompt = prompt
-            
-            output = externs.Run(
-                lm,
-                strategy,
-                parser,
-                test_prompt,
-                all_tokens,
-                self.max_steps
-            )
-            
-            execution_time = (time.time() - start_time) * 1000
-            
-            return RuntimeResult(
-                success=True,
-                output=output,
-                execution_time_ms=execution_time
-            )
-        
-        except Exception as e:
-            execution_time = (time.time() - start_time) * 1000
-            
-            return RuntimeResult(
-                success=False,
-                error_type=type(e).__name__,
-                error_message=str(e),
-                error_traceback=traceback.format_exc(),
-                execution_time_ms=execution_time
-            )
-    
-    def validate_strategy(self, strategy: Any) -> tuple[bool, str]:
-        """
-        Validate that a strategy guarantees valid output.
-        
-        Args:
-            strategy: A Strategy object
-            
-        Returns:
-            Tuple of (is_valid, message)
-        """
-        externs = self._load_externs()
-        
-        if externs.GuaranteesValidOutput(strategy):
-            return True, "Strategy guarantees valid output"
-        else:
-            return False, "Strategy does NOT guarantee valid output (e.g., uses Free without fallback)"
 

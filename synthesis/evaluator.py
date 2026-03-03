@@ -41,12 +41,16 @@ class EvaluationResult:
         min_format_rate: float = 0.0,
         min_syntax_rate: float = 0.0,
     ) -> bool:
-        """Check if results meet the specified thresholds."""
-        return (
-            self.accuracy >= min_accuracy
-            and self.format_rate >= min_format_rate
-            and self.syntax_rate >= min_syntax_rate
-        )
+        """Check if ALL individual examples meet the specified thresholds."""
+        if not self.sample_outputs:
+            return False
+        for sample in self.sample_outputs:
+            ex_accuracy = 1.0 if sample.get("is_correct", False) else 0.0
+            ex_format = 1.0 if sample.get("is_valid_format", False) else 0.0
+            ex_syntax = sample.get("syntax_rate", 0.0)
+            if ex_accuracy < min_accuracy or ex_format < min_format_rate or ex_syntax < min_syntax_rate:
+                return False
+        return True
 
     def get_feedback_summary(self) -> str:
         """Generate a summary for feedback to the generator."""
@@ -99,8 +103,7 @@ class Evaluator:
         dataset_name: str = "gsm_symbolic",
         model_name: str = "Qwen/Qwen2.5-0.5B-Instruct",
         device: str = "cuda",
-        vocab_size: int = 2000,
-        sample_size: int = 1,
+        sample_size: int = 10,
         max_steps: int = 150,
     ):
         """
@@ -110,14 +113,12 @@ class Evaluator:
             dataset_name: Dataset to evaluate on ("gsm_symbolic" or "folio")
             model_name: HuggingFace model for generation
             device: Device to run on ("cuda", "mps", "cpu")
-            vocab_size: Vocabulary size for constrained generation
             sample_size: Number of examples to evaluate on
             max_steps: Maximum generation steps per example
         """
         self.dataset_name = dataset_name
         self.model_name = model_name
         self.device = device
-        self.vocab_size = vocab_size
         self.sample_size = sample_size
         self.max_steps = max_steps
 
@@ -188,7 +189,6 @@ class Evaluator:
             run_dir=run_dir,
             model_name=self.model_name,
             device=self.device,
-            vocab_size=self.vocab_size,
             grammar_file=self._get_grammar_file(),
         )
 
@@ -196,22 +196,93 @@ class Evaluator:
         """Extract content within << >> delimiters."""
         return re.findall(r"<<\s*([^<>]+?)\s*>>", output)
 
+    def _parse_variable_assignments(self, text: str) -> dict:
+        """Parse variable assignments from text like 'a = 5', 'n1 = 72.5', etc."""
+        assignments = {}
+        pattern = r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([-+]?\d+(?:\.\d+)?)\b'
+        for match in re.finditer(pattern, text):
+            var_name = match.group(1)
+            try:
+                assignments[var_name] = float(match.group(2))
+            except ValueError:
+                pass
+        return assignments
+
+    def _safe_eval_arithmetic(self, expr: str) -> Optional[float]:
+        """Safely evaluate a numeric arithmetic expression using AST (no eval())."""
+        import ast
+        import operator as op
+
+        ops = {
+            ast.Add: op.add, ast.Sub: op.sub,
+            ast.Mult: op.mul, ast.Div: op.truediv,
+            ast.FloorDiv: op.floordiv, ast.Mod: op.mod,
+            ast.USub: op.neg, ast.UAdd: op.pos,
+        }
+
+        def _eval(node):
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+                return float(node.value)
+            elif isinstance(node, ast.Num):  # Python 3.7 compat
+                return float(node.n)
+            elif isinstance(node, ast.BinOp) and type(node.op) in ops:
+                return ops[type(node.op)](_eval(node.left), _eval(node.right))
+            elif isinstance(node, ast.UnaryOp) and type(node.op) in ops:
+                return ops[type(node.op)](_eval(node.operand))
+            elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                  and node.func.id == 'int' and len(node.args) == 1):
+                return float(int(_eval(node.args[0])))
+            else:
+                raise ValueError(f"Unsupported node: {type(node)}")
+
+        try:
+            tree = ast.parse(expr.strip(), mode='eval')
+            return _eval(tree.body)
+        except Exception:
+            return None
+
+    def _evaluate_symbolic_expression(self, expr: str, var_values: dict) -> Optional[float]:
+        """Substitute variable values into a symbolic expression and evaluate."""
+        substituted = expr
+        # Substitute longest names first to avoid partial replacement (n10 before n1)
+        for var in sorted(var_values.keys(), key=len, reverse=True):
+            substituted = re.sub(r'\b' + re.escape(var) + r'\b',
+                                 str(var_values[var]), substituted)
+        # If alphabetic chars remain, some variables were unresolved
+        if re.search(r'[a-zA-Z_]', substituted):
+            return None
+        return self._safe_eval_arithmetic(substituted)
+
     def _extract_answer_gsm(self, output: str) -> Optional[str]:
         """Extract numeric answer from GSM-Symbolic output within << >> delimiters."""
         matches = self._extract_constrained_content(output)
         if not matches:
             return None
 
-        last_match = matches[-1]
+        last_match = matches[-1].strip()
+
+        # Case 1: expression contains "=" — take the part after "=" (e.g. "a + b = 8")
         if "=" in last_match:
             answer_part = last_match.split("=")[-1].strip()
             num_match = re.search(r"[-+]?\d*\.?\d+", answer_part)
             if num_match:
                 return num_match.group()
-        else:
-            num_match = re.search(r"[-+]?\d*\.?\d+", last_match)
-            if num_match:
-                return num_match.group()
+
+        # Case 2: purely numeric expression — evaluate directly (e.g. "5 + 3")
+        if not re.search(r'[a-zA-Z_]', last_match):
+            result = self._safe_eval_arithmetic(last_match)
+            if result is not None:
+                val = int(result) if result == int(result) else result
+                return str(val)
+
+        # Case 3: symbolic expression — parse variable assignments from surrounding text
+        # and substitute in (e.g. "a + b" with "a = 5, b = 3" defined earlier)
+        var_values = self._parse_variable_assignments(output)
+        if var_values:
+            result = self._evaluate_symbolic_expression(last_match, var_values)
+            if result is not None:
+                val = int(result) if result == int(result) else result
+                return str(val)
 
         return None
 
@@ -323,12 +394,17 @@ class Evaluator:
             question = example.get("question", "")
             return (
                 "Solve the following math problem step by step. "
-                "For each calculation, write the expression inside << >> delimiters.\n\n"
+                "Assign a single-letter variable to each quantity and state its numeric value. "
+                "Write each computation step as a SHORT expression inside << >> delimiters — "
+                "one step per << >> window, closing >> before starting the next step.\n\n"
                 "Example:\n"
-                "Q: Amy has 5 apples. She buys 3 more. How many does she have?\n"
-                "A: Amy starts with 5 apples and buys 3 more.\n"
-                "Total apples = <<5 + 3 = 8>>8\n"
-                "The answer is 8.\n\n"
+                "Q: A store sells pens for $3 each and notebooks for $8 each. "
+                "Bob buys 4 pens and 2 notebooks. How much does he spend?\n"
+                "A: Let p = 3, n = 8, a = 4, b = 2.\n"
+                "Pen total = <<a * p>>\n"
+                "Notebook total = <<b * n>>\n"
+                "Total spent = <<a * p + b * n>>\n"
+                "The answer is a * p + b * n.\n\n"
                 f"Q: {question}\nA:"
             )
         else:
@@ -437,7 +513,9 @@ class Evaluator:
 
                     all_valid_syntax, segments = self._check_syntax_validity(output_text)
                     total_segments += len(segments)
-                    num_valid_syntax += sum(1 for _, v in segments if v)
+                    example_valid_segs = sum(1 for _, v in segments if v)
+                    num_valid_syntax += example_valid_segs
+                    example_syntax_rate = example_valid_segs / len(segments) if segments else 0.0
 
                     sample_outputs.append({
                         "question": example.get("question", str(example.get("premises", "")))[:200],
@@ -447,6 +525,7 @@ class Evaluator:
                         "is_correct": is_correct,
                         "is_valid_format": is_valid_format,
                         "is_syntax_valid": all_valid_syntax,
+                        "syntax_rate": example_syntax_rate,
                         "token_count": token_count,
                         "time_seconds": gen_time,
                     })
@@ -459,6 +538,7 @@ class Evaluator:
                         "is_correct": False,
                         "is_valid_format": False,
                         "is_syntax_valid": False,
+                        "syntax_rate": 0.0,
                         "error": str(e),
                     })
 
@@ -469,7 +549,7 @@ class Evaluator:
                 success=True,
                 accuracy=num_correct / max(1, num_examples),
                 format_rate=num_valid_format / max(1, num_examples),
-                syntax_rate=num_valid_syntax / max(1, total_segments) if total_segments > 0 else 1.0,
+                syntax_rate=num_valid_syntax / total_segments if total_segments > 0 else 0.0,
                 num_examples=num_examples,
                 num_correct=num_correct,
                 total_time_seconds=total_time,

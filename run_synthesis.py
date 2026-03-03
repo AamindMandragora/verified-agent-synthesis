@@ -7,11 +7,9 @@ until evaluation thresholds are met or max iterations exhausted.
 
 Usage:
     python run_synthesis.py --task "..." --dataset gsm_symbolic \\
-        --cost-contract "ensures helpers.cost <= 10" \\
         --min-accuracy 0.3 --min-format-rate 0.5 --min-syntax-rate 0.5
 
     python run_synthesis.py --task "..." --dataset folio \\
-        --cost-contract "ensures helpers.cost <= 8" \\
         --min-accuracy 0.5 --min-format-rate 0.8 --min-syntax-rate 0.7
 """
 
@@ -28,17 +26,16 @@ def main():
 Examples:
   # GSM-Symbolic
   python run_synthesis.py --task "Generate math reasoning strategy" \\
-      --dataset gsm_symbolic --cost-contract "ensures helpers.cost <= 10" \\
+      --dataset gsm_symbolic \\
       --min-accuracy 0.3 --min-format-rate 0.5 --min-syntax-rate 0.5
 
   # FOLIO
   python run_synthesis.py --task "Generate FOL reasoning strategy" \\
-      --dataset folio --cost-contract "ensures helpers.cost <= 8" \\
+      --dataset folio \\
       --min-accuracy 0.5 --min-format-rate 0.8 --min-syntax-rate 0.7
 
   # With more iterations and custom eval sample size
   python run_synthesis.py --task "..." --dataset gsm_symbolic \\
-      --cost-contract "ensures helpers.cost <= 10" \\
       --min-accuracy 0.3 --min-format-rate 0.5 --min-syntax-rate 0.5 \\
       --output-name my_strategy --max-iterations 10 --eval-sample-size 20
 """
@@ -52,13 +49,6 @@ Examples:
     )
 
     parser.add_argument(
-        "--cost-contract", "-c",
-        type=str,
-        required=True,
-        help="Cost contract for Dafny verification (e.g. 'ensures helpers.cost <= 10')"
-    )
-    
-    parser.add_argument(
         "--max-iterations", "-n",
         type=int,
         default=5,
@@ -66,10 +56,17 @@ Examples:
     )
     
     parser.add_argument(
-        "--model", "-m",
+        "--generation-model",
         type=str,
         default="Qwen/Qwen2.5-Coder-7B-Instruct",
-        help="HuggingFace model name (default: Qwen/Qwen2.5-Coder-7B-Instruct)"
+        help="HuggingFace model for CSD generation (default: Qwen/Qwen2.5-Coder-7B-Instruct)"
+    )
+
+    parser.add_argument(
+        "--eval-model",
+        type=str,
+        default="Qwen/Qwen2.5-Coder-7B-Instruct",
+        help="HuggingFace model for evaluation data generation (default: Qwen/Qwen2.5-Coder-7B-Instruct)"
     )
     
     parser.add_argument(
@@ -154,8 +151,8 @@ Examples:
     parser.add_argument(
         "--eval-sample-size",
         type=int,
-        default=1,
-        help="Number of examples to evaluate on per iteration (default: 1)"
+        default=10,
+        help="Number of examples to evaluate on per iteration (default: 10)"
     )
 
     parser.add_argument(
@@ -163,13 +160,6 @@ Examples:
         type=int,
         default=150,
         help="Maximum generation steps during evaluation (default: 150)"
-    )
-
-    parser.add_argument(
-        "--eval-vocab-size",
-        type=int,
-        default=2000,
-        help="Vocabulary size for evaluation (default: 2000)"
     )
 
     args = parser.parse_args()
@@ -191,7 +181,7 @@ Examples:
     device = None if args.device == "auto" else args.device
 
     generator = StrategyGenerator(
-        model_name=args.model,
+        model_name=args.generation_model,
         device=device,
         max_new_tokens=args.max_tokens,
         temperature=args.temperature
@@ -204,11 +194,12 @@ Examples:
 
     # Create evaluator for the feedback loop
     print(f"Setting up evaluator for dataset: {args.dataset}")
+    print(f"  Generation model: {args.generation_model}")
+    print(f"  Evaluation model: {args.eval_model}")
     evaluator = Evaluator(
         dataset_name=args.dataset,
-        model_name=args.model,
+        model_name=args.eval_model,
         device=device or "cuda",
-        vocab_size=args.eval_vocab_size,
         sample_size=args.eval_sample_size,
         max_steps=args.eval_max_steps,
     )
@@ -234,7 +225,6 @@ Examples:
         result = pipeline.synthesize(
             task_description=args.task,
             output_name=args.output_name,
-            cost_contract=args.cost_contract
         )
         
         print("\n" + "=" * 60)

@@ -413,39 +413,42 @@ module VerifiedDecoderAgent {
       ensures lm.ValidTokensIdsLogits()
       ensures |generated| <= maxSteps
       ensures parser.IsValidPrefix(generated)
-      ensures cost >= old(cost) + |generated|
+      ensures cost <= old(cost) + maxSteps
     {
-      // Phase 1: Unconstrained generation
-      var unconstrained := UnconstrainedGeneration(lm, prompt, maxSteps);
-      assert cost == old(cost) + maxSteps;
-      
+      // Phase 1: Unconstrained generation with budget = unconstrainedSteps
+      var unconstrained := UnconstrainedGeneration(lm, prompt, unconstrainedSteps);
+      assert cost == old(cost) + unconstrainedSteps;
+
       // Phase 2: Rollback to valid prefix
       var validPrefix := RollbackToValidPrefix(parser, unconstrained);
-      
+
       // Phase 3: If complete, we're done
       if parser.IsCompletePrefix(validPrefix) {
         generated := validPrefix;
       } else {
-        // Phase 4: Complete with constrained decoding
-        var remainingSteps := maxSteps - |validPrefix|;
+        // Phase 4: Complete with constrained decoding using remaining budget
         generated := validPrefix;
         var steps := |validPrefix|;
-        
+        var constrainedBudget := maxSteps - unconstrainedSteps;
+        var constrainedUsed := 0;
+
         // Need to establish the invariant for valid next tokens
         RollbackPreservesTokenInvariant(lm, parser, validPrefix);
-        
-        while steps < maxSteps && !parser.IsCompletePrefix(generated)
+
+        while constrainedUsed < constrainedBudget && steps < maxSteps && !parser.IsCompletePrefix(generated)
           invariant |validPrefix| <= steps <= maxSteps
+          invariant 0 <= constrainedUsed <= constrainedBudget
           invariant lm.ValidTokensIdsLogits()
           invariant steps == |generated|
           invariant parser.IsValidPrefix(generated)
           invariant forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens
-          invariant cost >= old(cost) + steps
-          decreases maxSteps - steps
+          invariant cost == old(cost) + unconstrainedSteps + constrainedUsed
+          decreases constrainedBudget - constrainedUsed
         {
           var next := ConstrainedStep(lm, parser, prompt, generated);
           generated := generated + [next];
           steps := steps + 1;
+          constrainedUsed := constrainedUsed + 1;
         }
       }
     }
@@ -500,57 +503,6 @@ module VerifiedDecoderAgent {
       }
     }
 
-    // Strategy 2: Unconstrained with rollback and completion.
-    // Generates fully unconstrained, rolls back to valid, completes with constrained.
-    method UnconstrainedWithCompletion(
-      lm: LM,
-      parser: Parser,
-      prompt: Prefix,
-      maxSteps: nat
-    ) returns (generated: Prefix)
-      modifies lm.Logits, this
-      requires lm.ValidTokensIdsLogits()
-      requires parser.IsValidPrefix([])
-      requires forall t: Token :: t in parser.ValidNextTokens([]) ==> t in lm.Tokens
-      ensures lm.ValidTokensIdsLogits()
-      ensures |generated| <= maxSteps
-      ensures parser.IsValidPrefix(generated)
-      ensures |generated| == maxSteps || parser.IsCompletePrefix(generated)
-      ensures cost >= old(cost) + maxSteps
-    {
-      // Generate unconstrained
-      var unconstrained := UnconstrainedGeneration(lm, prompt, maxSteps);
-      
-      // Rollback to valid
-      var validPrefix := RollbackToValidPrefix(parser, unconstrained);
-      
-      // If already complete, done
-      if parser.IsCompletePrefix(validPrefix) {
-        generated := validPrefix;
-      } else {
-        // Complete with constrained
-        var remainingSteps := maxSteps - |validPrefix|;
-        generated := validPrefix;
-        var steps := |validPrefix|;
-        
-        RollbackPreservesTokenInvariant(lm, parser, validPrefix);
-        
-        while steps < maxSteps && !parser.IsCompletePrefix(generated)
-          invariant |validPrefix| <= steps <= maxSteps
-          invariant lm.ValidTokensIdsLogits()
-          invariant steps == |generated|
-          invariant parser.IsValidPrefix(generated)
-          invariant forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens
-          invariant cost >= old(cost) + maxSteps
-          decreases maxSteps - steps
-        {
-          var next := ConstrainedStep(lm, parser, prompt, generated);
-          generated := generated + [next];
-          steps := steps + 1;
-        }
-      }
-    }
-
     // Strategy 5: Hybrid generation - switch between unconstrained and constrained using << >>.
     // This is the implementation requested by the user to handle CRANE-style windowing.
     method HybridGeneration(
@@ -567,29 +519,28 @@ module VerifiedDecoderAgent {
       ensures lm.ValidTokensIdsLogits()
       ensures |generated| <= maxSteps
       ensures parser.IsValidPrefix(generated)
-      ensures |generated| == maxSteps || parser.IsCompletePrefix(generated)
-      ensures old(cost) + |generated| <= cost <= old(cost) + 2 * maxSteps
+      ensures cost <= old(cost) + maxSteps
     {
       generated := [];
-      var totalSteps := 0;
+      var steps := 0;  // tracks cost spent (= cost - old(cost))
       var insideHybrid := false;
-      
-      while totalSteps < maxSteps && !parser.IsCompletePrefix(generated) && |generated| < maxSteps
-        invariant 0 <= totalSteps <= maxSteps
-        invariant |generated| <= totalSteps
+
+      while steps < maxSteps && |generated| < maxSteps && !parser.IsCompletePrefix(generated)
+        invariant 0 <= steps <= maxSteps
+        invariant |generated| <= steps
         invariant |generated| <= maxSteps
         invariant lm.ValidTokensIdsLogits()
         invariant !insideHybrid ==> parser.IsValidPrefix(generated)
         invariant !insideHybrid ==> forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens
-        invariant old(cost) + |generated| <= cost <= old(cost) + totalSteps
-        decreases maxSteps - totalSteps
+        invariant cost == old(cost) + steps
+        decreases maxSteps - steps
       {
         if !insideHybrid {
           // Constrained mode
           var next := ConstrainedStep(lm, parser, prompt, generated);
           generated := generated + [next];
-          totalSteps := totalSteps + 1;
-          
+          steps := steps + 1;
+
           if next == "<<" {
             insideHybrid := true;
           }
@@ -597,8 +548,8 @@ module VerifiedDecoderAgent {
           // Unconstrained hybrid mode
           var next := UnconstrainedStep(lm, prompt, generated);
           generated := generated + [next];
-          totalSteps := totalSteps + 1;
-          
+          steps := steps + 1;
+
           if next == ">>" {
             // Check if adding ">>" preserved validity or if we need to roll back
             if parser.IsValidPrefix(generated) {
@@ -614,7 +565,7 @@ module VerifiedDecoderAgent {
           }
         }
       }
-      
+
       // If we ended while still in a hybrid block, roll back to last valid
       if insideHybrid {
         generated := RollbackToValidPrefix(parser, generated);
@@ -622,23 +573,20 @@ module VerifiedDecoderAgent {
         RollbackPreservesTokenInvariant(lm, parser, generated);
       }
 
-      var stepsBeforeFinal := totalSteps;
-      var lengthBeforeFinal := |generated|;
-
-      // Final constrained phase to ensure the contract (complete or maxSteps) is met
-      while |generated| < maxSteps && !parser.IsCompletePrefix(generated)
+      // Final constrained phase to ensure completeness, only if budget remains
+      while steps < maxSteps && |generated| < maxSteps && !parser.IsCompletePrefix(generated)
+        invariant 0 <= steps <= maxSteps
+        invariant |generated| <= steps
         invariant |generated| <= maxSteps
-        invariant stepsBeforeFinal <= totalSteps <= stepsBeforeFinal + (|generated| - lengthBeforeFinal)
-        invariant totalSteps <= 2 * maxSteps
         invariant lm.ValidTokensIdsLogits()
         invariant parser.IsValidPrefix(generated)
         invariant forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens
-        invariant old(cost) + |generated| <= cost <= old(cost) + totalSteps
-        decreases maxSteps - |generated|
+        invariant cost == old(cost) + steps
+        decreases maxSteps - steps
       {
         var next := ConstrainedStep(lm, parser, prompt, generated);
         generated := generated + [next];
-        totalSteps := totalSteps + 1;
+        steps := steps + 1;
       }
     }
 
@@ -659,31 +607,37 @@ module VerifiedDecoderAgent {
       ensures lm.ValidTokensIdsLogits()
       ensures |generated| <= maxSteps
       ensures parser.IsValidPrefix(generated)
-      ensures |generated| == maxSteps || parser.IsCompletePrefix(generated)
-      ensures cost >= old(cost)
+      ensures cost <= old(cost) + maxSteps
     {
       generated := [];
-      var steps := 0;
-      
-      while steps < maxSteps && !parser.IsCompletePrefix(generated)
-        invariant 0 <= steps <= maxSteps
+      var outputSteps := 0;  // tracks |generated|
+      var costSpent := 0;    // tracks cost - old(cost), i.e. total LM calls
+
+      while outputSteps < maxSteps && costSpent < maxSteps && !parser.IsCompletePrefix(generated)
+        invariant 0 <= outputSteps <= maxSteps
+        invariant 0 <= costSpent <= maxSteps
         invariant lm.ValidTokensIdsLogits()
-        invariant steps == |generated|
+        invariant outputSteps == |generated|
         invariant parser.IsValidPrefix(generated)
         invariant forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens
-        invariant cost >= old(cost)
-        decreases maxSteps - steps
+        invariant cost == old(cost) + costSpent
+        decreases maxSteps - costSpent
       {
-        // Speculate: generate up to speculativeWindow tokens unconstrained
-        var speculateSteps := if steps + speculativeWindow <= maxSteps 
-                              then speculativeWindow 
-                              else maxSteps - steps;
+        // Speculate: generate up to min(speculativeWindow, remaining budget) tokens
+        var remaining := maxSteps - costSpent;
+        var speculateSteps := if speculativeWindow <= remaining
+                              then speculativeWindow
+                              else remaining;
+        if outputSteps + speculateSteps > maxSteps {
+          speculateSteps := maxSteps - outputSteps;
+        }
         var speculated := UnconstrainedGeneration(lm, prompt + generated, speculateSteps);
-        
+        costSpent := costSpent + speculateSteps;
+
         // Validate each token one by one, keep valid prefix
         var validCount := 0;
         var tempPrefix := generated;
-        
+
         while validCount < |speculated| && parser.IsValidPrefix(tempPrefix + [speculated[validCount]])
           invariant 0 <= validCount <= |speculated|
           invariant parser.IsValidPrefix(tempPrefix)
@@ -693,17 +647,18 @@ module VerifiedDecoderAgent {
           tempPrefix := tempPrefix + [speculated[validCount]];
           validCount := validCount + 1;
         }
-        
+
         // If we accepted at least one speculated token
         if validCount > 0 {
           generated := tempPrefix;
-          steps := steps + validCount;
+          outputSteps := outputSteps + validCount;
           RollbackPreservesTokenInvariant(lm, parser, generated);
-        } else {
+        } else if costSpent < maxSteps {
           // No speculated tokens valid, fall back to single constrained step
           var next := ConstrainedStep(lm, parser, prompt, generated);
           generated := generated + [next];
-          steps := steps + 1;
+          outputSteps := outputSteps + 1;
+          costSpent := costSpent + 1;
         }
       }
     }
@@ -851,34 +806,37 @@ module VerifiedDecoderAgent {
       ensures lm.ValidTokensIdsLogits()
       ensures |generated| <= maxSteps
       ensures parser.IsValidPrefix(generated)
-      ensures |generated| == maxSteps || parser.IsCompletePrefix(generated)
-      ensures cost >= old(cost)
+      ensures cost <= old(cost) + maxSteps
     {
+      // Each candidate gets an equal share of the total budget
+      var perCandidateBudget := maxSteps / numCandidates;
+      assert perCandidateBudget <= maxSteps;
+
       // Generate first candidate
       var firstCandidate: Prefix;
-      firstCandidate := ConstrainedGeneration(lm, parser, prompt, maxSteps);
+      firstCandidate := ConstrainedGeneration(lm, parser, prompt, perCandidateBudget);
+      var costSpent := |firstCandidate|;
       var candidates: seq<Prefix> := [firstCandidate];
-      
-      // Generate additional candidates (they may be similar due to deterministic generation)
-      // In practice, this would use temperature sampling, but that requires LM interface changes
+
       var i := 1;
-      while i < numCandidates
+      while i < numCandidates && costSpent + perCandidateBudget <= maxSteps
         invariant 1 <= i <= numCandidates
         invariant |candidates| == i
         invariant lm.ValidTokensIdsLogits()
         invariant forall c: Prefix :: c in candidates ==>
-          (|c| <= maxSteps && parser.IsValidPrefix(c) && 
-           (parser.IsCompletePrefix(c) || |c| == maxSteps))
-        invariant cost >= old(cost)
+          (|c| <= perCandidateBudget && parser.IsValidPrefix(c) &&
+           (parser.IsCompletePrefix(c) || |c| == perCandidateBudget))
+        invariant 0 <= costSpent <= maxSteps
+        invariant cost == old(cost) + costSpent
         decreases numCandidates - i
       {
-        // Generate another candidate
         var candidate: Prefix;
-        candidate := ConstrainedGeneration(lm, parser, prompt, maxSteps);
+        candidate := ConstrainedGeneration(lm, parser, prompt, perCandidateBudget);
+        costSpent := costSpent + |candidate|;
         candidates := candidates + [candidate];
         i := i + 1;
       }
-      
+
       // Select best candidate
       var best: Prefix;
       best := SelectBestCandidate(candidates, parser, preferShorter);
@@ -901,7 +859,7 @@ module VerifiedDecoderAgent {
       ensures lm.ValidTokensIdsLogits()
       ensures parser.IsValidPrefix(generated)
        ensures reasoning != "" ==> exists pre, post :: PrefixToString(generated) == pre + "<<" + reasoning + ">>" + post
-       ensures cost >= old(cost) + |generated|
+       ensures cost <= old(cost) + maxSteps
      {
       // Use hybrid generation to allow unconstrained reasoning inside brackets
       generated := HybridGeneration(lm, parser, prompt, maxSteps); 
@@ -945,7 +903,7 @@ module VerifiedDecoderAgent {
       requires forall t: Token :: t in parser.ValidNextTokens([]) ==> t in lm.Tokens
       ensures lm.ValidTokensIdsLogits()
       ensures |generated| <= maxSteps
-      ensures cost >= old(cost) + |generated|
+      ensures cost <= old(cost) + maxSteps
     {
       generated := [];
       var steps := 0;
@@ -959,7 +917,7 @@ module VerifiedDecoderAgent {
         invariant lm.ValidTokensIdsLogits()
         invariant insideConstrained ==> parser.IsValidPrefix(currentConstrained)
         invariant insideConstrained ==> forall t: Token :: t in parser.ValidNextTokens(currentConstrained) ==> t in lm.Tokens
-        invariant cost >= old(cost) + steps
+        invariant cost == old(cost) + steps
         decreases maxSteps - steps, (if insideConstrained then 1 else 0)
       {
         if !insideConstrained {

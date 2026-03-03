@@ -11,7 +11,7 @@ module GeneratedCSD {
     requires "<<" in lm.Tokens && ">>" in lm.Tokens
     ensures lm.ValidTokensIdsLogits()
     ensures |generated| <= maxSteps
-    // QWEN_INSERT_COST_CONTRACT_HERE
+    ensures cost <= maxSteps
 
   {
     var helpers := new CSDHelpers();

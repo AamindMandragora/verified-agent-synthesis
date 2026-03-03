@@ -33,13 +33,17 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from evaluations.common.parser_utils import create_lark_dafny_parser, get_builtin_grammar
 
 
-def create_vocabulary(vocab_type: str = "default", tokenizer_name: Optional[str] = None, size: int = 500) -> list[str]:
-    """Create vocabulary for the LM."""
+def create_vocabulary(vocab_type: str = "default", tokenizer_name: Optional[str] = None) -> list[str]:
+    """Create vocabulary for the LM.
+
+    When a tokenizer is provided, the full tokenizer vocabulary is used.
+    Otherwise a default set of printable/structural characters is returned.
+    """
     if vocab_type == "tokenizer" and tokenizer_name:
         from transformers import AutoTokenizer
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, trust_remote_code=True)
         vocab = []
-        for i in range(min(len(tokenizer), size)):
+        for i in range(len(tokenizer)):
             try:
                 token = tokenizer.decode([i])
                 if token:
@@ -47,41 +51,35 @@ def create_vocabulary(vocab_type: str = "default", tokenizer_name: Optional[str]
             except:
                 pass
         return vocab
-    
+
     # Default vocabulary with generic tokens
     vocab = list('{}[]():,."\'+-*/=<>!&|^~%@#$_\\;? \t\n')
     vocab.extend(list('0123456789'))
     vocab.extend(list('abcdefghijklmnopqrstuvwxyz'))
     vocab.extend(list('ABCDEFGHIJKLMNOPQRSTUVWXYZ'))
     vocab.append('<EOS>')
-    
-    while len(vocab) < size:
-        vocab.append(f'<T{len(vocab)}>')
-    
-    return vocab[:size]
+    return vocab
 
 
 def run_csd_with_grammar(
     run_dir: Path,
     grammar_source: str,
     max_steps: int = 50,
-    vocab_size: int = 500,
     tokenizer_name: Optional[str] = None,
     seed: int = 42,
     start_rule: str = "start"
 ) -> dict:
     """
     Run a compiled CSD strategy with a specific grammar.
-    
+
     Args:
         run_dir: Path to the run directory containing compiled CSD
         grammar_source: Grammar file path or built-in format name
         max_steps: Maximum generation steps
-        vocab_size: Vocabulary size
         tokenizer_name: HuggingFace tokenizer for vocabulary
         seed: Random seed
         start_rule: Grammar start rule
-        
+
     Returns:
         Dictionary with results
     """
@@ -89,9 +87,14 @@ def run_csd_with_grammar(
     
     run_dir = Path(run_dir)
     module_dir = run_dir / "generated_csd"
-    
+
     if not module_dir.exists():
-        return {"success": False, "error": f"Module directory not found: {module_dir}"}
+        # Try to find any directory that contains GeneratedCSD.py
+        found = list(run_dir.glob("*/GeneratedCSD.py"))
+        if found:
+            module_dir = found[0].parent
+        else:
+            return {"success": False, "error": f"No compiled CSD module found in: {run_dir}"}
     
     # Add module dir to path
     if str(module_dir) not in sys.path:
@@ -112,7 +115,6 @@ def run_csd_with_grammar(
         vocab = create_vocabulary(
             vocab_type="tokenizer" if tokenizer_name else "default",
             tokenizer_name=tokenizer_name,
-            size=vocab_size
         )
         
         # Helper for BigRational
@@ -148,7 +150,17 @@ def run_csd_with_grammar(
                             best_logit = val
                             best_idx = i
                 return self._Tokens[best_idx]
-        
+
+            def ChooseNextTokenUnconstrained(self):
+                best_idx = 0
+                best_logit = -1e10
+                for i in range(self.Logits.length(0)):
+                    val = bigrational_to_float(self.Logits[i])
+                    if val > best_logit:
+                        best_logit = val
+                        best_idx = i
+                return self._Tokens[best_idx]
+
         # Create parser from grammar
         LarkDafnyParser = create_lark_dafny_parser(grammar, VerifiedDecoderAgent, _dafny, start_rule)
         
@@ -156,8 +168,22 @@ def run_csd_with_grammar(
         parser = LarkDafnyParser(lm._Tokens)
         prompt = _dafny.SeqWithoutIsStrInference([])
         
-        # Run the CSD strategy
-        output = GeneratedCSD.default__.MyCSDStrategy(lm, parser, prompt, max_steps)
+        # Determine eosToken (last token in vocab, typically <EOS>)
+        eos_token = vocab[-1] if vocab else "<EOS>"
+
+        # Run the CSD strategy — may accept eosToken and may return (generated, cost)
+        import inspect
+        sig = inspect.signature(GeneratedCSD.default__.MyCSDStrategy)
+        if "eosToken" in sig.parameters:
+            result = GeneratedCSD.default__.MyCSDStrategy(lm, parser, prompt, max_steps, eos_token)
+        else:
+            result = GeneratedCSD.default__.MyCSDStrategy(lm, parser, prompt, max_steps)
+
+        # Handle tuple return (generated, cost) or plain sequence
+        if isinstance(result, tuple):
+            output = result[0]
+        else:
+            output = result
         output_list = [str(t) for t in output]
         output_text = "".join(output_list)
         
@@ -212,8 +238,6 @@ Examples:
     
     parser.add_argument("--max-steps", type=int, default=50,
                         help="Maximum generation steps (default: 50)")
-    parser.add_argument("--vocab-size", type=int, default=500,
-                        help="Vocabulary size (default: 500)")
     parser.add_argument("--tokenizer", "-t", type=str, default=None,
                         help="HuggingFace tokenizer for vocabulary")
     parser.add_argument("--seed", type=int, default=42,
@@ -236,10 +260,9 @@ Examples:
         run_dir=args.run_dir,
         grammar_source=grammar_source,
         max_steps=args.max_steps,
-        vocab_size=args.vocab_size,
         tokenizer_name=args.tokenizer,
         seed=args.seed,
-        start_rule=args.start_rule
+        start_rule=args.start_rule,
     )
     
     if args.json:

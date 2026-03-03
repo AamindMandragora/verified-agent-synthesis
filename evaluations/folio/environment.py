@@ -79,20 +79,18 @@ def setup_dafny_environment(
     run_dir: Path,
     model_name: str,
     device: str,
-    vocab_size: int,
     grammar_file: Path,
 ) -> Dict[str, Any]:
     """
     Load model and setup Dafny environment once.
     Returns reusable objects for generation.
-    
+
     Args:
         run_dir: Path to the synthesis run directory
         model_name: HuggingFace model identifier
         device: Device to run on ("cuda" or "cpu")
-        vocab_size: Size of constrained vocabulary
         grammar_file: Path to grammar file
-        
+
     Returns:
         Environment dict with:
         - "_dafny": Dafny runtime module
@@ -110,7 +108,7 @@ def setup_dafny_environment(
 
     tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
-    lm = create_huggingface_lm(model_name, device, vocab_size, VerifiedDecoderAgent, _dafny)
+    lm = create_huggingface_lm(model_name, device, VerifiedDecoderAgent, _dafny)
 
     # Create grammar parser
     grammar_text = grammar_file.read_text()

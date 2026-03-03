@@ -19,7 +19,6 @@ echo ""
 python run_synthesis.py \
     --task "$TASK_DESC" \
     --dataset gsm_symbolic \
-    --cost-contract "" \
     --max-iterations 10 \
     --model "Qwen/Qwen2.5-Coder-7B-Instruct" \
     --output-name "gsm_crane_csd" \
@@ -41,5 +40,5 @@ echo "   --model Qwen/Qwen2.5-Coder-7B-Instruct \\"
 echo "   --device cuda \\"
 echo "   --limit 50 \\"
 echo "   --max-steps 1024 \\"
-echo "   --vocab-size 2000 \\"
+echo "   --vocab-size 3000 \\"
 echo "   --load-in-4bit"

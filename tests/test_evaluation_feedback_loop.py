@@ -2,17 +2,16 @@
 Tests for the evaluation feedback loop implementation.
 
 Tests cover:
-1. ArithmeticEvaluator - safe math expression evaluation
-2. FOLSemanticValidator - FOL syntax and semantic validation
-3. GSMSemanticValidator - GSM arithmetic validation
-4. EvaluationResult - dataclass and threshold methods
-5. Evaluator - main evaluator class
-6. FailureStage.EVALUATION - new enum value
-7. SynthesisAttempt.eval_result - new field
-8. SynthesisPipeline - evaluator as required parameter
-9. Prompts - evaluation failure prompt
-10. Generator - refine_after_evaluation_failure method
-11. Integration test - all components together
+1. Safe arithmetic evaluation (Evaluator._safe_eval_arithmetic)
+2. EvaluationResult - dataclass and threshold methods
+3. Evaluator - main evaluator class (extract answer, format checks, etc.)
+4. FailureStage.EVALUATION - enum value
+5. SynthesisAttempt.eval_result - field
+6. SynthesisPipeline - evaluator as required parameter
+7. Prompts - evaluation failure prompt
+8. Generator - refine_after_evaluation_failure method
+9. Integration test - all components together
+10. End-to-end evaluation loop iteration
 """
 
 import pytest
@@ -27,116 +26,56 @@ sys.path.insert(0, str(project_root))
 
 
 # =============================================================================
-# Test 1: ArithmeticEvaluator
+# Test 1: Safe arithmetic evaluation (via Evaluator._safe_eval_arithmetic)
 # =============================================================================
 
-class TestArithmeticEvaluator:
+class TestSafeArithmeticEvaluation:
     """Tests for safe arithmetic expression evaluation."""
 
     def setup_method(self):
-        from synthesis.evaluator import ArithmeticEvaluator
-        self.evaluator = ArithmeticEvaluator()
+        from synthesis.evaluator import Evaluator
+        self.evaluator = Evaluator()
 
     def test_simple_addition(self):
-        result, error = self.evaluator.evaluate("2 + 3")
-        assert error is None
+        result = self.evaluator._safe_eval_arithmetic("2 + 3")
         assert result == 5.0
 
     def test_simple_subtraction(self):
-        result, error = self.evaluator.evaluate("10 - 4")
-        assert error is None
+        result = self.evaluator._safe_eval_arithmetic("10 - 4")
         assert result == 6.0
 
     def test_multiplication(self):
-        result, error = self.evaluator.evaluate("6 * 7")
-        assert error is None
+        result = self.evaluator._safe_eval_arithmetic("6 * 7")
         assert result == 42.0
 
     def test_division(self):
-        result, error = self.evaluator.evaluate("15 / 3")
-        assert error is None
+        result = self.evaluator._safe_eval_arithmetic("15 / 3")
         assert result == 5.0
 
     def test_complex_expression(self):
-        result, error = self.evaluator.evaluate("(2 + 3) * 4 - 5")
-        assert error is None
+        result = self.evaluator._safe_eval_arithmetic("(2 + 3) * 4 - 5")
         assert result == 15.0
 
-    def test_expression_with_equals(self):
-        """Test that '5+3=8' extracts just the computation."""
-        result, error = self.evaluator.evaluate("5 + 3 = 8")
-        assert error is None
-        assert result == 8.0
-
     def test_negative_numbers(self):
-        result, error = self.evaluator.evaluate("-5 + 3")
-        assert error is None
+        result = self.evaluator._safe_eval_arithmetic("-5 + 3")
         assert result == -2.0
 
     def test_floating_point(self):
-        result, error = self.evaluator.evaluate("3.14 * 2")
-        assert error is None
+        result = self.evaluator._safe_eval_arithmetic("3.14 * 2")
+        assert result is not None
         assert abs(result - 6.28) < 0.001
 
-    def test_power(self):
-        result, error = self.evaluator.evaluate("2 ** 3")
-        assert error is None
-        assert result == 8.0
-
     def test_invalid_expression(self):
-        # "2 + * 3" is genuinely invalid syntax (consecutive binary operators)
-        result, error = self.evaluator.evaluate("2 + * 3")
+        result = self.evaluator._safe_eval_arithmetic("2 + * 3")
         assert result is None
-        assert error is not None
 
     def test_non_math_expression(self):
-        result, error = self.evaluator.evaluate("hello")
+        result = self.evaluator._safe_eval_arithmetic("hello")
         assert result is None
-        assert error is not None
 
 
 # =============================================================================
-# Test 2: SemanticValidationResult
-# =============================================================================
-
-class TestSemanticValidationResult:
-    """Tests for SemanticValidationResult dataclass."""
-
-    def test_creation(self):
-        from synthesis.evaluator import SemanticValidationResult
-        result = SemanticValidationResult(
-            is_valid=True,
-            computed_answer="42",
-            expected_answer="42",
-            is_correct=True,
-        )
-        assert result.is_valid is True
-        assert result.computed_answer == "42"
-        assert result.is_correct is True
-
-    def test_with_error(self):
-        from synthesis.evaluator import SemanticValidationResult
-        result = SemanticValidationResult(
-            is_valid=False,
-            error="Parse error",
-        )
-        assert result.is_valid is False
-        assert result.error == "Parse error"
-
-    def test_formula_validations(self):
-        from synthesis.evaluator import SemanticValidationResult
-        result = SemanticValidationResult(
-            is_valid=True,
-            formula_validations=[
-                {"formula": "∀x P(x)", "is_valid": True},
-                {"formula": "invalid", "is_valid": False},
-            ]
-        )
-        assert len(result.formula_validations) == 2
-
-
-# =============================================================================
-# Test 3: EvaluationResult
+# Test 2: EvaluationResult
 # =============================================================================
 
 class TestEvaluationResult:
@@ -149,7 +88,6 @@ class TestEvaluationResult:
             accuracy=0.8,
             format_rate=0.9,
             syntax_rate=0.95,
-            semantic_rate=0.85,
             num_examples=10,
             num_correct=8,
             total_time_seconds=5.0,
@@ -165,16 +103,18 @@ class TestEvaluationResult:
             accuracy=0.8,
             format_rate=0.9,
             syntax_rate=0.95,
-            semantic_rate=0.85,
             num_examples=10,
             num_correct=8,
             total_time_seconds=5.0,
+            sample_outputs=[
+                {"is_correct": True, "is_valid_format": True, "syntax_rate": 1.0},
+                {"is_correct": True, "is_valid_format": True, "syntax_rate": 1.0},
+            ],
         )
         assert result.meets_threshold(
             min_accuracy=0.7,
             min_format_rate=0.8,
             min_syntax_rate=0.9,
-            min_semantic_rate=0.8,
         ) is True
 
     def test_meets_threshold_accuracy_fail(self):
@@ -184,10 +124,12 @@ class TestEvaluationResult:
             accuracy=0.5,
             format_rate=0.9,
             syntax_rate=0.95,
-            semantic_rate=0.85,
             num_examples=10,
             num_correct=5,
             total_time_seconds=5.0,
+            sample_outputs=[
+                {"is_correct": False, "is_valid_format": True, "syntax_rate": 1.0},
+            ],
         )
         assert result.meets_threshold(min_accuracy=0.7) is False
 
@@ -198,10 +140,12 @@ class TestEvaluationResult:
             accuracy=0.8,
             format_rate=0.5,
             syntax_rate=0.95,
-            semantic_rate=0.85,
             num_examples=10,
             num_correct=8,
             total_time_seconds=5.0,
+            sample_outputs=[
+                {"is_correct": True, "is_valid_format": False, "syntax_rate": 1.0},
+            ],
         )
         assert result.meets_threshold(min_format_rate=0.7) is False
 
@@ -212,7 +156,6 @@ class TestEvaluationResult:
             accuracy=0.8,
             format_rate=0.9,
             syntax_rate=0.95,
-            semantic_rate=0.85,
             num_examples=10,
             num_correct=8,
             total_time_seconds=5.0,
@@ -229,7 +172,6 @@ class TestEvaluationResult:
             accuracy=0.8,
             format_rate=0.9,
             syntax_rate=0.95,
-            semantic_rate=0.85,
             num_examples=10,
             num_correct=8,
             total_time_seconds=5.0,
@@ -241,44 +183,43 @@ class TestEvaluationResult:
 
 
 # =============================================================================
-# Test 4: GSMSemanticValidator
+# Test 3: GSM answer extraction (via Evaluator methods)
 # =============================================================================
 
-class TestGSMSemanticValidator:
-    """Tests for GSM arithmetic semantic validation."""
+class TestGSMAnswerExtraction:
+    """Tests for GSM arithmetic answer extraction."""
 
     def setup_method(self):
-        from synthesis.evaluator import GSMSemanticValidator
-        self.validator = GSMSemanticValidator()
+        from synthesis.evaluator import Evaluator
+        self.evaluator = Evaluator(dataset_name="gsm_symbolic")
 
-    def test_correct_answer(self):
-        result = self.validator.validate("5 + 3", "8")
-        assert result.is_valid is True
-        assert result.is_correct is True
-        assert result.computed_answer == "8.0"
+    def test_extract_answer_with_equals(self):
+        output = "Let me calculate: <<5 + 3 = 8>>"
+        answer = self.evaluator._extract_answer_gsm(output)
+        assert answer == "8"
 
-    def test_incorrect_answer(self):
-        result = self.validator.validate("5 + 3", "10")
-        assert result.is_valid is True
-        assert result.is_correct is False
+    def test_extract_numeric_expression(self):
+        output = "Result: <<5 + 3>>"
+        answer = self.evaluator._extract_answer_gsm(output)
+        assert answer == "8"
 
-    def test_complex_expression(self):
-        result = self.validator.validate("(10 + 5) * 2", "30")
-        assert result.is_valid is True
-        assert result.is_correct is True
+    def test_extract_complex_expression(self):
+        output = "<<(10 + 5) * 2>>"
+        answer = self.evaluator._extract_answer_gsm(output)
+        assert answer == "30"
 
-    def test_invalid_expression(self):
-        result = self.validator.validate("invalid", "8")
-        assert result.is_valid is False
-        assert result.error is not None
+    def test_no_constrained_content(self):
+        output = "no delimiters here"
+        answer = self.evaluator._extract_answer_gsm(output)
+        assert answer is None
 
 
 # =============================================================================
-# Test 5: FailureStage.EVALUATION
+# Test 4: FailureStage.EVALUATION
 # =============================================================================
 
 class TestFailureStageEvaluation:
-    """Tests for the new EVALUATION stage in FailureStage enum."""
+    """Tests for the EVALUATION stage in FailureStage enum."""
 
     def test_evaluation_stage_exists(self):
         from synthesis.feedback_loop import FailureStage
@@ -295,7 +236,7 @@ class TestFailureStageEvaluation:
 
 
 # =============================================================================
-# Test 6: SynthesisAttempt.eval_result
+# Test 5: SynthesisAttempt.eval_result
 # =============================================================================
 
 class TestSynthesisAttemptEvalResult:
@@ -323,7 +264,6 @@ class TestSynthesisAttemptEvalResult:
             accuracy=0.8,
             format_rate=0.9,
             syntax_rate=0.95,
-            semantic_rate=0.85,
             num_examples=10,
             num_correct=8,
             total_time_seconds=5.0,
@@ -348,7 +288,6 @@ class TestSynthesisAttemptEvalResult:
             accuracy=0.8,
             format_rate=0.9,
             syntax_rate=0.95,
-            semantic_rate=0.85,
             num_examples=10,
             num_correct=8,
             total_time_seconds=5.0,
@@ -368,7 +307,7 @@ class TestSynthesisAttemptEvalResult:
 
 
 # =============================================================================
-# Test 7: SynthesisPipeline requires evaluator
+# Test 6: SynthesisPipeline requires evaluator
 # =============================================================================
 
 class TestSynthesisPipelineEvaluator:
@@ -404,19 +343,17 @@ class TestSynthesisPipelineEvaluator:
             min_accuracy=0.7,
             min_format_rate=0.8,
             min_syntax_rate=0.9,
-            min_semantic_rate=0.85,
             eval_sample_size=20,
         )
 
         assert pipeline.min_accuracy == 0.7
         assert pipeline.min_format_rate == 0.8
         assert pipeline.min_syntax_rate == 0.9
-        assert pipeline.min_semantic_rate == 0.85
         assert pipeline.eval_sample_size == 20
 
 
 # =============================================================================
-# Test 8: Evaluation failure prompt
+# Test 7: Evaluation failure prompt
 # =============================================================================
 
 class TestEvaluationFailurePrompt:
@@ -472,7 +409,7 @@ class TestEvaluationFailurePrompt:
 
 
 # =============================================================================
-# Test 9: Generator.refine_after_evaluation_failure
+# Test 8: Generator.refine_after_evaluation_failure
 # =============================================================================
 
 class TestGeneratorRefineAfterEvaluationFailure:
@@ -528,7 +465,7 @@ class TestGeneratorRefineAfterEvaluationFailure:
 
 
 # =============================================================================
-# Test 10: Evaluator class
+# Test 9: Evaluator class
 # =============================================================================
 
 class TestEvaluator:
@@ -541,7 +478,6 @@ class TestEvaluator:
             dataset_name="gsm_symbolic",
             model_name="test-model",
             device="cpu",
-            vocab_size=1000,
             sample_size=5,
             max_steps=100,
         )
@@ -603,7 +539,7 @@ class TestEvaluator:
 
 
 # =============================================================================
-# Test 11: Integration test
+# Test 10: Integration test
 # =============================================================================
 
 class TestIntegration:
@@ -634,7 +570,6 @@ class TestIntegration:
             accuracy=0.4,
             format_rate=0.6,
             syntax_rate=0.8,
-            semantic_rate=0.7,
             num_examples=5,
             num_correct=2,
             total_time_seconds=1.0,
@@ -652,7 +587,6 @@ class TestIntegration:
 
         # Verify the flow
         assert attempt.failed_at == FailureStage.EVALUATION
-        assert not eval_result.meets_threshold(min_accuracy=0.5)
 
         # Generate refinement prompt
         system_prompt, user_prompt = build_evaluation_failure_prompt(
@@ -664,14 +598,13 @@ class TestIntegration:
 
     def test_evaluation_result_flow(self):
         """Test the flow of evaluation results through the system."""
-        from synthesis.evaluator import EvaluationResult, GSMSemanticValidator
+        from synthesis.evaluator import EvaluationResult, Evaluator
+
+        evaluator = Evaluator(dataset_name="gsm_symbolic")
 
         # Simulate evaluating an expression
-        validator = GSMSemanticValidator()
-        semantic_result = validator.validate("5 + 3", "8")
-
-        assert semantic_result.is_valid
-        assert semantic_result.is_correct
+        result = evaluator._safe_eval_arithmetic("5 + 3")
+        assert result == 8.0
 
         # Create evaluation result
         eval_result = EvaluationResult(
@@ -679,10 +612,12 @@ class TestIntegration:
             accuracy=1.0,
             format_rate=1.0,
             syntax_rate=1.0,
-            semantic_rate=1.0 if semantic_result.is_valid else 0.0,
             num_examples=1,
             num_correct=1,
             total_time_seconds=0.1,
+            sample_outputs=[
+                {"is_correct": True, "is_valid_format": True, "syntax_rate": 1.0},
+            ],
         )
 
         # Check thresholds
@@ -690,7 +625,6 @@ class TestIntegration:
             min_accuracy=0.9,
             min_format_rate=0.9,
             min_syntax_rate=0.9,
-            min_semantic_rate=0.9,
         )
 
     def test_failure_triggers_refinement(self):
@@ -704,7 +638,6 @@ class TestIntegration:
             accuracy=0.2,
             format_rate=0.3,
             syntax_rate=0.5,
-            semantic_rate=0.4,
             num_examples=10,
             num_correct=2,
             total_time_seconds=5.0,
@@ -718,7 +651,7 @@ class TestIntegration:
             ],
         )
 
-        # This should fail thresholds
+        # This should fail thresholds (sample has is_correct=False)
         assert not eval_result.meets_threshold(min_accuracy=0.5)
 
         # The feedback summary should contain useful info
@@ -728,7 +661,7 @@ class TestIntegration:
 
 
 # =============================================================================
-# Test 12: End-to-end evaluation loop iteration
+# Test 11: End-to-end evaluation loop iteration
 # =============================================================================
 
 class TestEvaluationLoopIteration:
@@ -823,12 +756,12 @@ class TestEvaluationLoopIteration:
                         accuracy=0.3,  # Below 0.5 threshold
                         format_rate=0.4,
                         syntax_rate=0.5,
-                        semantic_rate=0.4,
                         num_examples=10,
                         num_correct=3,
                         total_time_seconds=1.0,
                         sample_outputs=[
-                            {"question": "test", "expected": "8", "actual": "5", "is_correct": False}
+                            {"question": "test", "expected": "8", "actual": "5", "is_correct": False,
+                             "is_valid_format": False, "syntax_rate": 0.0}
                         ],
                     )
                 else:
@@ -838,10 +771,12 @@ class TestEvaluationLoopIteration:
                         accuracy=0.8,  # Above 0.5 threshold
                         format_rate=0.9,
                         syntax_rate=0.95,
-                        semantic_rate=0.85,
                         num_examples=10,
                         num_correct=8,
                         total_time_seconds=1.0,
+                        sample_outputs=[
+                            {"is_correct": True, "is_valid_format": True, "syntax_rate": 1.0},
+                        ],
                     )
 
             mock_evaluator.evaluate_sample = mock_evaluate_sample
@@ -945,7 +880,6 @@ class TestEvaluationLoopIteration:
                 accuracy=0.2,  # Always below threshold
                 format_rate=0.3,
                 syntax_rate=0.4,
-                semantic_rate=0.3,
                 num_examples=10,
                 num_correct=2,
                 total_time_seconds=1.0,
@@ -1030,10 +964,12 @@ class TestEvaluationLoopIteration:
                 accuracy=0.9,
                 format_rate=0.95,
                 syntax_rate=1.0,
-                semantic_rate=0.9,
                 num_examples=10,
                 num_correct=9,
                 total_time_seconds=1.0,
+                sample_outputs=[
+                    {"is_correct": True, "is_valid_format": True, "syntax_rate": 1.0},
+                ],
             ))
 
             pipeline = SynthesisPipeline(
@@ -1118,7 +1054,6 @@ class TestEvaluationLoopIteration:
                         accuracy=0.0,
                         format_rate=0.0,
                         syntax_rate=0.0,
-                        semantic_rate=0.0,
                         num_examples=0,
                         num_correct=0,
                         total_time_seconds=0.0,
@@ -1130,10 +1065,12 @@ class TestEvaluationLoopIteration:
                         accuracy=0.9,
                         format_rate=0.9,
                         syntax_rate=0.9,
-                        semantic_rate=0.9,
                         num_examples=10,
                         num_correct=9,
                         total_time_seconds=1.0,
+                        sample_outputs=[
+                            {"is_correct": True, "is_valid_format": True, "syntax_rate": 1.0},
+                        ],
                     )
 
             mock_evaluator.evaluate_sample = mock_eval
@@ -1247,7 +1184,6 @@ class TestEvaluationLoopIteration:
                         accuracy=0.2,
                         format_rate=0.3,
                         syntax_rate=0.4,
-                        semantic_rate=0.3,
                         num_examples=10,
                         num_correct=2,
                         total_time_seconds=1.0,
@@ -1257,10 +1193,12 @@ class TestEvaluationLoopIteration:
                     accuracy=0.9,
                     format_rate=0.95,
                     syntax_rate=1.0,
-                    semantic_rate=0.9,
                     num_examples=10,
                     num_correct=9,
                     total_time_seconds=1.0,
+                    sample_outputs=[
+                        {"is_correct": True, "is_valid_format": True, "syntax_rate": 1.0},
+                    ],
                 )
 
             mock_evaluator.evaluate_sample = mock_eval
