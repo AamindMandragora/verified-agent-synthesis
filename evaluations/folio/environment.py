@@ -4,6 +4,9 @@ Environment setup utilities for FOLIO evaluation.
 Handles loading compiled CSD modules and setting up the Dafny environment
 for constrained generation.
 """
+# TODO: merge shared logic with gsm_symbolic/environment.py (resolve_run_dir, load_compiled_modules,
+# verify_critical_tokens are near-identical; differences are in setup_dafny_environment signature
+# and parser start rule)
 
 from __future__ import annotations
 

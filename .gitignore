@@ -1,4 +1,25 @@
+.pytest_cache/
+cache/
+
+# Dafny build artifacts
 dafny-lang/dafny/*
-cache
-__pycache__
 dafny/obj/*
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Model/data cache
+cache/
+
+# Log and temp files
+*.log
+test_output.txt
+temp_test_strategy.dfy
+check_tokens.py
