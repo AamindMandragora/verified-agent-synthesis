@@ -270,46 +270,45 @@ module VerifiedDecoderAgent {
 
   class CSDHelpers {
     // Library functions that QWEN must directly use to synthesize the constrained decoding agent.
-
-    var cost: int
+    // Each step consumes one unit of stepsLeft; no separate cost field.
 
     constructor()
-      ensures cost == 0
     {
-      cost := 0;
     }
 
-    // Performs a single unconstrained decoding step and returns the next token.
-    method UnconstrainedStep(lm: LM, prompt: Prefix, generated: Prefix) returns (next: Token)
-      modifies lm.Logits, this
+    // Performs a single unconstrained decoding step; consumes one step. Returns next token and remaining steps.
+    method UnconstrainedStep(lm: LM, prompt: Prefix, generated: Prefix, stepsLeft: nat) returns (next: Token, stepsLeft': nat)
+      modifies lm.Logits
       requires lm.ValidTokensIdsLogits()
+      requires stepsLeft >= 1
       ensures lm.ValidTokensIdsLogits()
-      ensures cost == old(cost) + 1
+      ensures stepsLeft' == stepsLeft - 1
     {
       lm.GenerateLogits(prompt + generated);
       next := lm.ChooseNextTokenUnconstrained();
-      cost := cost + 1;
+      stepsLeft' := stepsLeft - 1;
     }
 
-    // Performs a single constrained decoding step and returns the next token.
-    method ConstrainedStep(lm: LM, parser: Parser, prompt: Prefix, generated: Prefix) returns (next: Token)
-      modifies lm.Logits, this
+    // Performs a single constrained decoding step; consumes one step. Returns next token and remaining steps.
+    method ConstrainedStep(lm: LM, parser: Parser, prompt: Prefix, generated: Prefix, stepsLeft: nat) returns (next: Token, stepsLeft': nat)
+      modifies lm.Logits
       requires lm.ValidTokensIdsLogits()
       requires parser.IsValidPrefix(generated)
       requires !parser.IsCompletePrefix(generated)
+      requires stepsLeft >= 1
       requires forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens
       ensures lm.ValidTokensIdsLogits()
       ensures forall t: Token :: t in lm.Tokens ==> (lm.IsMasked(t) || parser.ValidNextToken(generated, t))
       ensures parser.ValidNextToken(generated, next)
       ensures !lm.IsMasked(next)
       ensures forall t: Token :: t in parser.ValidNextTokens(generated + [next]) ==> t in lm.Tokens
-      ensures cost == old(cost) + 1
+      ensures stepsLeft' == stepsLeft - 1
     {
       lm.GenerateLogits(prompt + generated);
       lm.MaskTokensExcept(parser.ValidNextTokens(generated));
       next := lm.ChooseNextToken();
       ConstrainedStepNextValid(lm, parser, generated, next);
-      cost := cost + 1;
+      stepsLeft' := stepsLeft - 1;
     }
 
     // A lemma that lets us say if the LM can generate all next valid tokens, then if we append one of those to the end, the LM can still generate all next valid tokens for the new prefix.
@@ -329,13 +328,14 @@ module VerifiedDecoderAgent {
     {
       repaired := generated;
 
-      while !parser.IsValidPrefix(repaired) || parser.IsDeadPrefix(repaired)
+      while |repaired| > 0 && (!parser.IsValidPrefix(repaired) || parser.IsDeadPrefix(repaired))
         invariant |repaired| <= |generated|
         invariant parser.IsValidPrefix(repaired) || |repaired| > 0
         decreases |repaired|
       {
         repaired := repaired[..|repaired|-1];
       }
+      // If we exited with repaired == [], precondition gives parser.IsValidPrefix([])
     }
 
     // Lemma: After rollback, valid next tokens are still in LM vocabulary

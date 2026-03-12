@@ -461,24 +461,18 @@ class StrategyRunner:
                     execution_time_ms=(time.time() - start_time) * 1000
                 )
             
-            # Call the strategy method directly - it performs constrained decoding
-            # and returns (generated sequence, cost)
-            
-            # Check signature of MyCSDStrategy to handle different template versions
-            # Some versions expect (lm, parser, prompt, maxSteps)
-            # Others expect (lm, parser, prompt, maxSteps, eosToken)
+            # Call the strategy method - it returns (generated sequence, remainingSteps)
             sig = inspect.signature(csd_strategy_method)
             if len(sig.parameters) >= 5:
-                # Get EOS token from LM
                 eos_token = lm.get_eos_token()
                 result = csd_strategy_method(lm, parser, test_prompt, max_steps, eos_token)
             else:
                 result = csd_strategy_method(lm, parser, test_prompt, max_steps)
             
-            # Dafny returns a tuple (output, cost) for methods with multiple returns
-            # MyCSDStrategy is now defined as: returns (generated: Prefix, cost: int)
+            # MyCSDStrategy returns (generated: Prefix, remainingSteps: nat)
             if isinstance(result, tuple) and len(result) == 2:
-                output, cost = result
+                output, remaining_steps = result
+                cost = max_steps - remaining_steps  # steps consumed (for backward compat)
             elif isinstance(result, tuple) and len(result) > 0:
                 output = result[0]
                 cost = 0

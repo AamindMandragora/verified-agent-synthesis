@@ -2,7 +2,7 @@
 cache/
 
 # Dafny build artifacts
-dafny-lang/dafny/*
+dafny-lang/
 dafny/obj/*
 
 # Python cache

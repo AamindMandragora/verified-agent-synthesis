@@ -30,6 +30,81 @@ class FailureStage(Enum):
     EVALUATION = "evaluation"
 
 
+def repair_verification_strategy(strategy_code: str, error_summary: str) -> tuple[str, bool]:
+    """
+    Apply known fixes to strategy code when verification fails with specific errors.
+    Returns (repaired_code, True) if any fix was applied, else (strategy_code, False).
+    """
+    import re
+    repaired = strategy_code
+    changed = False
+
+    # Fix: "Duplicate local-variable name: stepsLeft" -> template already declares it; remove duplicate
+    if "Duplicate local-variable name: stepsLeft" in error_summary:
+        # Remove lines that are just "var stepsLeft := maxSteps;" (any spacing)
+        line_pattern = re.compile(r"^\s*var\s+stepsLeft\s*:=\s*maxSteps\s*;\s*$", re.IGNORECASE | re.MULTILINE)
+        new_repaired = line_pattern.sub("", repaired)
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: "member 'IsValidNextToken' does not exist" -> use ValidNextToken
+    if "IsValidNextToken" in error_summary or "isvalidnexttoken" in error_summary.lower():
+        if "IsValidNextToken" in repaired:
+            repaired = repaired.replace("IsValidNextToken", "ValidNextToken")
+            changed = True
+
+    # Fix: "does not have a member Exists" / "type seq ... Exists" -> use Dafny exists quantifier
+    if "Exists" in error_summary and ("member" in error_summary.lower() or "type" in error_summary.lower()):
+        pattern = re.compile(
+            r"(\w+)\.Exists\s*\(\s*(\w+)\s*=>\s*parser\.ValidNextToken\s*\(\s*(\w+)\s*,\s*\2\s*\)\s*\)",
+            re.IGNORECASE
+        )
+        def repl(m):
+            seq_var, tok_var, prefix_var = m.group(1), m.group(2), m.group(3)
+            return f"(exists {tok_var} :: {tok_var} in {seq_var} && parser.ValidNextToken({prefix_var}, {tok_var}))"
+        new_repaired = pattern.sub(repl, repaired)
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+        if ".Exists(" in repaired and not changed:
+            repaired = re.sub(
+                r"(\w+)\.Exists\s*\(\s*(\w+)\s*=>\s*([^)]+)\)\s*\)",
+                r"(exists \2 :: \2 in \1 && \3)",
+                repaired
+            )
+            changed = ".Exists(" not in repaired or repaired != strategy_code
+
+    # Fix: "invariant could not be proved" for |generated| + stepsLeft == maxSteps
+    # RollbackToValidPrefix in the loop changes |generated| without changing stepsLeft, breaking the invariant.
+    # Remove the rollback call from inside the loop so only ConstrainedStep updates generated/stepsLeft.
+    if "invariant could not be proved" in error_summary and "stepsLeft == maxSteps" in error_summary:
+        if "RollbackToValidPrefix" in repaired:
+            # Remove line(s) that assign generated from RollbackToValidPrefix inside the loop body
+            repaired = re.sub(
+                r"\s*generated\s*:=\s*helpers\.RollbackToValidPrefix\s*\(\s*parser\s*,\s*generated\s*\)\s*;\s*",
+                "\n",
+                repaired,
+            )
+            changed = True
+
+    # Fix: "precondition for this call could not be proved" for ConstrainedStep (ValidNextTokens in lm.Tokens)
+    # Insert lemma call CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated) before ConstrainedStep if missing.
+    if "precondition for this call could not be proved" in error_summary and "ValidNextTokens" in error_summary:
+        lemma_call = "CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);"
+        if "RollbackPreservesTokenInvariant" not in repaired and "ConstrainedStep" in repaired:
+            # Insert lemma call immediately before the line that calls ConstrainedStep
+            repaired = re.sub(
+                r"(\s*)(var\s+next\s*,\s*newSteps\s*:=\s*helpers\.ConstrainedStep\s*\()",
+                r"\1" + lemma_call + "\n\1\2",
+                repaired,
+                count=1,
+            )
+            changed = True
+
+    return repaired, changed
+
+
 def parse_strategy_type(strategy_code: str) -> dict:
     """
     Parse the generated strategy code to extract strategy type and parameters.
@@ -46,59 +121,24 @@ def parse_strategy_type(strategy_code: str) -> dict:
         extracted.body_without_rationale.strip() if extracted.has_markers else strategy_code.strip()
     )
 
-    # Pattern matching for each strategy type
-    patterns = {
-        "PureConstrainedGeneration": {
-            "pattern": r"PureConstrainedGeneration|ConstrainedGeneration",
-            "category": "fully_constrained",
-            "comparable_to": "SynCode",
-        },
-        "TryUnconstrainedThenConstrained": {
-            "pattern": r"TryUnconstrainedThenConstrained.*?(\d+)",
-            "category": "optimistic_with_fallback",
-            "comparable_to": "IterGen-like",
-        },
-        "HybridGeneration": {
-            "pattern": r"HybridGeneration.*?(\d+)",
-            "category": "interleaved",
-            "comparable_to": "Novel",
-        },
-        "SpeculativeGeneration": {
-            "pattern": r"SpeculativeGeneration.*?(\d+)",
-            "category": "speculative",
-            "comparable_to": "SpecDec-like",
-        },
-        "UnconstrainedWithCompletion": {
-            "pattern": r"UnconstrainedWithCompletion",
-            "category": "unconstrained_then_repair",
-            "comparable_to": "PICARD-like",
-        },
-    }
+    # Detect which primitives are used (VerifiedAgentSynthesis.dfy only has these three)
+    uses_constrained = "ConstrainedStep" in strategy_code_for_match
+    uses_unconstrained = "UnconstrainedStep" in strategy_code_for_match
+    uses_rollback = "RollbackToValidPrefix" in strategy_code_for_match
 
-    for name, info in patterns.items():
-        match = re.search(info["pattern"], strategy_code_for_match)
-        if match:
-            params: dict[str, int] = {}
-            if match.groups():
-                if name == "TryUnconstrainedThenConstrained":
-                    params["unconstrained_steps"] = int(match.group(1))
-                elif name == "HybridGeneration":
-                    params["interval"] = int(match.group(1))
-                elif name == "SpeculativeGeneration":
-                    params["window_size"] = int(match.group(1))
-
-            return {
-                "strategy_name": name,
-                "parameters": params,
-                "category": info["category"],
-                "comparable_to": info["comparable_to"],
-                "raw_code": strategy_code,
-            }
+    if uses_constrained and uses_unconstrained:
+        category = "interleaved"
+    elif uses_constrained:
+        category = "constrained_only"
+    elif uses_unconstrained:
+        category = "unconstrained_only"
+    else:
+        category = "unknown"
 
     return {
-        "strategy_name": "Unknown",
-        "parameters": {},
-        "category": "unknown",
+        "strategy_name": "CustomLoop",
+        "parameters": {"uses_rollback": uses_rollback},
+        "category": category,
         "comparable_to": "N/A",
         "raw_code": strategy_code,
     }
@@ -334,7 +374,6 @@ class SynthesisPipeline:
         self,
         task_description: str,
         output_name: str = "generated_csd",
-        cost_contract: str = "",
     ) -> SynthesisResult:
         """
         Synthesize a CSD strategy for the given task.
@@ -342,7 +381,6 @@ class SynthesisPipeline:
         Args:
             task_description: Description of what the strategy should accomplish
             output_name: Name for the output module
-            cost_contract: Optional cost contract (e.g. "ensures helpers.cost <= 10")
 
         Returns:
             SynthesisResult on success
@@ -382,9 +420,7 @@ class SynthesisPipeline:
 
         # Initial generation
         print(f"Generating initial strategy for: {task_description}")
-        if cost_contract:
-            print(f"Using cost contract: {cost_contract}")
-        strategy_code = self.generator.generate_initial(task_description, cost_contract)
+        strategy_code = self.generator.generate_initial(task_description)
 
         for iteration in range(self.max_iterations):
             attempt_num = iteration + 1
@@ -394,7 +430,7 @@ class SynthesisPipeline:
             print(f"Strategy: {strategy_code}")
 
             # Create full Dafny code
-            full_code = self.generator.inject_strategy(strategy_code, cost_contract)
+            full_code = self.generator.inject_strategy(strategy_code)
 
             # Create attempt record
             attempt = SynthesisAttempt(
@@ -411,8 +447,10 @@ class SynthesisPipeline:
 
             if not verification_result.success:
                 print("  ✗ Verification failed")
+                error_summary = verification_result.get_error_summary()
+                print(error_summary)
                 attempt.failed_at = FailureStage.VERIFICATION
-                attempt.error_summary = verification_result.get_error_summary()
+                attempt.error_summary = error_summary
                 attempts.append(attempt)
 
                 # Check if we're stuck on the same error repeatedly
@@ -428,19 +466,22 @@ class SynthesisPipeline:
                     # After 3+ identical errors, prepend strong guidance
                     error_msg = (
                         f"WARNING: This is the SAME error for {consecutive_same + 1} consecutive attempts. "
-                        f"Your previous fixes did NOT work. You MUST use a COMPLETELY DIFFERENT strategy. "
-                        f"Do NOT use any method that doesn't exist. Use ONLY: PureConstrainedGeneration, "
-                        f"TryUnconstrainedThenConstrained, HybridGeneration, SpeculativeGeneration, "
-                        f"UnconstrainedWithCompletion, CompletePrefix, GenerateWithReasonableLength, "
-                        f"GenerateUntilFirstComplete, GenerateAndSelectBest.\n\n"
+                        f"Your previous fixes did NOT work. You MUST use a COMPLETELY DIFFERENT approach. "
+                        f"The ONLY methods on helpers are: UnconstrainedStep, ConstrainedStep, and "
+                        f"(static) RollbackToValidPrefix. Implement a loop that calls these; do NOT call any other method.\n\n"
                         f"Original error:\n{error_msg}"
                     )
 
-                # Refine based on verification error
-                print("  Refining based on verification error...")
-                strategy_code = self.generator.refine_after_verification_error(
-                    strategy_code, error_msg
-                )
+                # Try automatic repair for known errors so output actually changes
+                strategy_code, repaired = repair_verification_strategy(strategy_code, error_msg)
+                if repaired:
+                    print("  Applied automatic fix (e.g. duplicate stepsLeft / Exists / invariant+precondition); re-verifying...")
+                else:
+                    # Refine based on verification error via model
+                    print("  Refining based on verification error...")
+                    strategy_code = self.generator.refine_after_verification_error(
+                        strategy_code, error_msg
+                    )
                 continue
 
             print("  ✓ Verification passed")
@@ -499,7 +540,9 @@ class SynthesisPipeline:
             print(f"  ✓ Execution successful ({runtime_result.execution_time_ms:.1f}ms)")
             print(f"  Output length: {len(runtime_result.output or [])} tokens")
 
-            # Stage 4: Evaluation
+            # Stage 4: Evaluation — use same device as generator to avoid loading on a full GPU
+            if getattr(self.generator, "device", None):
+                self.evaluator.device = self.generator.device
             print("\n[4/4] Evaluating on dataset sample...")
             eval_result = self.evaluator.evaluate_sample(
                 compiled_module_path=compilation_result.main_module_path,

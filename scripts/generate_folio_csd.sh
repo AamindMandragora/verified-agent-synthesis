@@ -26,7 +26,6 @@ echo ""
 python run_synthesis.py \
     --task "$TASK_DESC" \
     --dataset folio \
-    --cost-contract "" \
     --max-iterations 10 \
     --model "Qwen/Qwen2.5-Coder-7B-Instruct" \
     --output-name "folio_csd" \

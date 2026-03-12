@@ -14,6 +14,8 @@ from pathlib import Path
 import secrets
 from typing import Optional
 
+from synthesis.dafny_runner import prepare_temp_dafny_dir
+
 
 @dataclass
 class CompilationError:
@@ -58,10 +60,7 @@ class DafnyCompiler:
     
     Compiles verified Dafny code to Python modules that can be imported and run.
     """
-    
-    # Path to proofs directory (for includes)
-    PROOFS_DIR = Path(__file__).parent.parent / "proofs"
-    
+
     # Default output directory
     DEFAULT_OUTPUT_DIR = Path(__file__).parent.parent / "outputs" / "generated-csd"
     
@@ -139,42 +138,23 @@ class DafnyCompiler:
         Returns:
             CompilationResult with paths to generated Python code
         """
-        # Create temp directory for compilation
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            
-            # Create directory structure matching includes
-            agents_dir = temp_path / "agents"
-            agents_dir.mkdir()
-            
-            proofs_dir = temp_path / "proofs"
-            proofs_dir.mkdir()
-            
-            # Copy the VerifiedAgentSynthesis.dfy
-            source_proof = self.PROOFS_DIR / "VerifiedAgentSynthesis.dfy"
-            # Fallback: check dafny/ directory if not in proofs/
-            if not source_proof.exists():
-                source_proof = Path(__file__).parent.parent / "dafny" / "VerifiedAgentSynthesis.dfy"
-
-            if source_proof.exists():
-                (proofs_dir / "VerifiedAgentSynthesis.dfy").write_text(
-                    source_proof.read_text()
+            try:
+                source_file, cwd = prepare_temp_dafny_dir(temp_path, dafny_code, "compile")
+            except FileNotFoundError as e:
+                return CompilationResult(
+                    success=False,
+                    errors=[CompilationError(
+                        file="System", line=0, column=0,
+                        message=str(e),
+                    )],
+                    return_code=-1,
                 )
 
-                # Copy into agents/ directory too, as some relative imports might look there
-                (agents_dir / "VerifiedAgentSynthesis.dfy").write_text(
-                    source_proof.read_text()
-                )
-            
-            # Write the generated code
-            source_file = agents_dir / "GeneratedCSD.dfy"
-            source_file.write_text(dafny_code)
-            
-            # Output directory within temp (Dafny creates a subdirectory)
-            compile_output = temp_path / "compiled"
+            compile_output = cwd / "compiled"
             compile_output.mkdir()
-            
-            # Run dafny build with Python target
+
             cmd = [
                 self.dafny_path,
                 "build",
@@ -183,14 +163,14 @@ class DafnyCompiler:
                 str(source_file),
                 *self.extra_args
             ]
-            
+
             try:
                 result = subprocess.run(
                     cmd,
                     capture_output=True,
                     text=True,
                     timeout=self.timeout,
-                    cwd=temp_path
+                    cwd=cwd,
                 )
             except subprocess.TimeoutExpired:
                 return CompilationResult(

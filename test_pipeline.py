@@ -1,75 +1,71 @@
-
-import sys
+"""
+Quick pipeline smoke test: verify + compile + run a strategy that uses only
+VerifiedAgentSynthesis.dfy primitives (UnconstrainedStep, ConstrainedStep).
+Does not call the LLM. Requires Dafny on PATH or set DAFNY env.
+"""
 import os
+import sys
 from pathlib import Path
 
-# Add project root to path
-sys.path.append(os.getcwd())
+sys.path.insert(0, os.getcwd())
 
-from synthesis.feedback_loop import SynthesisExhaustionError
 from synthesis.generator import StrategyGenerator
 from synthesis.verifier import DafnyVerifier
 from synthesis.compiler import DafnyCompiler
 from synthesis.runner import StrategyRunner
-from synthesis.feedback_loop import SynthesisAttempt
+
 
 def test_synthesis():
-    # We won't actually call the LLM in this test to avoid costs/delays
-    # Instead, we'll mock the generator to return a specific strategy
-    
-    # 1. Setup components
-    # Use real paths for tools
-    dafny_bin = "/home/advayth2/projects/verified-agent-synthesis/dafny-lang/dafny/dafny"
+    dafny_bin = os.environ.get("DAFNY", "dafny")
     verifier = DafnyVerifier(dafny_path=dafny_bin)
     compiler = DafnyCompiler(dafny_path=dafny_bin)
     runner = StrategyRunner()
-    
-    # 2. Mock strategy
-    # This strategy uses HybridGeneration and should satisfy cost <= 2 * maxSteps
+
+    # Strategy using only CSDHelpers primitives (stepsLeft consumed per step)
     strategy_code = """
     // CSD_RATIONALE_BEGIN
-    // We use HybridGeneration to interleave reasoning and constrained steps.
-    // The cost will be at most 2 * maxSteps.
+    // Constrained-only loop; each ConstrainedStep consumes one step (stepsLeft).
     // CSD_RATIONALE_END
-    generated := helpers.HybridGeneration(lm, parser, prompt, maxSteps);
+    generated := [];
+    while stepsLeft > 0 && !parser.IsCompletePrefix(generated)
+      invariant lm.ValidTokensIdsLogits()
+      invariant parser.IsValidPrefix(generated)
+      invariant 0 <= stepsLeft <= maxSteps
+      invariant |generated| + stepsLeft == maxSteps
+      decreases stepsLeft
+    {
+      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);
+      var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);
+      generated := generated + [next];
+      stepsLeft := newSteps;
+    }
     """
-    cost_contract = "ensures cost <= 2 * maxSteps"
-    
-    # 3. Inject and verify
     generator = StrategyGenerator()
-    full_code = generator.inject_strategy(strategy_code, cost_contract)
-    
-    # Save to a temporary file
-    temp_dfy = Path("temp_test_strategy.dfy")
-    temp_dfy.write_text(full_code)
-    
-    print(f"Testing strategy verification...")
+    full_code = generator.inject_strategy(strategy_code)
+
+    print("Testing strategy verification...")
     v_result = verifier.verify(full_code)
     if not v_result.success:
-        print(f"Verification failed: {v_result.errors}")
+        print("Verification failed:", v_result.get_error_summary())
         return False
     print("Verification successful!")
-    
-    print(f"Testing strategy compilation...")
-    c_result = compiler.compile(full_code)
+
+    print("Testing strategy compilation...")
+    c_result = compiler.compile(full_code, output_name="test_csd")
     if not c_result.success:
-        print(f"Compilation failed: {c_result.error_message}")
+        print("Compilation failed:", c_result.get_error_summary())
         return False
     print("Compilation successful!")
-    
-    print(f"Testing strategy execution...")
+
+    print("Testing strategy execution...")
+    if c_result.main_module_path is None:
+        print("No main module path")
+        return False
     r_result = runner.run(c_result.main_module_path)
     if not r_result.success:
-        print(f"Execution failed: {r_result.error_message}")
-        if r_result.error_traceback:
-            print(f"Traceback:\n{r_result.error_traceback}")
+        print("Execution failed:", r_result.get_error_summary())
         return False
-    print(f"Execution successful! Generated {len(r_result.output)} tokens with cost {r_result.cost}")
-    
-    # Cleanup
-    # if temp_dfy.exists():
-    #    temp_dfy.unlink()
-    
+    print(f"Execution successful! Output length: {len(r_result.output or [])} tokens, steps used: {r_result.cost}")
     return True
 
 if __name__ == "__main__":

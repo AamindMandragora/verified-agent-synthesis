@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from synthesis.dafny_runner import check_dafny_available, prepare_temp_dafny_dir
+
 
 @dataclass
 class VerificationError:
@@ -35,17 +37,27 @@ class VerificationResult:
     return_code: int = 0
     
     def get_error_summary(self) -> str:
-        """Get a human-readable summary of errors."""
+        """Get a human-readable summary of errors for the LLM refinement prompt."""
         if self.success:
             return "Verification successful"
         
+        combined_raw = (self.raw_output or "") + "\n" + (self.raw_stderr or "")
+        combined_raw = combined_raw.strip()
+
         if not self.errors:
-            # No parsed errors, return raw output
-            return self.raw_output or self.raw_stderr
-        
-        lines = [f"Verification failed with {len(self.errors)} error(s):"]
+            # No parsed errors, return raw output so the model still sees Dafny's message
+            return combined_raw or "Verification failed (no details captured)."
+
+        lines = [f"Dafny verification failed with {len(self.errors)} error(s):", ""]
         for err in self.errors:
-            lines.append(f"  - Line {err.line}: {err.message}")
+            # Include line, column, and full message so the model can fix the exact location
+            lines.append(f"  (Line {err.line}, Column {err.column}): {err.error_type}: {err.message}")
+        lines.append("")
+        # Append raw Dafny output so the model sees the exact errors (e.g. multi-line, related hints)
+        if combined_raw:
+            raw_preview = combined_raw if len(combined_raw) <= 3500 else combined_raw[:3500] + "\n... (truncated)"
+            lines.append("Full Dafny output:")
+            lines.append(raw_preview)
         return "\n".join(lines)
 
 
@@ -55,10 +67,7 @@ class DafnyVerifier:
     
     Writes Dafny code to a temp file, runs verification, and parses results.
     """
-    
-    # Path to proofs directory (for includes)
-    PROOFS_DIR = Path(__file__).parent.parent / "proofs"
-    
+
     # Regex patterns for parsing Dafny output
     ERROR_PATTERN = re.compile(
         r"^(.+?)\((\d+),(\d+)\):\s*(Error|Warning|Info):\s*(.+)$",
@@ -84,29 +93,8 @@ class DafnyVerifier:
         self.extra_args = extra_args or []
         
         # Verify dafny is available
-        self._check_dafny_available()
-    
-    def _check_dafny_available(self) -> None:
-        """Check that Dafny is installed and accessible."""
-        try:
-            result = subprocess.run(
-                [self.dafny_path, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            if result.returncode != 0:
-                raise RuntimeError(
-                    f"Dafny returned non-zero exit code: {result.stderr}"
-                )
-        except FileNotFoundError:
-            raise RuntimeError(
-                f"Dafny not found at '{self.dafny_path}'. "
-                "Please install Dafny and ensure it's in your PATH."
-            )
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("Dafny version check timed out")
-    
+        check_dafny_available(self.dafny_path)
+
     def _parse_errors(self, output: str, source_file: str) -> list[VerificationError]:
         """
         Parse verification errors from Dafny output.
@@ -149,47 +137,20 @@ class DafnyVerifier:
         Returns:
             VerificationResult with success status and any errors
         """
-        # Create temp directory to hold the file
-        # We need to be in a directory where the include paths work
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            
-            # The VerifiedAgentSynthesis.dfy and GeneratedCSD.dfy are expected
-            # to be in the same directory by default Dafny include semantics unless paths are relative
-            # The template says: include "VerifiedAgentSynthesis.dfy"
-            
-            # Copy the VerifiedAgentSynthesis.dfy to temp location
-            source_proof = self.PROOFS_DIR / "VerifiedAgentSynthesis.dfy"
-            # Fallback: check dafny/ directory if not in proofs/
-            if not source_proof.exists():
-                source_proof = Path(__file__).parent.parent / "dafny" / "VerifiedAgentSynthesis.dfy"
-            
-            if source_proof.exists():
-                (temp_path / "VerifiedAgentSynthesis.dfy").write_text(
-                    source_proof.read_text()
-                )
-                
-                # Create agents directory for relative imports
-                agents_dir = temp_path / "agents"
-                agents_dir.mkdir(exist_ok=True)
-                (agents_dir / "VerifiedAgentSynthesis.dfy").write_text(
-                    source_proof.read_text()
-                )
-                
-            else:
+            try:
+                source_file, cwd = prepare_temp_dafny_dir(temp_path, dafny_code, "verify")
+            except FileNotFoundError as e:
                 return VerificationResult(
                     success=False,
                     errors=[VerificationError(
                         file="System", line=0, column=0,
-                        message=f"VerifiedAgentSynthesis.dfy not found in proofs/ or dafny/"
+                        message=str(e),
                     )],
-                    return_code=-1
+                    return_code=-1,
                 )
-            
-            # Write the generated code
-            source_file = temp_path / "GeneratedCSD.dfy"
-            source_file.write_text(dafny_code)
-            
+
             # Run dafny verify
             cmd = [
                 self.dafny_path,
@@ -204,7 +165,7 @@ class DafnyVerifier:
                     capture_output=True,
                     text=True,
                     timeout=self.timeout,
-                    cwd=temp_path  # Run from temp dir so includes work
+                    cwd=cwd,
                 )
             except subprocess.TimeoutExpired:
                 return VerificationResult(

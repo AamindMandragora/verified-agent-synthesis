@@ -1,0 +1,276 @@
+{
+  "task_description": "Generate short symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces a strict arithmetic expression grammar with VARIABLES and numeric constants. CRITICAL RULES: 1. Every expression MUST contain at least one variable - pure numeric expressions like '2 * 2' are INVALID.     Variables may appear as letter+digits (n1, x2), split letter/digit tokens (n 1, x 2), or letter-only (n, x, foo). 2. Variables represent problem values; numeric constants (12, 100) are for unit conversions and percentages. 3. The constrained windows are SHORT (typically 5-20 tokens for expressions like 'n1 + n2 * 12'). 4. The grammar is RECURSIVE but depth is BOUNDED in runtime; prefer balanced parentheses and compact expressions. 5. The grammar includes the closing delimiter '>>' - expressions must be complete and compact. 6. Avoid trivial outputs (e.g., just a single variable) unless the problem truly requires it; include necessary operators.",
+  "total_attempts": 10,
+  "timestamp": "2026-03-08T09:25:51.898826",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "constrained_only",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-08T09:23:31.591918",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 36, Column 47): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(36,47): Error: a precondition for this call could not be proved\n   |\n36 |   var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n   |                                                ^\n\nVerifiedAgentSynthesis.dfy(299,15): Related location: this is the precondition that could not be proved\n    |\n299 |       requires forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens\n    |                ^^^^^^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 2,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\u0001\u0002lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "unknown",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\u0001\u0002lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-08T09:23:33.516475",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 37, Column 0): Error: rbrace expected\n\nFull Dafny output:\nGeneratedCSD.dfy(37,0): Error: rbrace expected\n   |\n37 | \u0001\u0002lm, parser, prompt, generated, stepsLeft);\n   | ^\n\n1 parse errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 3,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant hasValid ==> parser.IsCompletePrefix(generated)\n  decreases stepsLeft\n{\n  if hasValid {\n    // If we've already found a valid expression, just continue.\n    continue;\n  }\n\n  // Rollback to a valid prefix if necessary to maintain the valid next tokens invariant.\n  generated := helpers.RollbackToValidPrefix(parser, generated);\n\n  // Check if the current prefix is valid and complete.\n  if parser.IsCompletePrefix(generated) {\n    hasValid := true;\n    continue;\n  }\n\n  // Try a constrained step if the current prefix is not complete.\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "constrained_only",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant hasValid ==> parser.IsCompletePrefix(generated)\n  decreases stepsLeft\n{\n  if hasValid {\n    // If we've already found a valid expression, just continue.\n    continue;\n  }\n\n  // Rollback to a valid prefix if necessary to maintain the valid next tokens invariant.\n  generated := helpers.RollbackToValidPrefix(parser, generated);\n\n  // Check if the current prefix is valid and complete.\n  if parser.IsCompletePrefix(generated) {\n    hasValid := true;\n    continue;\n  }\n\n  // Try a constrained step if the current prefix is not complete.\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-08T09:23:51.969048",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 3 error(s):\n\n  (Line 30, Column 0): Error: decreases expression might not decrease\n  (Line 34, Column 36): Error: this invariant could not be proved to be maintained by the loop\n  (Line 53, Column 47): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(30,0): Error: decreases expression might not decrease\n   |\n30 | while stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n   | ^^^^^\n\nGeneratedCSD.dfy(34,36): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n34 |   invariant |generated| + stepsLeft == maxSteps\n   |                                     ^^\n\nGeneratedCSD.dfy(53,47): Error: a precondition for this call could not be proved\n   |\n53 |   var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n   |                                                ^\n\nVerifiedAgentSynthesis.dfy(299,15): Related location: this is the precondition that could not be proved\n    |\n299 |       requires forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens\n    |                ^^^^^^\n\n\nDafny program verifier finished with 1 verified, 3 errors",
+      "verification": {
+        "success": false,
+        "error_count": 3
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 4,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant hasValid ==> parser.IsCompletePrefix(generated)\n  decreases stepsLeft\n{\n  if hasValid {\n    // If we've already found a valid expression, just continue.\n    continue;\n  }\n\n  // Rollback to a valid prefix if necessary to maintain the valid next tokens invariant.\n// Check if the current prefix is valid and complete.\n  if parser.IsCompletePrefix(generated) {\n    hasValid := true;\n    continue;\n  }\n\n  // Try a constrained step if the current prefix is not complete.\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\u0001\u0002lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "unknown",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant hasValid ==> parser.IsCompletePrefix(generated)\n  decreases stepsLeft\n{\n  if hasValid {\n    // If we've already found a valid expression, just continue.\n    continue;\n  }\n\n  // Rollback to a valid prefix if necessary to maintain the valid next tokens invariant.\n// Check if the current prefix is valid and complete.\n  if parser.IsCompletePrefix(generated) {\n    hasValid := true;\n    continue;\n  }\n\n  // Try a constrained step if the current prefix is not complete.\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\u0001\u0002lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-08T09:23:54.096517",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 52, Column 0): Error: rbrace expected\n\nFull Dafny output:\nGeneratedCSD.dfy(52,0): Error: rbrace expected\n   |\n52 | \u0001\u0002lm, parser, prompt, generated, stepsLeft);\n   | ^\n\n1 parse errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 5,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant hasValid ==> parser.IsCompletePrefix(generated)\n  decreases stepsLeft\n{\n  if hasValid {\n    // If we've already found a valid expression, just continue.\n    continue;\n  }\n\n  // Try a constrained step if the current prefix is not complete.\n  if !parser.IsCompletePrefix(generated) {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    hasValid := true;\n  }\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "constrained_only",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant hasValid ==> parser.IsCompletePrefix(generated)\n  decreases stepsLeft\n{\n  if hasValid {\n    // If we've already found a valid expression, just continue.\n    continue;\n  }\n\n  // Try a constrained step if the current prefix is not complete.\n  if !parser.IsCompletePrefix(generated) {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    hasValid := true;\n  }\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-08T09:24:07.355672",
+      "succeeded": true,
+      "failed_at": "evaluation",
+      "error_summary": "CUDA out of memory. Tried to allocate 2.00 MiB. GPU 1 has a total capacity of 39.39 GiB of which 832.00 KiB is free. Process 1798114 has 38.05 GiB memory in use. Including non-PyTorch memory, this process has 1.33 GiB memory in use. Of the allocated memory 594.05 MiB is allocated by PyTorch, and 355.95 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",
+      "verification": {
+        "success": true,
+        "error_count": 0
+      },
+      "compilation": {
+        "success": true,
+        "output_dir": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260308_092312_357e09/gsm_crane_csd"
+      },
+      "runtime": {
+        "success": true,
+        "output_length": 6,
+        "cost": 6,
+        "execution_time_ms": 43.5791015625
+      },
+      "evaluation": {
+        "success": false,
+        "accuracy": 0.0,
+        "format_rate": 0.0,
+        "syntax_rate": 0.0,
+        "num_examples": 0,
+        "num_correct": 0,
+        "total_time_seconds": 2.9036381244659424,
+        "error": "CUDA out of memory. Tried to allocate 2.00 MiB. GPU 1 has a total capacity of 39.39 GiB of which 832.00 KiB is free. Process 1798114 has 38.05 GiB memory in use. Including non-PyTorch memory, this process has 1.33 GiB memory in use. Of the allocated memory 594.05 MiB is allocated by PyTorch, and 355.95 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)",
+        "sample_outputs": []
+      }
+    },
+    {
+      "attempt_number": 6,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// The strategy alternates between unconstrained and constrained steps to balance expression length and correctness.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar unconstrainedSteps := 0;\nvar constrainedSteps := 0;\nvar hasValid := false;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant unconstrainedSteps + constrainedSteps <= maxSteps\n  decreases stepsLeft\n{\n  if hasValid {\n    // If we've already found a valid expression, just continue.\n    continue;\n  }\n\n  // Alternate between unconstrained and constrained steps.\n  if unconstrainedSteps < 3 && !parser.IsCompletePrefix(generated) {\n    // Take an unconstrained step if fewer than 3 unconstrained steps have been taken and the prefix is not complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    unconstrainedSteps := unconstrainedSteps + 1;\n  } else {\n    // Take a constrained step if the prefix is not complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    constrainedSteps := constrainedSteps + 1;\n  }\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// The strategy alternates between unconstrained and constrained steps to balance expression length and correctness.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar unconstrainedSteps := 0;\nvar constrainedSteps := 0;\nvar hasValid := false;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant unconstrainedSteps + constrainedSteps <= maxSteps\n  decreases stepsLeft\n{\n  if hasValid {\n    // If we've already found a valid expression, just continue.\n    continue;\n  }\n\n  // Alternate between unconstrained and constrained steps.\n  if unconstrainedSteps < 3 && !parser.IsCompletePrefix(generated) {\n    // Take an unconstrained step if fewer than 3 unconstrained steps have been taken and the prefix is not complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    unconstrainedSteps := unconstrainedSteps + 1;\n  } else {\n    // Take a constrained step if the prefix is not complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    constrainedSteps := constrainedSteps + 1;\n  }\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-08T09:24:32.219835",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 36, Column 32): Error: this invariant could not be proved to be maintained by the loop\n  (Line 39, Column 50): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(36,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n36 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\nGeneratedCSD.dfy(39,50): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n39 |   invariant unconstrainedSteps + constrainedSteps <= maxSteps\n   |                                                   ^^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 7,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// The strategy alternates between unconstrained and constrained steps to balance expression length and correctness.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepsLeft := maxSteps;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if stepsLeft > 1 {\n    // Take a constrained step if the prefix is not complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // If we're down to one step, take an unconstrained step to ensure the prefix is complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// The strategy alternates between unconstrained and constrained steps to balance expression length and correctness.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepsLeft := maxSteps;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if stepsLeft > 1 {\n    // Take a constrained step if the prefix is not complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // If we're down to one step, take an unconstrained step to ensure the prefix is complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-08T09:24:48.765949",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 30, Column 4): Error: Duplicate local-variable name: stepsLeft\n\nFull Dafny output:\nGeneratedCSD.dfy(30,4): Error: Duplicate local-variable name: stepsLeft\n   |\n30 | var stepsLeft := maxSteps;\n   |     ^^^^^^^^^\n\n1 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 8,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// The strategy alternates between unconstrained and constrained steps to balance expression length and correctness.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if stepsLeft > 1 {\n    // Take a constrained step if the prefix is not complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // If we're down to one step, take an unconstrained step to ensure the prefix is complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// The strategy alternates between unconstrained and constrained steps to balance expression length and correctness.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if stepsLeft > 1 {\n    // Take a constrained step if the prefix is not complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // If we're down to one step, take an unconstrained step to ensure the prefix is complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-08T09:24:49.710295",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 33, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(33,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n33 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 9,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// The strategy alternates between unconstrained and constrained steps to balance expression length and correctness.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if stepsLeft > 1 {\n    // Take a constrained step if the prefix is not complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // If we're down to one step, take an unconstrained step to ensure the prefix is complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// The strategy alternates between unconstrained and constrained steps to balance expression length and correctness.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if stepsLeft > 1 {\n    // Take a constrained step if the prefix is not complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // If we're down to one step, take an unconstrained step to ensure the prefix is complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-08T09:25:05.916950",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 33, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(33,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n33 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 10,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// The strategy alternates between unconstrained and constrained steps to balance expression length and correctness.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if stepsLeft > 1 {\n    // Take a constrained step if the prefix is not complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // If we're down to one step, take an unconstrained step to ensure the prefix is complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates short symbolic mathematical expressions for GSM-Symbolic reasoning,\n// ensuring that every expression contains at least one variable and is complete and compact.\n// The constrained windows are short, typically 5-20 tokens, and the grammar includes recursive rules\n// with bounded depth, avoiding trivial outputs and ensuring balanced parentheses and compact expressions.\n// The grammar also includes the closing delimiter '>>' to enforce completeness.\n// The strategy uses a combination of unconstrained and constrained steps to ensure valid expressions.\n// It also rolls back to a valid prefix if necessary to maintain the valid next tokens invariant.\n// The strategy alternates between unconstrained and constrained steps to balance expression length and correctness.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if stepsLeft > 1 {\n    // Take a constrained step if the prefix is not complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // If we're down to one step, take an unconstrained step to ensure the prefix is complete.\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-08T09:25:26.739275",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 33, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(33,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n33 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    }
+  ],
+  "failure_patterns": {
+    "verification_failures": 9,
+    "compilation_failures": 0,
+    "runtime_failures": 0,
+    "common_errors": [
+      {
+        "error": "Type error",
+        "count": 1
+      }
+    ]
+  }
+}

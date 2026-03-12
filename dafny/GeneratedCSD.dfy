@@ -3,7 +3,7 @@ include "VerifiedAgentSynthesis.dfy"
 module GeneratedCSD {
   import opened VerifiedDecoderAgent
 
-  method MyCSDStrategy(lm: LM, parser: Parser, prompt: Prefix, maxSteps: nat, eosToken: Token) returns (generated: Prefix, cost: int)
+  method MyCSDStrategy(lm: LM, parser: Parser, prompt: Prefix, maxSteps: nat, eosToken: Token) returns (generated: Prefix, remainingSteps: nat)
     modifies lm.Logits
     requires lm.ValidTokensIdsLogits()
     requires parser.IsValidPrefix([])
@@ -11,11 +11,11 @@ module GeneratedCSD {
     requires "<<" in lm.Tokens && ">>" in lm.Tokens
     ensures lm.ValidTokensIdsLogits()
     ensures |generated| <= maxSteps
-    // QWEN_INSERT_COST_CONTRACT_HERE
-
+    ensures remainingSteps >= 0 && remainingSteps <= maxSteps
   {
     var helpers := new CSDHelpers();
+    var stepsLeft := maxSteps;
     // QWEN_INSERT_STRATEGY_HERE
-    cost := helpers.cost;
+    remainingSteps := stepsLeft;
   }
 }

@@ -156,10 +156,10 @@ class Evaluator:
             from evaluations.folio.dataset import load_folio
             ds = load_folio(
                 split="validation",
-                limit=self.sample_size,
-                random_sample=True,
+                num_samples=self.sample_size,
+                seed=42,
             )
-            self._dataset = list(ds)
+            self._dataset = ds
         else:
             raise ValueError(f"Unknown dataset: {self.dataset_name}")
 
@@ -179,18 +179,26 @@ class Evaluator:
         if run_dir.name == "generated_csd":
             run_dir = run_dir.parent
 
-        if self.dataset_name == "gsm_symbolic":
-            from evaluations.gsm_symbolic.environment import setup_dafny_environment
-        else:
-            from evaluations.folio.environment import setup_dafny_environment
+        from evaluations.common.environment import setup_dafny_environment
 
-        return setup_dafny_environment(
-            run_dir=run_dir,
-            model_name=self.model_name,
-            device=self.device,
-            vocab_size=self.vocab_size,
-            grammar_file=self._get_grammar_file(),
-        )
+        if self.dataset_name == "gsm_symbolic":
+            return setup_dafny_environment(
+                run_dir=run_dir,
+                model_name=self.model_name,
+                device=self.device,
+                vocab_size=self.vocab_size,
+                grammar_file=self._get_grammar_file(),
+                start_rule="csd_start",
+            )
+        else:
+            return setup_dafny_environment(
+                run_dir=run_dir,
+                model_name=self.model_name,
+                device=self.device,
+                vocab_size=self.vocab_size,
+                grammar_file=self._get_grammar_file(),
+                start_rule="start",
+            )
 
     def _extract_constrained_content(self, output: str) -> List[str]:
         """Extract content within << >> delimiters."""
@@ -215,22 +223,6 @@ class Evaluator:
 
         return None
 
-    def _fol_keyword_to_unicode(self, text: str) -> str:
-        """Convert {keyword} FOL syntax from grammar to Unicode symbols for Prover9."""
-        replacements = {
-            "{forall}": "∀",
-            "{exists}": "∃",
-            "{and}": "∧",
-            "{or}": "∨",
-            "{xor}": "⊕",
-            "{not}": "¬",
-            "{implies}": "→",
-            "{iff}": "↔",
-        }
-        for keyword, symbol in replacements.items():
-            text = text.replace(keyword, symbol)
-        return text
-
     def _extract_answer_folio(self, output: str, example: Optional[Any] = None) -> Optional[str]:
         """
         Extract FOL answer from FOLIO output using Prover9 solver.
@@ -241,12 +233,14 @@ class Evaluator:
 
         Falls back to keyword matching if the solver fails.
         """
+        from evaluations.folio.fol_utils import fol_keyword_to_unicode
+
         segments = self._extract_constrained_content(output)
         if not segments:
             return self._extract_answer_folio_fallback(output)
 
         # Convert {keyword} syntax to Unicode FOL symbols
-        fol_segments = [self._fol_keyword_to_unicode(s.strip()) for s in segments]
+        fol_segments = [fol_keyword_to_unicode(s.strip()) for s in segments]
 
         # Heuristic: all segments except the last are premises, last is conclusion
         if len(fol_segments) >= 2:
@@ -400,10 +394,7 @@ class Evaluator:
             dataset = self._load_dataset_sample()
             env = self._setup_environment(compiled_module_path)
 
-            if self.dataset_name == "gsm_symbolic":
-                from evaluations.gsm_symbolic.generation import run_crane_csd
-            else:
-                from evaluations.folio.generation import run_crane_csd
+            from evaluations.common.generation import run_crane_csd
 
             num_correct = 0
             num_valid_format = 0

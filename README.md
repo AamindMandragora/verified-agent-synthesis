@@ -103,8 +103,7 @@ python run_synthesis.py --compile-only --output-name my_strategy
 The core of the synthesis pipeline is the VerifiedAgentSynthesis.dfy module, which defines the formal semantics of:
 - **Language Models (LM)**: Modeled as stateful agents that produce logits and can be masked.
 - **Parsers**: Defined by their ability to validate prefixes and suggest valid next tokens.
-- **Decoding Steps**: Formally specified unconstrained and constrained steps that preserve safety invariants.
-- **Hybrid Strategies**: Complex generation loops like `CraneGeneration` that are proven to terminate and satisfy cost bounds.
+- **Decoding Steps**: Formally specified unconstrained and constrained steps that preserve safety invariants (`UnconstrainedStep`, `ConstrainedStep`, `RollbackToValidPrefix` in `CSDHelpers`). Synthesized strategies are loops over these primitives.
 
 By synthesizing strategies in Dafny, we ensure that the generated Python code is not only correct by construction but also adheres to the formal constraints required by the task.
 
@@ -459,13 +458,13 @@ python scripts/comprehensive_eval.py --skip-baseline --output results.json
 | `prompts.py` | CRANE-style prompt formatting, variable extraction |
 | `answer_extraction.py` | Answer extraction with multiple fallback strategies |
 | `grammar.py` | Dynamic grammar construction for specific variables |
-| `generation.py` | Unified generation using verified Dafny `CraneGeneration` |
+| `generation.py` | Unified generation using verified Dafny strategy (loop over `UnconstrainedStep`/`ConstrainedStep`) |
 | `environment.py` | Dafny environment setup and module loading |
 | `metrics.py` | Evaluation metrics (accuracy, format validity, etc.) |
 | `cli.py` | Command-line interface |
 
 **Key Features**:
-- **Verified CRANE-style Generation**: The entire reasoning-math-reasoning loop is now formally verified in Dafny (`CraneGeneration`). It handles unconstrained reasoning until `<<` is detected, then switches to grammar-constrained math, and resumes unconstrained reasoning after `>>`.
+- **Verified generation**: Strategies are synthesized as Dafny loops over `CSDHelpers.UnconstrainedStep` and `CSDHelpers.ConstrainedStep`, with optional `RollbackToValidPrefix`. The compiled strategy runs with the same LM/parser interface; evaluation can use CRANE-style prompts (reasoning plus `<< >>` math segments).
 - **Early EOS Handling**: The verified strategy correctly handles end-of-sequence tokens during both unconstrained and constrained phases, preventing infinite loops.
 - **Robust Delimiter Detection**: Uses substring matching (`Contains`) to detect delimiters even when they are part of larger tokens (e.g., `" <<"`), ensuring reliable state transitions.
 - **Draconian Math Constraints**: The parser implementation includes strict limits on expression depth and repetition to prevent common failure modes in LLM math generation.
@@ -715,7 +714,7 @@ outputs/generated-csd/runs/20260105_204255_8b7116/
 
 ```json
 {
-  "strategy_code": "// CSD_RATIONALE_BEGIN\n// Hybrid approach...\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.HybridGeneration(...);",
+  "strategy_code": "// CSD_RATIONALE_BEGIN\n// Loop using ConstrainedStep...\n// CSD_RATIONALE_END\ngenerated := []; while ... { var next := helpers.ConstrainedStep(...); generated := generated + [next]; } cost := helpers.cost;",
   "tool_choice_rationale": "Hybrid approach balances creativity and validity...",
   "dafny_file": "/path/to/generated_csd.dfy",
   "compiled_dir": "/path/to/generated_csd/",
@@ -749,18 +748,15 @@ outputs/generated-csd/runs/20260105_204255_8b7116/
 
 ---
 
-## Available CSD Strategies
+## Available CSD primitives (VerifiedAgentSynthesis.dfy)
 
-The Dafny template supports these helper functions for building strategies:
+The Dafny library exposes only these methods; strategies are implemented as loops that call them:
 
 | Function | Description |
 |----------|-------------|
-| `CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps)` | Fully constrained generation - always valid |
-| `CSDHelpers.UnconstrainedGeneration(lm, prompt, maxSteps)` | No constraints - may produce invalid output |
-| `CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, interval)` | Alternates constrained/unconstrained every `interval` steps |
-| `CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, n)` | Try `n` unconstrained steps, fall back to constrained |
-| `CSDHelpers.ConstrainedStep(lm, parser, prompt, generated)` | Single constrained step |
-| `CSDHelpers.UnconstrainedStep(lm, prompt, generated)` | Single unconstrained step |
+| `helpers.UnconstrainedStep(lm, prompt, generated)` returns `next: Token` | One unconstrained decoding step |
+| `helpers.ConstrainedStep(lm, parser, prompt, generated)` returns `next: Token` | One grammar-constrained step |
+| `CSDHelpers.RollbackToValidPrefix(parser, generated)` returns `repaired: Prefix` | Trim invalid tokens from end of prefix (static) |
 
 ---
 

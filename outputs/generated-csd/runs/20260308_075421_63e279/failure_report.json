@@ -1,0 +1,253 @@
+{
+  "task_description": "Generate short symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces a strict arithmetic expression grammar with VARIABLES and numeric constants. CRITICAL RULES: 1. Every expression MUST contain at least one variable - pure numeric expressions like '2 * 2' are INVALID.     Variables may appear as letter+digits (n1, x2), split letter/digit tokens (n 1, x 2), or letter-only (n, x, foo). 2. Variables represent problem values; numeric constants (12, 100) are for unit conversions and percentages. 3. The constrained windows are SHORT (typically 5-20 tokens for expressions like 'n1 + n2 * 12'). 4. The grammar is RECURSIVE but depth is BOUNDED in runtime; prefer balanced parentheses and compact expressions. 5. The grammar includes the closing delimiter '>>' - expressions must be complete and compact. 6. Avoid trivial outputs (e.g., just a single variable) unless the problem truly requires it; include necessary operators.",
+  "total_attempts": 10,
+  "timestamp": "2026-03-08T08:14:45.875145",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n  }\n}\ncost := helpers.cost;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n  }\n}\ncost := helpers.cost;"
+      },
+      "timestamp": "2026-03-08T07:56:01.235737",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Verification failed with 5 error(s):\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 43: a precondition for this call could not be proved\n  - Line 43: a precondition for this call could not be proved",
+      "verification": {
+        "success": false,
+        "error_count": 5
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 2,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if |generated| > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n  }\n}\ncost := helpers.cost;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if |generated| > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n  }\n}\ncost := helpers.cost;"
+      },
+      "timestamp": "2026-03-08T07:57:42.354943",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Verification failed with 5 error(s):\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 37: cannot prove termination; try supplying a decreases clause for the loop\n  - Line 37: function precondition could not be proved",
+      "verification": {
+        "success": false,
+        "error_count": 5
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 3,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if |generated| > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n  }\n  cost := helpers.cost; // Increment cost after each step\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if |generated| > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n  }\n  cost := helpers.cost; // Increment cost after each step\n}"
+      },
+      "timestamp": "2026-03-08T07:59:27.180508",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Verification failed with 5 error(s):\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 38: cannot prove termination; try supplying a decreases clause for the loop\n  - Line 38: function precondition could not be proved",
+      "verification": {
+        "success": false,
+        "error_count": 5
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 4,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nvar depth := 0;\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if depth > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    depth := 0;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n    depth := depth + 1;\n  }\n  cost := helpers.cost; // Increment cost after each step\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nvar depth := 0;\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if depth > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    depth := 0;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n    depth := depth + 1;\n  }\n  cost := helpers.cost; // Increment cost after each step\n}"
+      },
+      "timestamp": "2026-03-08T08:01:12.982095",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Verification failed with 5 error(s):\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 39: cannot prove termination; try supplying a decreases clause for the loop\n  - Line 39: function precondition could not be proved",
+      "verification": {
+        "success": false,
+        "error_count": 5
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 5,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// The strategy also uses a mechanism to handle potential dead prefixes by rolling back.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nvar depth := 0;\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if depth > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    depth := 0;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n    depth := depth + 1;\n  }\n  cost := helpers.cost; // Increment cost after each step\n}\n\n// Ensure the output is not empty\nassert |generated| > 0 || parser.IsCompletePrefix(generated);",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// The strategy also uses a mechanism to handle potential dead prefixes by rolling back.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nvar depth := 0;\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if depth > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    depth := 0;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n    depth := depth + 1;\n  }\n  cost := helpers.cost; // Increment cost after each step\n}\n\n// Ensure the output is not empty\nassert |generated| > 0 || parser.IsCompletePrefix(generated);"
+      },
+      "timestamp": "2026-03-08T08:03:06.799868",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Verification failed with 5 error(s):\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 40: function precondition could not be proved\n  - Line 59: assertion might not hold",
+      "verification": {
+        "success": false,
+        "error_count": 5
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 6,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// The strategy also uses a mechanism to handle potential dead prefixes by rolling back.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nvar depth := 0;\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if depth > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    depth := 0;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n    depth := depth + 1;\n  }\n  cost := helpers.cost; // Increment cost after each step\n}\n\n// Ensure the output is not empty\nassert |generated| > 0 || parser.IsCompletePrefix(generated);",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// The strategy also uses a mechanism to handle potential dead prefixes by rolling back.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nvar depth := 0;\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if depth > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    depth := 0;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n    depth := depth + 1;\n  }\n  cost := helpers.cost; // Increment cost after each step\n}\n\n// Ensure the output is not empty\nassert |generated| > 0 || parser.IsCompletePrefix(generated);"
+      },
+      "timestamp": "2026-03-08T08:05:00.234982",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Verification failed with 5 error(s):\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 40: function precondition could not be proved\n  - Line 59: assertion might not hold",
+      "verification": {
+        "success": false,
+        "error_count": 5
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 7,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// The strategy also uses a mechanism to handle potential dead prefixes by rolling back.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nvar depth := 0;\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if depth > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    depth := 0;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n    depth := depth + 1;\n  }\n  cost := helpers.cost; // Increment cost after each step\n}\n\n// Ensure the output is not empty\nassert |generated| > 0 || parser.IsCompletePrefix(generated);",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// The strategy also uses a mechanism to handle potential dead prefixes by rolling back.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nvar depth := 0;\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if depth > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    depth := 0;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n    depth := depth + 1;\n  }\n  cost := helpers.cost; // Increment cost after each step\n}\n\n// Ensure the output is not empty\nassert |generated| > 0 || parser.IsCompletePrefix(generated);"
+      },
+      "timestamp": "2026-03-08T08:06:54.814594",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Verification failed with 5 error(s):\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 16: a postcondition could not be proved on this return path\n  - Line 40: function precondition could not be proved\n  - Line 59: assertion might not hold",
+      "verification": {
+        "success": false,
+        "error_count": 5
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 8,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// The strategy also uses a mechanism to handle potential dead prefixes by rolling back.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nvar depth := 0;\nvar eosToken := helpers.eosToken; // Ensure eosToken is initialized\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if depth > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    depth := 0;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n    depth := depth + 1;\n  }\n  cost := helpers.cost; // Increment cost after each step\n}\n\n// Ensure the output is not empty\nassert |generated| > 0 || parser.IsCompletePrefix(generated);",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// The strategy also uses a mechanism to handle potential dead prefixes by rolling back.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nvar depth := 0;\nvar eosToken := helpers.eosToken; // Ensure eosToken is initialized\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if depth > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    depth := 0;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n    depth := depth + 1;\n  }\n  cost := helpers.cost; // Increment cost after each step\n}\n\n// Ensure the output is not empty\nassert |generated| > 0 || parser.IsCompletePrefix(generated);"
+      },
+      "timestamp": "2026-03-08T08:08:53.048010",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Verification failed with 1 error(s):\n  - Line 34: member 'eosToken' does not exist in class 'CSDHelpers'",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 9,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// The strategy also uses a mechanism to handle potential dead prefixes by rolling back.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nvar depth := 0;\nvar eosToken := helpers.eosToken; // Ensure eosToken is initialized\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if depth > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    depth := 0;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n    depth := depth + 1;\n  }\n  cost := helpers.cost; // Increment cost after each step\n}\n\n// Ensure the output is not empty\nassert |generated| > 0 || parser.IsCompletePrefix(generated);",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// The strategy also uses a mechanism to handle potential dead prefixes by rolling back.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nvar depth := 0;\nvar eosToken := helpers.eosToken; // Ensure eosToken is initialized\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if depth > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    depth := 0;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n    depth := depth + 1;\n  }\n  cost := helpers.cost; // Increment cost after each step\n}\n\n// Ensure the output is not empty\nassert |generated| > 0 || parser.IsCompletePrefix(generated);"
+      },
+      "timestamp": "2026-03-08T08:10:50.248465",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Verification failed with 1 error(s):\n  - Line 34: member 'eosToken' does not exist in class 'CSDHelpers'",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 10,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// The strategy also uses a mechanism to handle potential dead prefixes by rolling back.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nvar depth := 0;\nvar eosToken := helpers.eosToken; // Ensure eosToken is initialized\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if depth > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    depth := 0;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n    depth := depth + 1;\n  }\n  cost := helpers.cost; // Increment cost after each step\n}\n\n// Ensure the output is not empty\nassert |generated| > 0 || parser.IsCompletePrefix(generated);",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy implements a constrained decoding approach for generating\n// symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces\n// a strict arithmetic expression grammar with variables and numeric constants.\n// The strategy ensures that every expression contains at least one variable,\n// handles recursive expressions with bounded depth, and avoids trivial outputs.\n// It uses a loop to repeatedly apply constrained steps until the desired\n// expression length is reached, or the expression is complete and compact.\n// The cost contract ensures that the number of steps does not exceed maxSteps.\n// The strategy also uses a mechanism to handle potential dead prefixes by rolling back.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar numVars := 0;\nvar maxDepth := 3; // Define a reasonable depth limit for recursion\nvar depth := 0;\nvar eosToken := helpers.eosToken; // Ensure eosToken is initialized\n\nwhile |generated| < maxSteps && !parser.IsCompletePrefix(generated) {\n  if numVars == 0 {\n    // First step: ensure the expression contains at least one variable\n    var next := helpers.UnconstrainedStep(lm, prompt, generated);\n    generated := generated + [next];\n    while !parser.ValidNextToken(generated, next) {\n      next := helpers.UnconstrainedStep(lm, prompt, generated);\n      generated := generated + [next];\n    }\n    numVars := 1;\n  } else if depth > maxDepth {\n    // Prevent deep recursion by rolling back to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    depth := 0;\n  } else {\n    // Subsequent steps: allow any valid next token\n    var next := helpers.ConstrainedStep(lm, parser, prompt, generated);\n    generated := generated + [next];\n    depth := depth + 1;\n  }\n  cost := helpers.cost; // Increment cost after each step\n}\n\n// Ensure the output is not empty\nassert |generated| > 0 || parser.IsCompletePrefix(generated);"
+      },
+      "timestamp": "2026-03-08T08:12:49.109906",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Verification failed with 1 error(s):\n  - Line 34: member 'eosToken' does not exist in class 'CSDHelpers'",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    }
+  ],
+  "failure_patterns": {
+    "verification_failures": 10,
+    "compilation_failures": 0,
+    "runtime_failures": 0,
+    "common_errors": []
+  }
+}

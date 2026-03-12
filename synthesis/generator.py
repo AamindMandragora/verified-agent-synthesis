@@ -38,7 +38,6 @@ class StrategyGenerator:
     
     # Marker in template to replace
     STRATEGY_MARKER = "// QWEN_INSERT_STRATEGY_HERE"
-    COST_CONTRACT_MARKER = "// QWEN_INSERT_COST_CONTRACT_HERE"
 
     def __init__(
         self,
@@ -77,7 +76,7 @@ class StrategyGenerator:
         
         # Auto-detect dtype
         if torch_dtype is None:
-            if device == "cuda":
+            if device is not None and (device == "cuda" or device.startswith("cuda:")):
                 torch_dtype = torch.bfloat16
             else:
                 torch_dtype = torch.float32
@@ -100,7 +99,7 @@ class StrategyGenerator:
         return self.TEMPLATE_PATH.read_text()
     
     def _ensure_model_loaded(self) -> None:
-        """Lazy-load the model and tokenizer with CUDA fallback."""
+        """Lazy-load the model and tokenizer. On CUDA OOM, try other GPUs before CPU."""
         if self._model is None:
             print(f"Loading {self.model_name}...")
             self._tokenizer = AutoTokenizer.from_pretrained(
@@ -108,12 +107,12 @@ class StrategyGenerator:
                 trust_remote_code=True
             )
 
-            # Try loading on requested device, fallback to CPU on CUDA OOM
+            device_map = self.device if (self.device and self.device != "mps") else None
             try:
                 self._model = AutoModelForCausalLM.from_pretrained(
                     self.model_name,
                     torch_dtype=self.torch_dtype,
-                    device_map=self.device if self.device != "mps" else None,
+                    device_map=device_map,
                     trust_remote_code=True
                 )
                 if self.device == "mps":
@@ -121,15 +120,55 @@ class StrategyGenerator:
                 print(f"Model loaded on {self.device}")
             except RuntimeError as e:
                 error_str = str(e).lower()
-                if self.device in ["cuda", "mps"] and ("out of memory" in error_str or "cuda" in error_str):
-                    print(f"⚠️  {self.device.upper()} out of memory: {e}")
-                    print(f"   Falling back to CPU (this will be slower)...")
+                is_cuda_oom = (
+                    self.device and
+                    (self.device.startswith("cuda") or self.device == "mps") and
+                    ("out of memory" in error_str or "cuda" in error_str)
+                )
+                if not is_cuda_oom:
+                    raise
 
-                    # Clear CUDA cache if available
-                    if self.device == "cuda":
+                print(f"⚠️  {self.device.upper()} out of memory: {e}")
+
+                # If we were on a specific CUDA device (e.g. cuda:0 or auto's cuda), try other GPUs first
+                n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+                tried = set()
+                if self.device.startswith("cuda:"):
+                    try:
+                        idx = int(self.device.split(":")[1])
+                        tried.add(idx)
+                    except (IndexError, ValueError):
+                        tried.add(0)
+                else:
+                    tried.add(0)
+
+                loaded = False
+                for gpu_id in range(n_gpus):
+                    if gpu_id in tried:
+                        continue
+                    cand = f"cuda:{gpu_id}"
+                    try:
+                        if self.device == "mps":
+                            torch.cuda.empty_cache()
+                        self.device = cand
+                        self.torch_dtype = torch.bfloat16
+                        self._model = AutoModelForCausalLM.from_pretrained(
+                            self.model_name,
+                            torch_dtype=self.torch_dtype,
+                            device_map=self.device,
+                            trust_remote_code=True
+                        )
+                        print(f"   Loaded on {self.device} instead.")
+                        loaded = True
+                        break
+                    except RuntimeError:
                         torch.cuda.empty_cache()
+                        continue
 
-                    # Retry on CPU
+                if not loaded:
+                    print(f"   Falling back to CPU (this will be slower)...")
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
                     self.device = "cpu"
                     self.torch_dtype = torch.float32
                     self._model = AutoModelForCausalLM.from_pretrained(
@@ -138,8 +177,6 @@ class StrategyGenerator:
                         trust_remote_code=True
                     ).to(self.device)
                     print(f"Model loaded on {self.device} (CPU fallback)")
-                else:
-                    raise
     
     def _generate_text(self, system_prompt: str, user_prompt: str) -> str:
         """
@@ -264,22 +301,17 @@ class StrategyGenerator:
             "(// CSD_RATIONALE_BEGIN ... // CSD_RATIONALE_END)."
         )
     
-    def generate_initial(self, task_description: str, cost_contract: str = "") -> str:
+    def generate_initial(self, task_description: str) -> str:
         """
         Generate an initial strategy for the given task.
         
         Args:
             task_description: Description of what the strategy should accomplish
-            cost_contract: Optional cost contract (e.g. "ensures helpers.cost <= 10")
-            
+
         Returns:
             Strategy expression (Dafny code)
         """
-        full_task = task_description
-        if cost_contract:
-            full_task += f"\n\nYour strategy MUST satisfy this cost contract:\n{cost_contract}"
-
-        system_prompt, user_prompt = build_initial_prompt(full_task)
+        system_prompt, user_prompt = build_initial_prompt(task_description)
         raw_output = self._generate_text(system_prompt, user_prompt)
         strategy = self._extract_strategy(raw_output)
         return self._ensure_rationale_block(strategy)
@@ -376,23 +408,17 @@ class StrategyGenerator:
         strategy = self._extract_strategy(raw_output)
         return self._ensure_rationale_block(strategy)
 
-    def inject_strategy(self, strategy: str, cost_contract: str = "") -> str:
+    def inject_strategy(self, strategy: str) -> str:
         """
-        Inject a strategy and optional cost contract into the template.
-        
+        Inject a strategy into the template.
+
         Args:
             strategy: Strategy expression to inject
-            cost_contract: Optional cost contract (e.g. "ensures helpers.cost <= 10")
-            
+
         Returns:
             Complete Dafny source code
         """
-        code = self._template.replace(self.STRATEGY_MARKER, strategy)
-        if cost_contract:
-            code = code.replace(self.COST_CONTRACT_MARKER, cost_contract)
-        else:
-            code = code.replace(self.COST_CONTRACT_MARKER, "")
-        return code
+        return self._template.replace(self.STRATEGY_MARKER, strategy)
     
     def get_template(self) -> str:
         """Get the raw template content."""

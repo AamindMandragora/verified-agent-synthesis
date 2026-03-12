@@ -5,13 +5,14 @@ CLI entry point for CSD synthesis pipeline with evaluation feedback loop.
 The pipeline runs: generate → verify → compile → runtime → evaluate → refine
 until evaluation thresholds are met or max iterations exhausted.
 
+This is the main entry point for making CSDs. For a quick pipeline smoke test
+without the LLM, use test_pipeline.py (optional).
+
 Usage:
     python run_synthesis.py --task "..." --dataset gsm_symbolic \\
-        --cost-contract "ensures helpers.cost <= 10" \\
         --min-accuracy 0.3 --min-format-rate 0.5 --min-syntax-rate 0.5
 
     python run_synthesis.py --task "..." --dataset folio \\
-        --cost-contract "ensures helpers.cost <= 8" \\
         --min-accuracy 0.5 --min-format-rate 0.8 --min-syntax-rate 0.7
 """
 
@@ -28,17 +29,14 @@ def main():
 Examples:
   # GSM-Symbolic
   python run_synthesis.py --task "Generate math reasoning strategy" \\
-      --dataset gsm_symbolic --cost-contract "ensures helpers.cost <= 10" \\
-      --min-accuracy 0.3 --min-format-rate 0.5 --min-syntax-rate 0.5
+      --dataset gsm_symbolic --min-accuracy 0.3 --min-format-rate 0.5 --min-syntax-rate 0.5
 
   # FOLIO
   python run_synthesis.py --task "Generate FOL reasoning strategy" \\
-      --dataset folio --cost-contract "ensures helpers.cost <= 8" \\
-      --min-accuracy 0.5 --min-format-rate 0.8 --min-syntax-rate 0.7
+      --dataset folio --min-accuracy 0.5 --min-format-rate 0.8 --min-syntax-rate 0.7
 
   # With more iterations and custom eval sample size
   python run_synthesis.py --task "..." --dataset gsm_symbolic \\
-      --cost-contract "ensures helpers.cost <= 10" \\
       --min-accuracy 0.3 --min-format-rate 0.5 --min-syntax-rate 0.5 \\
       --output-name my_strategy --max-iterations 10 --eval-sample-size 20
 """
@@ -51,13 +49,6 @@ Examples:
         help="Task description for strategy generation"
     )
 
-    parser.add_argument(
-        "--cost-contract", "-c",
-        type=str,
-        required=True,
-        help="Cost contract for Dafny verification (e.g. 'ensures helpers.cost <= 10')"
-    )
-    
     parser.add_argument(
         "--max-iterations", "-n",
         type=int,
@@ -89,8 +80,8 @@ Examples:
     parser.add_argument(
         "--dafny-path",
         type=str,
-        default="/home/aadivyar/.dotnet/tools/dafny",
-        help="Path to Dafny executable"
+        default=None,
+        help="Path to Dafny executable (default: repo dafny-lang/dafny/dafny if present, else 'dafny')"
     )
     
     parser.add_argument(
@@ -116,9 +107,8 @@ Examples:
     parser.add_argument(
         "--device",
         type=str,
-        choices=["cuda", "mps", "cpu", "auto"],
         default="auto",
-        help="Device for model inference (default: auto)"
+        help="Device for model inference: auto, cuda, cuda:0, cuda:2, mps, cpu (default: auto)"
     )
     
     # Evaluation arguments (required - evaluation is part of the synthesis loop)
@@ -174,6 +164,12 @@ Examples:
 
     args = parser.parse_args()
 
+    # Resolve Dafny path: prefer repo-local dafny-lang/dafny/dafny if present
+    if args.dafny_path is None:
+        repo_root = Path(__file__).resolve().parent
+        local_dafny = repo_root / "dafny-lang" / "dafny" / "dafny"
+        args.dafny_path = str(local_dafny) if local_dafny.is_file() else "dafny"
+
     # Normalize output_dir if provided (handle potential backslashes from user input)
     if args.output_dir:
         args.output_dir = Path(str(args.output_dir).replace("\\", "/"))
@@ -188,7 +184,8 @@ Examples:
     # Create components
     print("Initializing synthesis pipeline...")
 
-    device = None if args.device == "auto" else args.device
+    # Normalize device: "auto" -> None (generator picks); cuda:2 etc. passed through
+    device = None if args.device.strip().lower() == "auto" else args.device.strip()
 
     generator = StrategyGenerator(
         model_name=args.model,
@@ -233,8 +230,7 @@ Examples:
     try:
         result = pipeline.synthesize(
             task_description=args.task,
-            output_name=args.output_name,
-            cost_contract=args.cost_contract
+            output_name=args.output_name
         )
         
         print("\n" + "=" * 60)

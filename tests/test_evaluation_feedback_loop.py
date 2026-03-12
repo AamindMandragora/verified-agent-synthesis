@@ -430,7 +430,7 @@ class TestEvaluationFailurePrompt:
         from synthesis.prompts import build_evaluation_failure_prompt
 
         result = build_evaluation_failure_prompt(
-            previous_strategy="generated := helpers.PureConstrainedGeneration(...);",
+            previous_strategy="generated := []; while stepsLeft > 0 && ... { var next, newSteps := helpers.ConstrainedStep(..., stepsLeft); generated := generated + [next]; stepsLeft := newSteps; }",
             evaluation_feedback="Accuracy: 30%, Format: 50%",
         )
 
@@ -440,7 +440,7 @@ class TestEvaluationFailurePrompt:
     def test_prompt_contains_strategy(self):
         from synthesis.prompts import build_evaluation_failure_prompt
 
-        strategy = "generated := helpers.HybridGeneration(lm, parser, prompt, maxSteps);"
+        strategy = "generated := []; while stepsLeft > 0 && !parser.IsCompletePrefix(generated) { var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps; }"
         system_prompt, user_prompt = build_evaluation_failure_prompt(
             previous_strategy=strategy,
             evaluation_feedback="Accuracy: 30%",
@@ -510,7 +510,7 @@ class TestGeneratorRefineAfterEvaluationFailure:
         generator.top_p = 0.9
 
         # Mock the internal methods
-        mock_strategy = "// CSD_RATIONALE_BEGIN\n// test\n// CSD_RATIONALE_END\ngenerated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);\ncost := helpers.cost;"
+        mock_strategy = "// CSD_RATIONALE_BEGIN\n// test\n// CSD_RATIONALE_END\ngenerated := []; while stepsLeft > 0 && !parser.IsCompletePrefix(generated) { var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps; }"
         generator._generate_text = Mock(return_value=mock_strategy)
         generator._extract_strategy = Mock(return_value=mock_strategy)
         generator._ensure_rationale_block = Mock(return_value=mock_strategy)
@@ -766,15 +766,15 @@ class TestEvaluationLoopIteration:
         # Track how many times generate/refine are called
         generation_calls = []
 
-        def mock_generate_initial(task_desc, cost_contract=""):
+        def mock_generate_initial(task_desc):
             generation_calls.append(("initial", task_desc))
-            return "// CSD_RATIONALE_BEGIN\n// Initial strategy\n// CSD_RATIONALE_END\ngenerated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);\ncost := helpers.cost;"
+            return "// CSD_RATIONALE_BEGIN\n// Initial strategy\n// CSD_RATIONALE_END\ngenerated := []; while stepsLeft > 0 && !parser.IsCompletePrefix(generated) { var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps; }"
 
         def mock_refine_after_evaluation_failure(prev_strategy, feedback):
             generation_calls.append(("refine_eval", feedback[:50]))
-            return "// CSD_RATIONALE_BEGIN\n// Refined strategy\n// CSD_RATIONALE_END\ngenerated := helpers.HybridGeneration(lm, parser, prompt, maxSteps);\ncost := helpers.cost;"
+            return "// CSD_RATIONALE_BEGIN\n// Refined strategy\n// CSD_RATIONALE_END\ngenerated := []; while stepsLeft > 0 && !parser.IsCompletePrefix(generated) { var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps; }"
 
-        def mock_inject_strategy(strategy, cost_contract=""):
+        def mock_inject_strategy(strategy):
             return f"// Full Dafny code with: {strategy[:50]}..."
 
         mock_generator.generate_initial = mock_generate_initial
@@ -1181,7 +1181,7 @@ class TestEvaluationLoopIteration:
         # Track attempts
         attempt_count = [0]
 
-        def mock_generate_initial(task, cost=""):
+        def mock_generate_initial(task):
             return "strategy_initial"
 
         def mock_refine_verification(prev, err):

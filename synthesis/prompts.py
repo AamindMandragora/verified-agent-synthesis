@@ -15,12 +15,11 @@ The generator expects these entrypoints:
 
 # NOTE:
 # The synthesized output is injected into `dafny/GeneratedCSD.dfy` as the BODY
-# of method `MyCSDStrategy(...) returns (generated: Prefix)`.
+# of method `MyCSDStrategy(...) returns (generated: Prefix, remainingSteps: nat)`.
 #
-# The output may be a multi-line Dafny method body. It must assign the out-parameter
-# `generated` and satisfy the method's contract. A common minimal shape is:
-#   generated := helpers.<Strategy>(lm, parser, prompt, maxSteps, ...);
-#   cost := helpers.cost;
+# The template already has `var stepsLeft := maxSteps;` and `remainingSteps := stepsLeft;` at the end.
+# Your body must assign to `generated` and update `stepsLeft` in the loop (each step consumes one).
+# Helpers: UnconstrainedStep, ConstrainedStep, RollbackToValidPrefix (see VerifiedAgentSynthesis.dfy).
 
 
 SYSTEM_PROMPT = """\
@@ -29,36 +28,55 @@ You are generating a *constrained decoding strategy implementation* for a specif
 
 You must output ONLY the Dafny method body for:
 
-  method MyCSDStrategy(lm: LM, parser: Parser, prompt: Prefix, maxSteps: nat, eosToken: Token) returns (generated: Prefix, cost: int)
-    modifies lm.Logits
-    requires lm.ValidTokensIdsLogits()
-    requires parser.IsValidPrefix([])
-    requires forall t: Token :: t in parser.ValidNextTokens([]) ==> t in lm.Tokens
-    requires "<<" in lm.Tokens && ">>" in lm.Tokens
-    ensures lm.ValidTokensIdsLogits()
-    ensures |generated| <= maxSteps
-    // PLUS a user-defined cost contract (ensures clause)
+  method MyCSDStrategy(lm: LM, parser: Parser, prompt: Prefix, maxSteps: nat, eosToken: Token) returns (generated: Prefix, remainingSteps: nat)
+    ...
+    ensures remainingSteps >= 0 && remainingSteps <= maxSteps
+
+The template already provides: var helpers := new CSDHelpers(); var stepsLeft := maxSteps; [YOUR BODY]; remainingSteps := stepsLeft;
+So you must only assign to `generated` and update `stepsLeft` in your loop. Do NOT assign to remainingSteps (the template does that).
 
 Important constraints:
 - Output MUST be valid Dafny statements (end statements with ';').
-- Initialize/assign the out-parameter `generated`.
-- Initialize/assign the out-parameter `cost` (e.g., `cost := helpers.cost;`).
-- Do NOT redeclare `generated` or `cost` as local variables. They are already method out-parameters.
-- You MUST use the `helpers` instance (type `CSDHelpers`) which is already instantiated for you.
-- Do NOT use `CSDHelpers.<Method>` (static call); use `helpers.<Method>` (instance call).
-- `CSDHelpers` now tracks `cost: int`. Every helper call increments `helpers.cost`.
-- Your generated code will be checked against the cost contract.
-- Be constraint-driven: choose the strategy/parameters based on the parser strictness
-  and the method contract, not based on any canned examples.
+- Initialize/assign the out-parameter `generated` (e.g. generated := []).
+- **stepsLeft is ALREADY DECLARED by the template.** Do NOT write \"var stepsLeft := maxSteps;\" or \"var stepsLeft :=\"; that causes \"Duplicate local-variable name: stepsLeft\". Just use stepsLeft in your loop and assign stepsLeft := newSteps after each step call.
+- Do NOT redeclare `generated` or `stepsLeft`. Do NOT assign to `remainingSteps`.
+- You MUST use the `helpers` instance (type `CSDHelpers`) which is already instantiated.
+- Use `helpers.<Method>` (instance call). UnconstrainedStep and ConstrainedStep each take `stepsLeft` and return (next, stepsLeft'); assign stepsLeft := stepsLeft' after each call.
+- Be constraint-driven: choose the strategy based on the parser and contract.
 
 CRITICAL TYPE CONSTRAINTS:
-- `prompt` is type `Prefix` (which is `seq<Token>`), NOT a string.
+- `prompt` and `generated` are type `Prefix` (which is `seq<Token>`), NOT a string. For the last element of a non-empty sequence use generated[|generated|-1]; do NOT use .Last() (that method does not exist on seq in this codebase).
 - Do NOT try to manually construct output by appending text. The CSDHelpers methods handle
   token generation.
 - The `parser` enforces structural validity automatically during generation.
 
-CRITICAL DAFNY SYNTAX:
-- In Dafny, sequence concatenation uses `+` (e.g., `a + b`). Do NOT use `++`.
+## Parser API (use ONLY these — no other parser methods exist)
+
+The `parser` (type Parser) has exactly these members. Do NOT call any other method (e.g. there is NO parser.CanConstrain()).
+
+- parser.IsValidPrefix(prefix: Prefix) — predicate: is this prefix valid under the grammar?
+- parser.IsCompletePrefix(prefix: Prefix) — predicate: is this prefix a complete expression?
+- parser.ValidNextTokens(prefix: Prefix) — function: returns seq<Token> of valid next tokens (requires IsValidPrefix(prefix)).
+- parser.ValidNextToken(prefix, token) — predicate: is this token a valid continuation? Use this exact name: ValidNextToken, NOT IsValidNextToken.
+- parser.IsDeadPrefix(prefix: Prefix) — predicate: prefix is not complete and has no valid continuations.
+
+To decide when to use ConstrainedStep: use the condition !parser.IsCompletePrefix(generated). When that holds and the prefix is valid, you may call ConstrainedStep. Do NOT use parser.CanConstrain() or parser.CanConstrain(generated) — they do not exist.
+Do NOT use .Exists, .Any, .Where, or lambda syntax on sequences — Dafny sequences have no such methods. To test "some token in seq satisfies P", use: exists token :: token in seq && parser.ValidNextToken(generated, token).
+
+## Dafny syntax (follow exactly to avoid verification failures)
+
+- **Assignment only**: There is no `++` or `--`. Use full assignment: `stepsLeft := stepsLeft - 1;`, `i := i + 1;`.
+- **Sequence concatenation**: Use `+` only: `generated := generated + [next];`. Do NOT use `++`.
+- **Sequence length**: Use `|seq|` (e.g. `|generated|`, `|generated| < maxSteps`). No `.Length` on seq.
+- **Sequence index**: Use `s[i]` for element at index i. Last element when non-empty: `s[|s|-1]`. No `.Last()`.
+- **Sequence slice**: `s[..k]` is prefix up to (not including) k; `s[k..]` is from k to end.
+- **Sequence membership / "exists"**: Do NOT use seq.Exists(...) or lambdas. Use Dafny quantifier: exists x :: x in seq && predicate(x). Example: hasValid := exists token :: token in validTokens && parser.ValidNextToken(generated, token);
+- **Parser**: The predicate is ValidNextToken(prefix, token), not IsValidNextToken. There is no IsValidNextToken.
+- **Variables**: Declare with `var name := value;` or `var name: Type := value;`. No `int x = 0` style.
+- **Loop condition**: Use `while condition { ... }`. Condition must be a boolean expression (e.g. `|generated| < maxSteps && !parser.IsCompletePrefix(generated)`).
+- **Statements**: Every statement ends with `;`. No semicolon after `}` of blocks.
+- **Equality**: Use `==` for equality, `!=` for disequality. Use `:=` for assignment only.
+- **Steps**: Each UnconstrainedStep/ConstrainedStep returns (next, stepsLeft'); assign both and do stepsLeft := stepsLeft' so the next iteration has the updated remaining steps.
 
 ## REQUIRED: rationale block (must be included in EVERY output)
 Your output MUST begin with a short, parseable rationale comment block:
@@ -69,55 +87,32 @@ Your output MUST begin with a short, parseable rationale comment block:
 
 After this, output the Dafny statements for the strategy body.
 
-## Available VERIFIED strategy helpers (use `helpers.<Method>`)
+## Available VERIFIED primitives (use `helpers.<Method>` only)
 
-1) Pure constrained:
-  generated := helpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
+CSDHelpers has exactly three methods. You must build your strategy by calling them in a loop.
 
-2) Optimistic then fallback:
-  generated := helpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, N);
-N in [1..20], N <= maxSteps.
+1) UnconstrainedStep(lm, prompt, generated, stepsLeft) returns (next: Token, stepsLeft': nat)
+   - One unconstrained step; consumes one step (stepsLeft' == stepsLeft - 1). Requires stepsLeft >= 1.
+   - Use: var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps;
 
-3) Interleaved hybrid (starts in constrained mode, switches to unconstrained inside << >>):
-  generated := helpers.HybridGeneration(lm, parser, prompt, maxSteps);
-  Starts constrained. When << is generated (must be valid per grammar), switches to unconstrained.
-  When >> is generated, validates and switches back. Best when << is a valid grammar token.
+2) ConstrainedStep(lm, parser, prompt, generated, stepsLeft) returns (next: Token, stepsLeft': nat)
+   - One constrained step; consumes one step. Requires !parser.IsCompletePrefix(generated) and stepsLeft >= 1.
+   - Use: var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps;
 
-4) CRANE-style generation (starts unconstrained, switches to constrained inside << >>):
-  generated := helpers.CraneGeneration(lm, parser, prompt, maxSteps, minReasoningSteps, eosToken);
-  Starts unconstrained (free-form text). When the model generates <<, switches to constrained
-  (parser-enforced) until the parser completes (e.g., expression + >>). Then switches back.
-  `minReasoningSteps` (nat): minimum unconstrained tokens before << is allowed.
-  `eosToken` is available as a method parameter.
+3) RollbackToValidPrefix(parser, generated) returns (repaired: Prefix)
+   - helpers.RollbackToValidPrefix(parser, generated) — trims invalid tokens from the end. Does not consume steps.
 
-5) Speculative:
-  generated := helpers.SpeculativeGeneration(lm, parser, prompt, maxSteps, N);
-N in [2..8].
+You MUST implement the strategy body as a loop that:
+- Uses generated := []; (stepsLeft is already maxSteps). Loop while stepsLeft > 0 && !parser.IsCompletePrefix(generated).
+- In the loop, before calling ConstrainedStep, call CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated); so the precondition (valid next tokens in lm.Tokens) is satisfied. Then call UnconstrainedStep or ConstrainedStep with stepsLeft; assign the returned (next, newSteps) back, append next to generated, set stepsLeft := newSteps.
+- Optionally use RollbackToValidPrefix if you need to repair. At the end the template assigns remainingSteps := stepsLeft.
 
-6) Max creativity with repair/complete:
-  generated := helpers.UnconstrainedWithCompletion(lm, parser, prompt, maxSteps);
-
-7) Completion of an existing valid prefix:
-  generated := helpers.CompletePrefix(lm, parser, prompt, partial, maxSteps);
-
-8) Generate with reasonable length:
-  generated := helpers.GenerateWithReasonableLength(lm, parser, prompt, maxSteps, reasonableLength);
-
-9) Generate until first complete:
-  generated := helpers.GenerateUntilFirstComplete(lm, parser, prompt, maxSteps);
-
-10) Generate multiple candidates and select best:
-  generated := helpers.GenerateAndSelectBest(lm, parser, prompt, maxSteps, numCandidates, preferShorter);
-
-## Utility Functions for Contracts (use in `ensures` clauses)
-
-1) Extract content between delimiters:
-  `helpers.ExtractContentBetweenDelimiters(helpers.PrefixToString(generated), "<<", ">>")`
-  Returns the content found between the last occurrence of "<<" and ">>". Useful for asserting things about the reasoning trace.
-
-2) Convert prefix to string:
-  `helpers.PrefixToString(generated)`
-  Converts a sequence of tokens into a single concatenated string. Useful for string-based contracts.
+**Loop invariants (required for verification):** Use at minimum:
+  invariant lm.ValidTokensIdsLogits()
+  invariant parser.IsValidPrefix(generated)
+  invariant 0 <= stepsLeft <= maxSteps
+  invariant |generated| + stepsLeft == maxSteps
+  decreases stepsLeft
 
 Output format:
 - Return ONLY the method body (no signature, no outer braces).
@@ -138,23 +133,23 @@ Multi-line bodies are allowed and encouraged when useful (locals, branching, loo
 
 Multi-line bodies are allowed and encouraged when useful (locals, branching, loops), as long as `generated` is assigned on all paths.
 
-Example format (showing the required rationale + a simple call):
+Example format (required rationale + loop with stepsLeft and invariants):
   // CSD_RATIONALE_BEGIN
   // <your reasoning here>
   // CSD_RATIONALE_END
-  generated := helpers.<SomeHelper>(lm, parser, prompt, maxSteps, ...);
-  cost := helpers.cost;
-
-Example format (branching):
-  // CSD_RATIONALE_BEGIN
-  // <your reasoning here>
-  // CSD_RATIONALE_END
-  if maxSteps < 5 {{
-    generated := helpers.<HelperA>(lm, parser, prompt, maxSteps);
-  }} else {{
-    generated := helpers.<HelperB>(lm, parser, prompt, maxSteps, 5);
+  generated := [];
+  while stepsLeft > 0 && !parser.IsCompletePrefix(generated)
+    invariant lm.ValidTokensIdsLogits()
+    invariant parser.IsValidPrefix(generated)
+    invariant 0 <= stepsLeft <= maxSteps
+    invariant |generated| + stepsLeft == maxSteps
+    decreases stepsLeft
+  {{
+    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);
+    generated := generated + [next];
+    stepsLeft := newSteps;
   }}
-  cost := helpers.cost;
+  // template then assigns remainingSteps := stepsLeft
 """
 
 
@@ -176,35 +171,32 @@ Fix the issue while keeping the strategy non-trivial when appropriate.
 Rules:
 - Output ONLY a corrected method body (no signature, no braces). Do NOT wrap output in markdown code fences.
 - The corrected body MUST include the required rationale block at the top (see system prompt). Update it if you change helpers/parameters.
-- Preserve non-triviality when possible: keep a meaningful multi-statement structure (prefer `if/else` with different branches). Do not collapse to a single helper call unless required to make verification succeed.
+- Preserve non-triviality when possible: keep a meaningful loop with UnconstrainedStep/ConstrainedStep. Do not remove necessary loop invariants.
 - Ensure the body is valid Dafny. Statements must end with ';' where required.
-- Ensure parameters are in-range:
-  - TryUnconstrainedThenConstrained N: 1..20 and N <= maxSteps
-  - HybridGeneration interval N: 2..10
-  - SpeculativeGeneration window N: 2..8
 
 **CRITICAL: If the error says "member X does not exist in class 'CSDHelpers'":**
-- That method DOES NOT EXIST. Do NOT try to use it again, even with different arguments.
-- You MUST use ONLY the methods listed in the system prompt under "Available VERIFIED strategy helpers".
-- The ONLY methods on `helpers` are: PureConstrainedGeneration, TryUnconstrainedThenConstrained,
-  HybridGeneration, SpeculativeGeneration, UnconstrainedWithCompletion, CompletePrefix,
-  GenerateWithReasonableLength, GenerateUntilFirstComplete, GenerateAndSelectBest,
-  PrefixToString, ExtractContentBetweenDelimiters.
-- There is NO ContainsArithmeticExpression, ContainsAnyVar, ContainsExpression, or similar method.
-- Do NOT write loops or conditionals that check output content. The parser handles validation automatically.
-- Instead, use a COMPLETELY DIFFERENT approach: just call a verified helper directly.
+- That method DOES NOT EXIST. The ONLY methods on `helpers` are: UnconstrainedStep, ConstrainedStep, RollbackToValidPrefix (static).
+- You MUST implement the strategy with a loop that calls helpers.UnconstrainedStep and/or helpers.ConstrainedStep and appends the returned token to generated. There are no one-call "strategy" methods.
+
+**CRITICAL: If the error says a member does not exist on Parser (e.g. CanConstrain, CanConstrain(generated), or any other parser.X):**
+- Parser has ONLY: IsValidPrefix(prefix), IsCompletePrefix(prefix), ValidNextTokens(prefix), ValidNextToken(prefix, token), IsDeadPrefix(prefix). There is NO parser.CanConstrain().
+- To decide when to use ConstrainedStep, use the condition !parser.IsCompletePrefix(generated). Remove any call to parser.CanConstrain() or parser.CanConstrain(generated).
+
+**CRITICAL: If the error says "Duplicate local-variable name: stepsLeft":**
+- The template already declares stepsLeft. Remove every line that declares stepsLeft (e.g. \"var stepsLeft := maxSteps;\") from your strategy body. Just use stepsLeft and assign to it (stepsLeft := newSteps).
+
+**CRITICAL: If the error says "does not have a member Exists" or "type seq does not have a member Exists":**
+- You used C#/LINQ style. Dafny sequences do NOT have .Exists. Replace e.g. validTokens.Exists(token => parser.IsValidNextToken(generated, token)) with: exists token :: token in validTokens && parser.ValidNextToken(generated, token)
+
+**CRITICAL: If the error says "member 'IsValidNextToken' does not exist":**
+- The correct name is ValidNextToken(prefix, token), not IsValidNextToken. Replace every IsValidNextToken with ValidNextToken.
 
 Common fixes:
-- Do NOT write `var generated: Prefix;` (duplicate/shadowing). Assign to the existing out-parameter `generated` instead.
-- Avoid subtracting from `maxSteps` (e.g., `maxSteps - 5`) unless you guard with a proof-friendly condition and keep all variables initialized on all branches.
-- **CRITICAL**: When using TryUnconstrainedThenConstrained with a constant N, you MUST guard it with `if maxSteps >= N` or use PureConstrainedGeneration when maxSteps is too small. Otherwise Dafny cannot prove the precondition `N <= maxSteps`.
-  Example fix for "precondition could not be proved" error:
-    WRONG: generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);
-    RIGHT: if maxSteps < 5 {{
-             generated := CSDHelpers.PureConstrainedGeneration(lm, parser, prompt, maxSteps);
-           }} else {{
-             generated := CSDHelpers.TryUnconstrainedThenConstrained(lm, parser, prompt, maxSteps, 5);
-           }}
+- Do NOT write `var generated: Prefix;` or `var stepsLeft := maxSteps;` (duplicate/shadowing). The template already provides stepsLeft. Assign to the existing out-parameter `generated` only.
+- ConstrainedStep requires !parser.IsCompletePrefix(generated). Guard your loop or use a valid loop invariant.
+- **If the error mentions precondition, invariant, or "assertion might not hold" for a while loop:** Add explicit loop invariants and a decreases clause. For a loop that only calls ConstrainedStep, use: `invariant parser.IsValidPrefix(generated);` `invariant |generated| <= maxSteps;` `decreases maxSteps - |generated|;` (semicolons between clauses, or newline-separated).
+- Use `x := x + 1` not `x++`. Pass stepsLeft into UnconstrainedStep/ConstrainedStep and assign the returned (next, stepsLeft) back.
+- RollbackToValidPrefix: call as helpers.RollbackToValidPrefix(parser, generated).
 
 CRITICAL: If the error mentions type mismatch with `string` or `seq<Token>`:
 - `prompt` is type `Prefix` (seq<Token>), NOT a string. You CANNOT use `+` with strings.
@@ -237,9 +229,7 @@ Rules:
 - Output ONLY a corrected method body (no signature, no braces).
 - The corrected body MUST include the required rationale block at the top (see system prompt). Update it if you change helpers/parameters.
 - Preserve non-triviality when possible: keep a meaningful multi-statement structure (prefer `if/else` with different branches). Do not collapse to a single helper call unless required to make runtime succeed.
-- Keep parameters in-range (see verification prompt).
-- If the runtime error suggests the environment is strict, move toward safer strategies:
-  SpeculativeGeneration -> HybridGeneration -> TryUnconstrainedThenConstrained -> PureConstrainedGeneration
+- If the runtime error suggests the environment is strict, prefer more ConstrainedStep calls and fewer UnconstrainedStep calls in your loop.
 """
 
 
@@ -298,28 +288,18 @@ Evaluation results:
 
 The strategy runs correctly but produces outputs that don't meet quality thresholds. Consider:
 
-1. **Format issues**: If format rate is low, the model may not be generating proper `<< >>` delimited content.
-   - HybridGeneration is designed for this - it allows free text with constrained segments in `<< >>`.
-   - Make sure the strategy doesn't exit too early before generating the constrained content.
+1. **Format issues**: If format rate is low, ensure your loop allows enough steps and that you mix UnconstrainedStep (for free text) with ConstrainedStep (for << >> segments) appropriately.
 
-2. **Accuracy issues**: If accuracy is low, the model's reasoning within constrained segments may be wrong.
-   - Consider strategies that give the model more flexibility (UnconstrainedWithCompletion, TryUnconstrainedThenConstrained).
-   - The model may need more steps to reason before producing the constrained output.
+2. **Accuracy issues**: If accuracy is low, allow more unconstrained steps before or between constrained segments so the model can reason.
 
-3. **Syntax/Semantic issues**: If these rates are low, the constrained content doesn't match the grammar.
-   - PureConstrainedGeneration guarantees syntax validity but may be too restrictive.
-   - HybridGeneration validates content within `<< >>` and rolls back invalid segments.
+3. **Syntax issues**: If syntax rate is low, use ConstrainedStep for segments that must match the grammar; use RollbackToValidPrefix if you need to repair after unconstrained steps.
 
-4. **Strategy selection**: Different tasks benefit from different strategies:
-   - Math problems (GSM): HybridGeneration allows reasoning text + constrained expressions
-   - Logic problems (FOLIO): HybridGeneration for reasoning + constrained FOL formulas
-   - Simple extraction: PureConstrainedGeneration if output is purely structured
+4. **Strategy**: Build your loop to alternate or switch between UnconstrainedStep and ConstrainedStep based on parser state (e.g. parser.IsCompletePrefix) or a step counter, so that << >> regions are constrained and the rest can be unconstrained.
 
 Rules:
 - Output ONLY a corrected method body (no signature, no braces).
 - The corrected body MUST include the required rationale block at the top.
-- Try a DIFFERENT strategy or different parameters than the previous attempt.
-- If you've tried multiple strategies without success, try adjusting parameters (e.g., increase maxSteps budget, change speculative window size).
+- Change how you combine UnconstrainedStep and ConstrainedStep in the loop (e.g. more constrained steps, or different switching logic).
 """
 
 

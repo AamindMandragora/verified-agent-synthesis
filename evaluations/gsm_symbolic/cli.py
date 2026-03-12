@@ -21,34 +21,22 @@ from evaluations.gsm_symbolic.environment import (
     setup_dafny_environment,
     verify_critical_tokens,
 )
+from evaluations.common.cli_utils import add_common_eval_args
+
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 
 def main():
     ap = argparse.ArgumentParser(description="Evaluate GSM-Symbolic with CSD")
-    ap.add_argument("--run-dir", type=Path, required=True,
-                    help="Path to compiled CSD run directory")
-    ap.add_argument("--model", default="Qwen/Qwen2.5-Coder-7B-Instruct",
-                    help="HuggingFace model ID")
-    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    add_common_eval_args(
+        ap,
+        default_grammar=PROJECT_ROOT / "grammars" / "gsm.lark",
+        default_max_steps=1024,
+    )
     ap.add_argument("--config", choices=["main", "p1", "p2"], default="main",
                     help="GSM-Symbolic difficulty level")
-    ap.add_argument("--limit", type=int, default=100,
-                    help="Max examples to evaluate")
-    ap.add_argument("--max-steps", type=int, default=1024,
-                    help="Max steps for generation")
-    ap.add_argument("--vocab-size", type=int, default=2000,
-                    help="Token vocabulary size limit")
-    ap.add_argument("--grammar", type=Path, default=PROJECT_ROOT / "grammars" / "gsm.lark",
-                    help="Grammar file for math validation")
-    ap.add_argument("--verbose", action="store_true",
-                    help="Show per-example details")
-    ap.add_argument("--debug-delimiters", action="store_true",
-                    help="Debug delimiter detection")
     ap.add_argument("--random-sample", action="store_true",
                     help="Randomly sample examples instead of taking first N")
-    ap.add_argument("--unconstrained", action="store_true",
-                    help="Run unconstrained baseline instead of CSD")
     ap.add_argument("--load-in-4bit", action="store_true",
                     help="Load model in 4-bit quantization")
     ap.add_argument("--load-in-8bit", action="store_true",

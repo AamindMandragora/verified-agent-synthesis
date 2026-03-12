@@ -26,13 +26,10 @@ from evaluations.common.parser_utils import create_lark_dafny_parser
 from evaluations.folio.metrics import FOLIOMetrics
 from evaluations.folio.generation import run_crane_csd, run_unconstrained
 from evaluations.folio.environment import setup_dafny_environment, verify_critical_tokens
+from evaluations.folio.fol_utils import fol_keyword_to_unicode
+from evaluations.common.cli_utils import add_common_eval_args
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-
-_KEYWORD_TO_UNICODE = {
-    "{forall}": "∀", "{exists}": "∃", "{and}": "∧", "{or}": "∨",
-    "{xor}": "⊕", "{not}": "¬", "{implies}": "→", "{iff}": "↔",
-}
 
 
 def _solve_fol(constrained_segments: list[str]) -> str | None:
@@ -46,12 +43,7 @@ def _solve_fol(constrained_segments: list[str]) -> str | None:
         return None
 
     # Convert {keyword} syntax to Unicode
-    fol_segments = []
-    for seg in constrained_segments:
-        text = seg.strip()
-        for kw, sym in _KEYWORD_TO_UNICODE.items():
-            text = text.replace(kw, sym)
-        fol_segments.append(text)
+    fol_segments = [fol_keyword_to_unicode(seg.strip()) for seg in constrained_segments]
 
     if len(fol_segments) >= 2:
         premises, conclusion = fol_segments[:-1], fol_segments[-1]
@@ -79,25 +71,13 @@ def main():
     import os
 
     ap = argparse.ArgumentParser(description="Evaluate FOLIO with CSD")
-    ap.add_argument("--run-dir", type=Path, required=True,
-                    help="Path to compiled CSD run directory")
-    ap.add_argument("--model", default="Qwen/Qwen2.5-Coder-7B-Instruct",
-                    help="HuggingFace model ID")
-    ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    add_common_eval_args(
+        ap,
+        default_grammar=PROJECT_ROOT / "grammars" / "folio.lark",
+        default_max_steps=1500,
+    )
     ap.add_argument("--split", default="validation",
                     help="Dataset split to use")
-    ap.add_argument("--limit", type=int, default=100,
-                    help="Max examples to evaluate")
-    ap.add_argument("--max-steps", type=int, default=1500,
-                    help="Max steps for generation")
-    ap.add_argument("--vocab-size", type=int, default=2000,
-                    help="Token vocabulary size limit")
-    ap.add_argument("--grammar", type=Path, default=PROJECT_ROOT / "grammars" / "folio.lark",
-                    help="Grammar file for FOL validation")
-    ap.add_argument("--verbose", action="store_true",
-                    help="Show per-example details")
-    ap.add_argument("--debug-delimiters", action="store_true",
-                    help="Debug delimiter detection")
     ap.add_argument("--debug-csd", action="store_true",
                     help="Debug CSD constrained generation")
     ap.add_argument("--synthetic", action="store_true",
@@ -106,8 +86,6 @@ def main():
                     help="Load from local JSON file instead of HuggingFace")
     ap.add_argument("--output", type=Path,
                     help="Path to save metrics JSON")
-    ap.add_argument("--unconstrained", action="store_true",
-                    help="Run unconstrained baseline instead of CSD")
     args = ap.parse_args()
 
     if args.debug_csd:

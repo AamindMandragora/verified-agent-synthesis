@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from evaluations.common.generation import dafny_seq_to_str
+
 
 def create_lark_dafny_parser(
     grammar_source: str,
@@ -66,13 +68,7 @@ def create_lark_dafny_parser(
 
         def _dafny_seq_to_str(self, seq) -> str:
             """Convert a Dafny Seq to a Python string."""
-            try:
-                return ''.join(seq)
-            except TypeError:
-                try:
-                    return ''.join(seq[i] for i in range(len(seq)))
-                except (TypeError, AttributeError, IndexError):
-                    return str(seq)
+            return dafny_seq_to_str(seq)
 
         def _tokens_to_text(self, tokens) -> str:
             """Convert Dafny token sequence to text."""
