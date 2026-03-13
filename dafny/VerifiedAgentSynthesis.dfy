@@ -261,6 +261,10 @@ module VerifiedDecoderAgent {
       requires IsValidPrefix(prefix)
       ensures forall t :: t in ValidNextTokens(prefix) ==> IsValidPrefix(prefix + [t])
       ensures (IsCompletePrefix(prefix) || |ValidNextTokens(prefix)| > 0)
+
+    // True when every token is a valid next token (e.g. intro/outro in FOLIO). Used to prove invariant after UnconstrainedStep.
+    predicate {:extern} IsPermissive(prefix: Prefix)
+      requires IsValidPrefix(prefix)
   }
 
   function Contains(s: string, sub: string): bool
@@ -343,5 +347,11 @@ module VerifiedDecoderAgent {
       requires lm.ValidTokensIdsLogits()
       requires parser.IsValidPrefix(prefix)
       ensures forall t: Token :: t in parser.ValidNextTokens(prefix) ==> t in lm.Tokens
+
+    // When the parser is permissive (e.g. intro/outro), appending any token preserves valid prefix. Use after UnconstrainedStep to maintain invariant.
+    static lemma {:axiom} UnconstrainedPreservesValidWhenPermissive(parser: Parser, generated: Prefix, next: Token)
+      requires parser.IsValidPrefix(generated)
+      requires parser.IsPermissive(generated)
+      ensures parser.IsValidPrefix(generated + [next])
   }
 }

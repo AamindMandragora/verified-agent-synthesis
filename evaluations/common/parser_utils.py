@@ -159,7 +159,166 @@ def create_lark_dafny_parser(
 
             return _dafny.SeqWithoutIsStrInference(valid_tokens)
 
+        def IsPermissive(self, prefix) -> bool:
+            """Dafny interface: True only when every token is valid (e.g. free-form sections). Strict grammar => False."""
+            return False
+
     return LarkDafnyParser
+
+
+def create_folio_wrapper_parser(
+    VerifiedDecoderAgent,
+    _dafny,
+    fol_parser_instance,
+    lm_tokens,
+    tokenizer,
+):
+    """
+    Parser for FOLIO: plain text, then " << ", then FOL (Prover9 grammar), then " >>", then plain text.
+    The LLM's single CSD strategy runs over the whole output; structure is enforced by this parser.
+    """
+    try:
+        token_list = list(lm_tokens)
+    except TypeError:
+        token_list = [lm_tokens[i] for i in range(len(lm_tokens))]
+
+    fol_parser = fol_parser_instance
+    open_marker = " << "
+    close_marker = " >>"
+
+    def tokens_to_text(prefix):
+        if len(prefix) == 0:
+            return ""
+        try:
+            return "".join(dafny_seq_to_str(prefix[i]) for i in range(len(prefix)))
+        except (TypeError, AttributeError, IndexError):
+            return str(prefix)
+
+    class FOLIOWrapperParser(VerifiedDecoderAgent.Parser):
+        def __init__(self):
+            super().__init__()
+            self._token_list = token_list
+            self._fol_parser = fol_parser
+            self._open = open_marker
+            self._close = close_marker
+            self._tokenizer = tokenizer
+
+        def _dafny_seq_to_str(self, seq):
+            return dafny_seq_to_str(seq)
+
+        def _get_fol_section(self, full_text: str):
+            if self._open not in full_text:
+                return None, None, "intro"
+            start = full_text.rfind(self._open) + len(self._open)
+            after_open = full_text[start:]
+            if self._close in after_open:
+                end_idx = after_open.index(self._close)
+                fol_text = after_open[:end_idx]
+                return start, start + end_idx, "outro"
+            return start, len(full_text), "fol"
+
+        def _fol_tokens_from_prefix(self, prefix):
+            """Return Dafny Seq of tokens that form the FOL part of prefix."""
+            text = tokens_to_text(prefix)
+            start, end, section = self._get_fol_section(text)
+            if section != "fol" and section != "outro":
+                return _dafny.SeqWithoutIsStrInference([])
+            fol_text = text[start:end] if section == "outro" else text[start:]
+            if section == "outro" and self._close in text[start:]:
+                fol_text = text[start:].split(self._close)[0]
+            if not fol_text.strip():
+                return _dafny.SeqWithoutIsStrInference([])
+            try:
+                ids = self._tokenizer.encode(fol_text, add_special_tokens=False)
+                token_strs = [self._tokenizer.decode([i]) for i in ids]
+            except Exception:
+                return _dafny.SeqWithoutIsStrInference([])
+            return _dafny.SeqWithoutIsStrInference([
+                _dafny.SeqWithoutIsStrInference(s) for s in token_strs
+            ])
+
+        def IsValidPrefix(self, prefix) -> bool:
+            if len(prefix) == 0:
+                return True
+            text = tokens_to_text(prefix)
+            _, _, section = self._get_fol_section(text)
+            if section == "intro":
+                return True
+            fol_seq = self._fol_tokens_from_prefix(prefix)
+            if len(fol_seq) == 0:
+                return True
+            return self._fol_parser.IsValidPrefix(fol_seq)
+
+        def IsCompletePrefix(self, prefix) -> bool:
+            if len(prefix) == 0:
+                return False
+            text = tokens_to_text(prefix)
+            if self._open not in text or self._close not in text:
+                return False
+            start = text.rfind(self._open) + len(self._open)
+            after_open = text[start:]
+            if self._close not in after_open:
+                return False
+            close_idx = after_open.index(self._close)
+            fol_text = after_open[:close_idx]
+            if not fol_text.strip():
+                return False
+            # Require at least one character after " >>" so we don't stop as soon as " << formula >>" (avoids premature stop).
+            after_close = after_open[close_idx + len(self._close) :].strip()
+            if len(after_close) == 0:
+                return False
+            try:
+                ids = self._tokenizer.encode(fol_text, add_special_tokens=False)
+                token_strs = [self._tokenizer.decode([i]) for i in ids]
+            except Exception:
+                return False
+            fol_seq = _dafny.SeqWithoutIsStrInference([
+                _dafny.SeqWithoutIsStrInference(s) for s in token_strs
+            ])
+            return self._fol_parser.IsCompletePrefix(fol_seq)
+
+        def _intro_delimiter_tokens(self):
+            """Tokens that would start or continue '<<' / ' << ' with no prior content. Exclude these in empty/whitespace intro."""
+            bad = {"<<", "<", " <<", " << "}
+            out = []
+            for i in range(len(token_list)):
+                t = token_list[i]
+                try:
+                    s = self._dafny_seq_to_str(t)
+                except (TypeError, AttributeError, IndexError):
+                    s = str(t)
+                if s not in bad:
+                    out.append(t)
+            if not out:
+                out = [token_list[j] for j in range(len(token_list))]
+            return out
+
+        def ValidNextTokens(self, prefix):
+            if len(prefix) == 0:
+                # Empty intro: disallow any token that can produce "<< <<" (e.g. "<<", "<", " <<", " << ").
+                allowed = self._intro_delimiter_tokens()
+                return _dafny.SeqWithoutIsStrInference(allowed)
+            text = tokens_to_text(prefix)
+            _, _, section = self._get_fol_section(text)
+            if section == "intro" or section == "outro":
+                text_stripped = text.strip()
+                if len(text_stripped) == 0:
+                    # Still only whitespace — same exclusions so we don't get "<< <<".
+                    allowed = self._intro_delimiter_tokens()
+                    return _dafny.SeqWithoutIsStrInference(allowed)
+                return _dafny.SeqWithoutIsStrInference(token_list)
+            fol_seq = self._fol_tokens_from_prefix(prefix)
+            return self._fol_parser.ValidNextTokens(fol_seq)
+
+        def IsPermissive(self, prefix) -> bool:
+            """True when any token is valid (intro/outro). Used by Dafny to maintain IsValidPrefix after UnconstrainedStep."""
+            if len(prefix) == 0:
+                return True
+            text = tokens_to_text(prefix)
+            _, _, section = self._get_fol_section(text)
+            return section == "intro" or section == "outro"
+
+    return FOLIOWrapperParser()
 
 
 def get_builtin_grammar(format_name: str) -> str:

@@ -3,16 +3,11 @@
 # Usage: bash scripts/make_csd/folio_qwen3b.sh
 set -e
 
-# FOLIO task description for FOL constrained decoding (verbose for Qwen)
-TASK_DESC="Generate first-order logic (FOL) formulas for FOLIO logical reasoning. \
-The parser enforces a strict FOL grammar with quantifiers, predicates, and logical connectives. \
-CRITICAL RULES: \
-1. Use {forall} and {exists} for quantifiers, followed by a single lowercase variable and a formula. \
-2. Predicates start with uppercase (e.g., Dog(x), Likes(john, mary)) with lowercase arguments. \
-3. Single lowercase letters (x, y, z) are variables; multi-character lowercase identifiers are constants. \
-4. Logical connectives: {and}, {or}, {not}, {implies}, {iff}, {xor}. \
-5. The constrained windows contain complete FOL statements — one per premise and one for the conclusion. \
-6. Parentheses are used for grouping; operator precedence is: iff < implies < xor < or < and < not."
+# FOLIO: structure (plain text, then << FOL >>) is in the prompt; parser allows that. Pure LLM CSD.
+TASK_DESC="FOLIO: generate output that may include plain text, then \" << \" then exactly one \
+first-order logic formula (Prover9 grammar: {forall}, {exists}, predicates, {and}, {or}, {not}, {implies}, {iff}, {xor}), then \" >>\". \
+The constrained decoder must respect the grammar only between the delimiters. \
+All structure instructions are in the prompt; use your strategy to satisfy the grammar."
 
 echo "Making FOLIO CSD (Qwen 3B)..."
 echo "Task: $TASK_DESC"
@@ -29,6 +24,6 @@ python run_synthesis.py \
   --min-accuracy 0.5 \
   --min-format-rate 0.8 \
   --min-syntax-rate 0.8 \
-  --eval-sample-size 10
+  --eval-sample-size 3
 
 echo "FOLIO CSD (Qwen 3B) done. Run dir: outputs/generated-csd/runs/ (see latest_run.txt)"

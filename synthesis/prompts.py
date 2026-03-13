@@ -77,6 +77,8 @@ Do NOT use .Exists, .Any, .Where, or lambda syntax on sequences — Dafny sequen
 - **Statements**: Every statement ends with `;`. No semicolon after `}` of blocks.
 - **Equality**: Use `==` for equality, `!=` for disequality. Use `:=` for assignment only.
 - **Steps**: Each UnconstrainedStep/ConstrainedStep returns (next, stepsLeft'); assign both and do stepsLeft := stepsLeft' so the next iteration has the updated remaining steps.
+- **If/else with Step calls**: If you use if/else to choose between ConstrainedStep and UnconstrainedStep, you MUST declare `var next: Token; var newSteps: nat;` BEFORE the if/else, then in each branch assign `next, newSteps := helpers....;`. Do NOT declare `var next, newSteps` inside each branch — they would be out of scope after the closing brace and "generated := generated + [next]; stepsLeft := newSteps;" would fail with "unresolved identifier: next".
+- **Variables in invariants**: Any variable used in the loop invariants (e.g. stepCounter, hasValid) MUST be declared before the while loop (e.g. var stepCounter := 0; var hasValid := false; before the while).
 
 ## REQUIRED: rationale block (must be included in EVERY output)
 Your output MUST begin with a short, parseable rationale comment block:
@@ -106,6 +108,7 @@ You MUST implement the strategy body as a loop that:
 - Uses generated := []; (stepsLeft is already maxSteps). Loop while stepsLeft > 0 && !parser.IsCompletePrefix(generated).
 - In the loop, before calling ConstrainedStep, call CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated); so the precondition (valid next tokens in lm.Tokens) is satisfied. Then call UnconstrainedStep or ConstrainedStep with stepsLeft; assign the returned (next, newSteps) back, append next to generated, set stepsLeft := newSteps.
 - Optionally use RollbackToValidPrefix if you need to repair. At the end the template assigns remainingSteps := stepsLeft.
+- PREFER the simple pattern: one loop with only ConstrainedStep (no if/else choosing step type). That avoids "unresolved identifier: next" and invariant issues. If you do use if/else with both step types, declare var next: Token; var newSteps: nat; before the if/else.
 
 **Loop invariants (required for verification):** Use at minimum:
   invariant lm.ValidTokensIdsLogits()
@@ -184,6 +187,12 @@ Rules:
 
 **CRITICAL: If the error says "Duplicate local-variable name: stepsLeft":**
 - The template already declares stepsLeft. Remove every line that declares stepsLeft (e.g. \"var stepsLeft := maxSteps;\") from your strategy body. Just use stepsLeft and assign to it (stepsLeft := newSteps).
+
+**CRITICAL: If the error says "unresolved identifier: next" or "unresolved identifier: newSteps":**
+- You declared var next, newSteps inside an if or else block, so they are out of scope when you use them after the block. Declare them BEFORE the if/else: add \"var next: Token; var newSteps: nat;\" right before the if, and in each branch use \"next, newSteps := helpers....\" (no \"var\" in the branch).
+
+**CRITICAL: If the error says "unresolved identifier: stepCounter" or "unresolved identifier: hasValid":**
+- Variables used in the loop body or invariants must be declared before the while loop. Add \"var stepCounter := 0;\" and/or \"var hasValid := false;\" before the while (not inside it).
 
 **CRITICAL: If the error says "does not have a member Exists" or "type seq does not have a member Exists":**
 - You used C#/LINQ style. Dafny sequences do NOT have .Exists. Replace e.g. validTokens.Exists(token => parser.IsValidNextToken(generated, token)) with: exists token :: token in validTokens && parser.ValidNextToken(generated, token)

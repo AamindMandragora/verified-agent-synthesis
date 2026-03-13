@@ -72,7 +72,11 @@ class FOL_Prover9_Program:
                 else:
                     return 'Unknown', ''
         except Exception as e:
-            return None, str(e)
+            err = str(e)
+            if "Permission denied" in err or "Errno 13" in err:
+                prover9_bin = Path(__file__).parent.parent / "Prover9" / "bin" / "prover9"
+                err = f"{err}. Fix: chmod +x {prover9_bin} (and mace4 if used)."
+            return None, err
         
     def answer_mapping(self, answer):
         if answer == 'True':

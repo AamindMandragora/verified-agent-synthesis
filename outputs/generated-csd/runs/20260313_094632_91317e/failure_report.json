@@ -1,0 +1,365 @@
+{
+  "task_description": "Generate first-order logic (FOL) formulas for FOLIO logical reasoning. The parser enforces a strict FOL grammar with quantifiers, predicates, and logical connectives. CRITICAL RULES: 1. Use {forall} and {exists} for quantifiers, followed by a single lowercase variable and a formula. 2. Predicates start with uppercase (e.g., Dog(x), Likes(john, mary)) with lowercase arguments. 3. Single lowercase letters (x, y, z) are variables; multi-character lowercase identifiers are constants. 4. Logical connectives: {and}, {or}, {not}, {implies}, {iff}, {xor}. 5. The constrained windows contain complete FOL statements \u2014 one per premise and one for the conclusion. 6. Parentheses are used for grouping; operator precedence is: iff < implies < xor < or < and < not.",
+  "total_attempts": 10,
+  "timestamp": "2026-03-13T09:49:25.193161",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "constrained_only",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}"
+      },
+      "timestamp": "2026-03-13T09:46:47.012288",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 33, Column 47): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(33,47): Error: a precondition for this call could not be proved\n   |\n33 |   var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n   |                                                ^\n\nVerifiedAgentSynthesis.dfy(299,15): Related location: this is the precondition that could not be proved\n    |\n299 |       requires forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens\n    |                ^^^^^^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 2,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "constrained_only",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}"
+      },
+      "timestamp": "2026-03-13T09:46:49.071885",
+      "succeeded": true,
+      "failed_at": "evaluation",
+      "error_summary": "Evaluation Results (3 examples):\n  Accuracy: 0.0% (0/3)\n  Format Rate: 100.0%\n  Syntax Rate: 100.0%\n  Total Time: 8.74s\n\nSample Failures:\n\n  Example 1:\n    Question: Based on the above information, is the following statement true, false, or uncertain? The mixture is...\n    Expected: False\n    Got: << Alkane(mixture) {and} Contain(mixture, carbon) >>\n\n  Example 2:\n    Question: Based on the above information, is the following statement true, false, or uncertain? Beijing is the...\n    Expected: Uncertain\n    Got: << SecondLargestChineseCity(beijing) >>\n\n  Example 3:\n    Question: Based on the above information, is the following statement true, false, or uncertain? Ailton Silva w...\n    Expected: Uncertain\n    Got: << {exists}x (FootballClub(x) {and} LoanedTo(ailtonSilva, x)) >>",
+      "verification": {
+        "success": true,
+        "error_count": 0
+      },
+      "compilation": {
+        "success": true,
+        "output_dir": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260313_094632_91317e/folio_csd"
+      },
+      "runtime": {
+        "success": true,
+        "output_length": 11,
+        "cost": 11,
+        "execution_time_ms": 68.1295394897461
+      },
+      "evaluation": {
+        "success": true,
+        "accuracy": 0.0,
+        "format_rate": 1.0,
+        "syntax_rate": 1.0,
+        "num_examples": 3,
+        "num_correct": 0,
+        "total_time_seconds": 8.737436771392822,
+        "error": null,
+        "sample_outputs": [
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? The mixture is an alkane and contains carbon.",
+            "expected": "False",
+            "actual": "<< Alkane(mixture) {and} Contain(mixture, carbon) >>",
+            "full_output": "<< Alkane(mixture) {and} Contain(mixture, carbon) >>",
+            "extracted_segments": [
+              "Alkane(mixture) {and} Contain(mixture, carbon)"
+            ],
+            "is_correct": false,
+            "is_valid_format": true,
+            "is_syntax_valid": true,
+            "token_count": 16,
+            "time_seconds": 0.0012972354888916016,
+            "gold_premises_fol": "\u2200x (Hydrocarbon(x) \u2192 Orgranic(x) \u2227 Compound(x))\n\u2200x (Alkane(x) \u2192 Hydrocarbon(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Chemical(x) \u2227 Compound(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Contain(x, carbon))\n\u2200x (Chemical(x) \u2227 Compound(x) \u2192 \u2200y \u2200z (\u00ac(Contain(x, y) \u2227 Contain(x, z) \u2227 (y=z))))\n\u00ac((Chemical(mixture) \u2227 Compound(mixture)) \u2295 (\u2200y \u2200z (Contain(x, y) \u2227 Contain(x, z) \u2227 y=z)))",
+            "gold_conclusion_fol": "Alkane(mixture) \u2227 Contain(mixture, carbon)",
+            "folio_debug": {
+              "segments": [
+                "Alkane(mixture) {and} Contain(mixture, carbon)"
+              ],
+              "premises_used": [
+                "\u2200x (Hydrocarbon(x) \u2192 Orgranic(x) \u2227 Compound(x))\n\u2200x (Alkane(x) \u2192 Hydrocarbon(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Chemical(x) \u2227 Compound(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Contain(x, carbon))\n\u2200x (Chemical(x) \u2227 Compound(x) \u2192 \u2200y \u2200z (\u00ac(Contain(x, y) \u2227 Contain(x, z) \u2227 (y=z))))\n\u00ac((Chemical(mixture) \u2227 Compound(mixture)) \u2295 (\u2200y \u2200z (Contain(x, y) \u2227 Contain(x, z) \u2227 y=z)))"
+              ],
+              "conclusion_raw": "Alkane(mixture) {and} Contain(mixture, carbon)",
+              "conclusion": "Alkane(mixture) \u2227 Contain(mixture, carbon)",
+              "logic_program": "Premises:\n\u2200x (Hydrocarbon(x) \u2192 Orgranic(x) \u2227 Compound(x))\n\u2200x (Alkane(x) \u2192 Hydrocarbon(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Chemical(x) \u2227 Compound(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Contain(x, carbon))\n\u2200x (Chemical(x) \u2227 Compound(x) \u2192 \u2200y \u2200z (\u00ac(Contain(x, y) \u2227 Contain(x, z) \u2227 (y=z))))\n\u00ac((Chemical(mixture) \u2227 Compound(mixture)) \u2295 (\u2200y \u2200z (Contain(x, y) \u2227 Contain(x, z) \u2227 y=z))) ::: premise\nConclusion:\nAlkane(mixture) \u2227 Contain(mixture, carbon) ::: conclusion",
+              "prover9_ok": false,
+              "prover9_answer": null,
+              "fallback_used": true,
+              "reason": "prover9_parse_fail"
+            }
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? Beijing is the second largest Chinese city.",
+            "expected": "Uncertain",
+            "actual": "<< SecondLargestChineseCity(beijing) >>",
+            "full_output": "<< SecondLargestChineseCity(beijing) >>",
+            "extracted_segments": [
+              "SecondLargestChineseCity(beijing)"
+            ],
+            "is_correct": false,
+            "is_valid_format": true,
+            "is_syntax_valid": true,
+            "token_count": 8,
+            "time_seconds": 0.00015854835510253906,
+            "gold_premises_fol": "CapitalOf(beijing, peoplesRepublicOfChina)\n\u2203x (CapitalOf(beijing, x) \u2192 WorldsMostPopulousNation(x))\nLocatedIn(beijing, northernChina)\nHosted(beijing, 2008SummerOlympics) \u2227 Hosted(beijing, 2008SummerParalympicGames)\nHosted(beijing, summerOlympics) \u2227 Hosted(beijing, winterOlympics) \u2227 Hosted(beijing, summerParalympicGames)  \u2227 Hosted(beijing, winterParalympicGames)\n\u2203x (University(x) \u2227 InBeijing(x) \u2227 ConsistentlyRankAmongTheBestIn(x, theWorld))",
+            "gold_conclusion_fol": "SecondLargestChineseCity(beijing)",
+            "folio_debug": {
+              "segments": [
+                "SecondLargestChineseCity(beijing)"
+              ],
+              "premises_used": [
+                "CapitalOf(beijing, peoplesRepublicOfChina)\n\u2203x (CapitalOf(beijing, x) \u2192 WorldsMostPopulousNation(x))\nLocatedIn(beijing, northernChina)\nHosted(beijing, 2008SummerOlympics) \u2227 Hosted(beijing, 2008SummerParalympicGames)\nHosted(beijing, summerOlympics) \u2227 Hosted(beijing, winterOlympics) \u2227 Hosted(beijing, summerParalympicGames)  \u2227 Hosted(beijing, winterParalympicGames)\n\u2203x (University(x) \u2227 InBeijing(x) \u2227 ConsistentlyRankAmongTheBestIn(x, theWorld))"
+              ],
+              "conclusion_raw": "SecondLargestChineseCity(beijing)",
+              "conclusion": "SecondLargestChineseCity(beijing)",
+              "logic_program": "Premises:\nCapitalOf(beijing, peoplesRepublicOfChina)\n\u2203x (CapitalOf(beijing, x) \u2192 WorldsMostPopulousNation(x))\nLocatedIn(beijing, northernChina)\nHosted(beijing, 2008SummerOlympics) \u2227 Hosted(beijing, 2008SummerParalympicGames)\nHosted(beijing, summerOlympics) \u2227 Hosted(beijing, winterOlympics) \u2227 Hosted(beijing, summerParalympicGames)  \u2227 Hosted(beijing, winterParalympicGames)\n\u2203x (University(x) \u2227 InBeijing(x) \u2227 ConsistentlyRankAmongTheBestIn(x, theWorld)) ::: premise\nConclusion:\nSecondLargestChineseCity(beijing) ::: conclusion",
+              "prover9_ok": false,
+              "prover9_answer": null,
+              "fallback_used": true,
+              "prover9_error": "[Errno 13] Permission denied: '/home/advayth2/projects/verified-agent-synthesis/symbolic_solvers/Prover9/bin/prover9'"
+            }
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? Ailton Silva was loaned out to a football club.",
+            "expected": "Uncertain",
+            "actual": "<< {exists}x (FootballClub(x) {and} LoanedTo(ailtonSilva, x)) >>",
+            "full_output": "<< {exists}x (FootballClub(x) {and} LoanedTo(ailtonSilva, x)) >>",
+            "extracted_segments": [
+              "{exists}x (FootballClub(x) {and} LoanedTo(ailtonSilva, x))"
+            ],
+            "is_correct": false,
+            "is_valid_format": true,
+            "is_syntax_valid": true,
+            "token_count": 23,
+            "time_seconds": 0.0006105899810791016,
+            "gold_premises_fol": "BornIn(ailtonSilva, year1995) \u2227 CommonlyKnownAs(ailtonSilva, ailton)\nFootballPlayer(ailton) \u2227 LoanedTo(ailton, braga)\nBrazilian(ailtonSilva) \u2227 Footballplayer(ailtonSilva) \u2227 PlayFor(ailtonSilva, nautico)\nFootballClub(nautico) \u2227 FootballClub(braga)\nFootballClub(fluminense)",
+            "gold_conclusion_fol": "\u2203x (FootballClub(x) \u2227 LoanedTo(ailtonSilva, x))",
+            "folio_debug": {
+              "segments": [
+                "{exists}x (FootballClub(x) {and} LoanedTo(ailtonSilva, x))"
+              ],
+              "premises_used": [
+                "BornIn(ailtonSilva, year1995) \u2227 CommonlyKnownAs(ailtonSilva, ailton)\nFootballPlayer(ailton) \u2227 LoanedTo(ailton, braga)\nBrazilian(ailtonSilva) \u2227 Footballplayer(ailtonSilva) \u2227 PlayFor(ailtonSilva, nautico)\nFootballClub(nautico) \u2227 FootballClub(braga)\nFootballClub(fluminense)"
+              ],
+              "conclusion_raw": "{exists}x (FootballClub(x) {and} LoanedTo(ailtonSilva, x))",
+              "conclusion": "\u2203x (FootballClub(x) \u2227 LoanedTo(ailtonSilva, x))",
+              "logic_program": "Premises:\nBornIn(ailtonSilva, year1995) \u2227 CommonlyKnownAs(ailtonSilva, ailton)\nFootballPlayer(ailton) \u2227 LoanedTo(ailton, braga)\nBrazilian(ailtonSilva) \u2227 Footballplayer(ailtonSilva) \u2227 PlayFor(ailtonSilva, nautico)\nFootballClub(nautico) \u2227 FootballClub(braga)\nFootballClub(fluminense) ::: premise\nConclusion:\n\u2203x (FootballClub(x) \u2227 LoanedTo(ailtonSilva, x)) ::: conclusion",
+              "prover9_ok": false,
+              "prover9_answer": null,
+              "fallback_used": true,
+              "prover9_error": "[Errno 13] Permission denied: '/home/advayth2/projects/verified-agent-synthesis/symbolic_solvers/Prover9/bin/prover9'"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "attempt_number": 3,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0; // Track the number of steps taken\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if stepCounter % 2 == 0 {\n    // Even steps: ConstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Odd steps: UnconstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  stepCounter := stepCounter + 1;\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0; // Track the number of steps taken\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if stepCounter % 2 == 0 {\n    // Even steps: ConstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Odd steps: UnconstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  stepCounter := stepCounter + 1;\n}"
+      },
+      "timestamp": "2026-03-13T09:47:17.649575",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 30, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(30,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n30 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 4,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false; // Track if a valid token was found\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  // Check if a valid token can be generated\n  if hasValid || exists token :: token in lm.Tokens && parser.ValidNextToken(generated, token) {\n    // Constrained step if possible\n    if !parser.IsCompletePrefix(generated) {\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    } else {\n      // Unconstrained step if constrained step is not available\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  } else {\n    // No valid token can be generated, rollback to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false; // Track if a valid token was found\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  // Check if a valid token can be generated\n  if hasValid || exists token :: token in lm.Tokens && parser.ValidNextToken(generated, token) {\n    // Constrained step if possible\n    if !parser.IsCompletePrefix(generated) {\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    } else {\n      // Unconstrained step if constrained step is not available\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  } else {\n    // No valid token can be generated, rollback to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n  }\n}"
+      },
+      "timestamp": "2026-03-13T09:47:34.208345",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 28, Column 0): Error: decreases expression might not decrease\n\nFull Dafny output:\nGeneratedCSD.dfy(28,0): Error: decreases expression might not decrease\n   |\n28 | while stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n   | ^^^^^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 5,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false; // Track if a valid token was found\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  // Check if a valid token can be generated\n  if hasValid || exists token :: token in lm.Tokens && parser.ValidNextToken(generated, token) {\n    // Constrained step if possible\n    if !parser.IsCompletePrefix(generated) {\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    } else {\n      // Unconstrained step if constrained step is not available\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  } else {\n    // No valid token can be generated, rollback to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false; // Track if a valid token was found\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  // Check if a valid token can be generated\n  if hasValid || exists token :: token in lm.Tokens && parser.ValidNextToken(generated, token) {\n    // Constrained step if possible\n    if !parser.IsCompletePrefix(generated) {\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    } else {\n      // Unconstrained step if constrained step is not available\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  } else {\n    // No valid token can be generated, rollback to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n  }\n}"
+      },
+      "timestamp": "2026-03-13T09:47:50.699110",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 28, Column 0): Error: decreases expression might not decrease\n\nFull Dafny output:\nGeneratedCSD.dfy(28,0): Error: decreases expression might not decrease\n   |\n28 | while stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n   | ^^^^^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 6,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false; // Track if a valid token was found\nvar stepCounter := 0; // Counter for the number of steps taken\nvar validTokens := parser.ValidNextTokens(generated); // Precompute valid tokens\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter <= maxSteps\n  decreases maxSteps - stepCounter\n{\n  // Check if a valid token can be generated\n  if hasValid || exists token :: token in validTokens && parser.ValidNextToken(generated, token) {\n    // Constrained step if possible\n    if !parser.IsCompletePrefix(generated) {\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    } else {\n      // Unconstrained step if constrained step is not available\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  } else {\n    // No valid token can be generated, rollback to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n  }\n  stepCounter := stepCounter + 1; // Increment the step counter\n  hasValid := false; // Reset hasValid for the next iteration\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false; // Track if a valid token was found\nvar stepCounter := 0; // Counter for the number of steps taken\nvar validTokens := parser.ValidNextTokens(generated); // Precompute valid tokens\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter <= maxSteps\n  decreases maxSteps - stepCounter\n{\n  // Check if a valid token can be generated\n  if hasValid || exists token :: token in validTokens && parser.ValidNextToken(generated, token) {\n    // Constrained step if possible\n    if !parser.IsCompletePrefix(generated) {\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    } else {\n      // Unconstrained step if constrained step is not available\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  } else {\n    // No valid token can be generated, rollback to a valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n  }\n  stepCounter := stepCounter + 1; // Increment the step counter\n  hasValid := false; // Reset hasValid for the next iteration\n}"
+      },
+      "timestamp": "2026-03-13T09:48:10.349651",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 34, Column 36): Error: this invariant could not be proved to be maintained by the loop\n  (Line 35, Column 44): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(34,36): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n34 |   invariant |generated| + stepsLeft == maxSteps\n   |                                     ^^\n\nGeneratedCSD.dfy(35,44): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n35 |   invariant stepCounter >= 0 && stepCounter <= maxSteps\n   |                                             ^^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 7,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false; // Track if a valid token was found\nvar stepCounter := 0; // Counter for the number of steps taken\nvar validTokens := parser.ValidNextTokens(generated); // Precompute valid tokens\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - stepCounter\n{\n  // Check if a valid token can be generated\n  if hasValid || exists token :: token in validTokens && parser.ValidNextToken(generated, token) {\n    // Constrained step if possible\n    if !parser.IsCompletePrefix(generated) {\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    } else {\n      // Unconstrained step if constrained step is not available\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  } else {\n    // No valid token can be generated, rollback to a valid prefix\n}\n  stepCounter := stepCounter + 1; // Increment the step counter\n  hasValid := false; // Reset hasValid for the next iteration\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false; // Track if a valid token was found\nvar stepCounter := 0; // Counter for the number of steps taken\nvar validTokens := parser.ValidNextTokens(generated); // Precompute valid tokens\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - stepCounter\n{\n  // Check if a valid token can be generated\n  if hasValid || exists token :: token in validTokens && parser.ValidNextToken(generated, token) {\n    // Constrained step if possible\n    if !parser.IsCompletePrefix(generated) {\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    } else {\n      // Unconstrained step if constrained step is not available\n      CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n      var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  } else {\n    // No valid token can be generated, rollback to a valid prefix\n}\n  stepCounter := stepCounter + 1; // Increment the step counter\n  hasValid := false; // Reset hasValid for the next iteration\n}"
+      },
+      "timestamp": "2026-03-13T09:48:12.678409",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 35, Column 21): Error: decreases expression must be bounded below by 0 at end of loop iteration\n\nFull Dafny output:\nGeneratedCSD.dfy(35,21): Error: decreases expression must be bounded below by 0 at end of loop iteration\n   |\n35 |   decreases maxSteps - stepCounter\n   |                      ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 8,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false; // Track if a valid token was found\nvar stepCounter := 0; // Counter for the number of steps taken\nvar validTokens := parser.ValidNextTokens(generated); // Precompute valid tokens\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - stepCounter\n{\n  // Check if a valid token can be generated\n  hasValid := exists token :: token in validTokens && parser.ValidNextToken(generated, token);\n\n  // Alternating between constrained and unconstrained steps\n  if !parser.IsCompletePrefix(generated) {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1; // Increment the step counter\n  hasValid := false; // Reset hasValid for the next iteration\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false; // Track if a valid token was found\nvar stepCounter := 0; // Counter for the number of steps taken\nvar validTokens := parser.ValidNextTokens(generated); // Precompute valid tokens\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - stepCounter\n{\n  // Check if a valid token can be generated\n  hasValid := exists token :: token in validTokens && parser.ValidNextToken(generated, token);\n\n  // Alternating between constrained and unconstrained steps\n  if !parser.IsCompletePrefix(generated) {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1; // Increment the step counter\n  hasValid := false; // Reset hasValid for the next iteration\n}"
+      },
+      "timestamp": "2026-03-13T09:48:34.827375",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 35, Column 21): Error: decreases expression must be bounded below by 0 at end of loop iteration\n\nFull Dafny output:\nGeneratedCSD.dfy(35,21): Error: decreases expression must be bounded below by 0 at end of loop iteration\n   |\n35 |   decreases maxSteps - stepCounter\n   |                      ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 9,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false; // Track if a valid token was found\nvar stepCounter := 0; // Counter for the number of steps taken\nvar validTokens := parser.ValidNextTokens(generated); // Precompute valid tokens\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - stepCounter\n{\n  // Check if a valid token can be generated\n  hasValid := exists token :: token in validTokens && parser.ValidNextToken(generated, token);\n\n  // Alternating between constrained and unconstrained steps\n  if !parser.IsCompletePrefix(generated) {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1; // Increment the step counter\n  hasValid := false; // Reset hasValid for the next iteration\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false; // Track if a valid token was found\nvar stepCounter := 0; // Counter for the number of steps taken\nvar validTokens := parser.ValidNextTokens(generated); // Precompute valid tokens\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - stepCounter\n{\n  // Check if a valid token can be generated\n  hasValid := exists token :: token in validTokens && parser.ValidNextToken(generated, token);\n\n  // Alternating between constrained and unconstrained steps\n  if !parser.IsCompletePrefix(generated) {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1; // Increment the step counter\n  hasValid := false; // Reset hasValid for the next iteration\n}"
+      },
+      "timestamp": "2026-03-13T09:48:52.544920",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 36, Column 21): Error: decreases expression must be bounded below by 0 at end of loop iteration\n\nFull Dafny output:\nGeneratedCSD.dfy(36,21): Error: decreases expression must be bounded below by 0 at end of loop iteration\n   |\n36 |   decreases maxSteps - stepCounter\n   |                      ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 10,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0; // Counter for the number of steps taken\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - stepCounter\n{\n  // Check if a valid token can be generated\n  var hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n\n  // Alternating between constrained and unconstrained steps\n  if !parser.IsCompletePrefix(generated) && hasValid {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1; // Increment the step counter\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates FOL formulas using the provided parser. It uses constrained steps\n// to ensure the generated expressions are valid according to the FOL grammar. The strategy\n// prioritizes constrained steps over unconstrained steps to maintain the integrity of the\n// generated expressions. It alternates between constrained and unconstrained steps to balance\n// the generation of << >> segments and free text.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0; // Counter for the number of steps taken\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - stepCounter\n{\n  // Check if a valid token can be generated\n  var hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n\n  // Alternating between constrained and unconstrained steps\n  if !parser.IsCompletePrefix(generated) && hasValid {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1; // Increment the step counter\n}"
+      },
+      "timestamp": "2026-03-13T09:49:08.467915",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 31, Column 32): Error: this invariant could not be proved to be maintained by the loop\n  (Line 34, Column 21): Error: decreases expression must be bounded below by 0 at end of loop iteration\n\nFull Dafny output:\nGeneratedCSD.dfy(31,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n31 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\nGeneratedCSD.dfy(34,21): Error: decreases expression must be bounded below by 0 at end of loop iteration\n   |\n34 |   decreases maxSteps - stepCounter\n   |                      ^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    }
+  ],
+  "failure_patterns": {
+    "verification_failures": 9,
+    "compilation_failures": 0,
+    "runtime_failures": 0,
+    "common_errors": []
+  }
+}

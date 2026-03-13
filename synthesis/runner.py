@@ -327,7 +327,11 @@ class StrategyRunner:
             def ValidNextTokens(self, prefix):
                 """Extern: Return all LM tokens as valid."""
                 return self._lm_tokens
-        
+
+            def IsPermissive(self, prefix):
+                """Extern: All tokens valid => permissive."""
+                return True
+
         # Create a JSON-aware parser
         class JsonParser(VerifiedDecoderAgent.Parser):
             """Parser that validates JSON structure."""
@@ -388,7 +392,11 @@ class StrategyRunner:
                         valid.append(token)
                 
                 return _dafny.SeqWithoutIsStrInference(valid)
-        
+
+            def IsPermissive(self, prefix):
+                """Not permissive: only some tokens valid for JSON."""
+                return False
+
         # Create instances based on parser mode
         is_json_mode = self.parser_mode == "json"
         lm = TestLM(vocab_size=self.vocab_size, json_mode=is_json_mode)

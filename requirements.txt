@@ -22,3 +22,8 @@ pytest-timeout>=2.0.0
 datasets>=2.16.0
 jsonschema>=4.20.0
 
+# FOLIO / FOL reasoning (Prover9 solver)
+nltk>=3.8.0
+ply>=3.11
+z3-solver>=4.12.0
+

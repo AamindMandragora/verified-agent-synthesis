@@ -124,6 +124,7 @@ def setup_dafny_environment(
 
     tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
+    used_cpu_fallback = False
     try:
         lm = create_huggingface_lm(
             model_name,
@@ -150,6 +151,7 @@ def setup_dafny_environment(
             load_in_4bit=load_in_4bit,
             load_in_8bit=load_in_8bit,
         )
+        used_cpu_fallback = True
 
     grammar_text = grammar_file.read_text()
     LarkDafnyParser = create_lark_dafny_parser(
@@ -157,7 +159,7 @@ def setup_dafny_environment(
     )
     parser = LarkDafnyParser(lm._Tokens)
 
-    return {
+    result = {
         "_dafny": _dafny,
         "VerifiedDecoderAgent": VerifiedDecoderAgent,
         "GeneratedCSD": GeneratedCSD,
@@ -165,3 +167,6 @@ def setup_dafny_environment(
         "parser": parser,
         "tokenizer": tok,
     }
+    if used_cpu_fallback:
+        result["_eval_cpu_fallback"] = True
+    return result

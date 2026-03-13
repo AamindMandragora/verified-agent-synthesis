@@ -64,10 +64,11 @@ def load_folio(
         # Try alternative loading methods or provide helpful error
         raise RuntimeError(
             f"Failed to load FOLIO dataset: {e}\n"
-            "The FOLIO dataset requires authentication. Please:\n"
-            "1. Create a HuggingFace account\n"
-            "2. Accept the dataset terms at https://huggingface.co/datasets/yale-nlp/FOLIO\n"
-            "3. Run `huggingface-cli login`"
+            "The FOLIO dataset (yale-nlp/FOLIO) is gated and requires:\n"
+            "1. Accept the dataset terms at https://huggingface.co/datasets/yale-nlp/FOLIO (log in, then click to agree)\n"
+            "2. A token with read access to *gated* repos (not 'namespace only') — create at https://huggingface.co/settings/tokens\n"
+            "3. Login: `huggingface-cli login` or set HF_TOKEN\n"
+            "Alternatively, use load_folio_from_json(path_to_local_folio.json) with a local FOLIO JSON file."
         )
     
     # Sample if requested

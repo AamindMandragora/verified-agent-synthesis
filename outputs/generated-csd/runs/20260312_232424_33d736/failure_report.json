@@ -1,0 +1,387 @@
+{
+  "task_description": "Generate first-order logic (FOL) formulas for FOLIO logical reasoning. The parser enforces a strict FOL grammar with quantifiers, predicates, and logical connectives. CRITICAL RULES: 1. Use {forall} and {exists} for quantifiers, followed by a single lowercase variable and a formula. 2. Predicates start with uppercase (e.g., Dog(x), Likes(john, mary)) with lowercase arguments. 3. Single lowercase letters (x, y, z) are variables; multi-character lowercase identifiers are constants. 4. Logical connectives: {and}, {or}, {not}, {implies}, {iff}, {xor}. 5. The constrained windows contain complete FOL statements \u2014 one per premise and one for the conclusion. 6. Parentheses are used for grouping; operator precedence is: iff < implies < xor < or < and < not.",
+  "total_attempts": 10,
+  "timestamp": "2026-03-12T23:30:42.921271",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\n\n// template then assigns remainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "constrained_only",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\n\n// template then assigns remainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-12T23:24:38.950786",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 30, Column 47): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(30,47): Error: a precondition for this call could not be proved\n   |\n30 |   var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n   |                                                ^\n\nVerifiedAgentSynthesis.dfy(299,15): Related location: this is the precondition that could not be proved\n    |\n299 |       requires forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens\n    |                ^^^^^^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 2,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\n\n// template then assigns remainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "constrained_only",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\n\n// template then assigns remainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-12T23:24:40.948283",
+      "succeeded": true,
+      "failed_at": "evaluation",
+      "error_summary": "Evaluation Results (10 examples):\n  Accuracy: 0.0% (0/10)\n  Format Rate: 0.0%\n  Syntax Rate: 100.0%\n  Total Time: 225.56s\n\nSample Failures:\n\n  Example 1:\n    Question: Based on the above information, is the following statement true, false, or uncertain? The mixture is...\n    Expected: False\n    Got:  \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n\n  Example 2:\n    Question: Based on the above information, is the following statement true, false, or uncertain? Beijing is the...\n    Expected: Uncertain\n    Got:  \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n\n  Example 3:\n    Question: Based on the above information, is the following statement true, false, or uncertain? Ailton Silva w...\n    Expected: Uncertain\n    Got:  \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n",
+      "verification": {
+        "success": true,
+        "error_count": 0
+      },
+      "compilation": {
+        "success": true,
+        "output_dir": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260312_232424_33d736/folio_csd"
+      },
+      "runtime": {
+        "success": true,
+        "output_length": 11,
+        "cost": 11,
+        "execution_time_ms": 65.64068794250488
+      },
+      "evaluation": {
+        "success": true,
+        "accuracy": 0.0,
+        "format_rate": 0.0,
+        "syntax_rate": 1.0,
+        "num_examples": 10,
+        "num_correct": 0,
+        "total_time_seconds": 225.55850410461426,
+        "error": null,
+        "sample_outputs": [
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? The mixture is an alkane and contains carbon.",
+            "expected": "False",
+            "actual": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n",
+            "full_output": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         ",
+            "is_correct": false,
+            "is_valid_format": false,
+            "is_syntax_valid": true,
+            "token_count": 150,
+            "time_seconds": 29.320928812026978
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? Beijing is the second largest Chinese city.",
+            "expected": "Uncertain",
+            "actual": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n",
+            "full_output": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         ",
+            "is_correct": false,
+            "is_valid_format": false,
+            "is_syntax_valid": true,
+            "token_count": 150,
+            "time_seconds": 20.25362277030945
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? Ailton Silva was loaned out to a football club.",
+            "expected": "Uncertain",
+            "actual": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n",
+            "full_output": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         ",
+            "is_correct": false,
+            "is_valid_format": false,
+            "is_syntax_valid": true,
+            "token_count": 150,
+            "time_seconds": 20.233314037322998
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? James's favorite season is summer.",
+            "expected": "True",
+            "actual": " \n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n  ",
+            "full_output": " \n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n",
+            "is_correct": false,
+            "is_valid_format": false,
+            "is_syntax_valid": true,
+            "token_count": 150,
+            "time_seconds": 25.19901704788208
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? Beethoven is not a conductor.",
+            "expected": "False",
+            "actual": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n",
+            "full_output": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         ",
+            "is_correct": false,
+            "is_valid_format": false,
+            "is_syntax_valid": true,
+            "token_count": 150,
+            "time_seconds": 20.3372962474823
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? No one gets the flu.",
+            "expected": "Uncertain",
+            "actual": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n",
+            "full_output": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         ",
+            "is_correct": false,
+            "is_valid_format": false,
+            "is_syntax_valid": true,
+            "token_count": 150,
+            "time_seconds": 20.70524835586548
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? Dried Thai chilies are not products of Baked by Melissa.",
+            "expected": "True",
+            "actual": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n",
+            "full_output": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         ",
+            "is_correct": false,
+            "is_valid_format": false,
+            "is_syntax_valid": true,
+            "token_count": 150,
+            "time_seconds": 20.24105143547058
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? Peter is shorter than a man in Michael's class.",
+            "expected": "False",
+            "actual": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n",
+            "full_output": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         ",
+            "is_correct": false,
+            "is_valid_format": false,
+            "is_syntax_valid": true,
+            "token_count": 150,
+            "time_seconds": 20.09994411468506
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? Neapolitan Chronicles is an English book.",
+            "expected": "True",
+            "actual": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n",
+            "full_output": " \n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         \n\n         ",
+            "is_correct": false,
+            "is_valid_format": false,
+            "is_syntax_valid": true,
+            "token_count": 150,
+            "time_seconds": 20.29228401184082
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? Robert Lewandowski is a star.",
+            "expected": "Uncertain",
+            "actual": " \n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n  ",
+            "full_output": " \n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n          \n\n",
+            "is_correct": false,
+            "is_valid_format": false,
+            "is_syntax_valid": true,
+            "token_count": 150,
+            "time_seconds": 20.317426919937134
+          }
+        ]
+      }
+    },
+    {
+      "attempt_number": 3,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n}\n\n// template then assigns remainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n}\n\n// template then assigns remainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-12T23:28:43.227941",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 46, Column 28): Error: unresolved identifier: next\n  (Line 47, Column 15): Error: unresolved identifier: newSteps\n\nFull Dafny output:\nGeneratedCSD.dfy(46,28): Error: unresolved identifier: next\n   |\n46 |   generated := generated + [next];\n   |                             ^^^^\n\nGeneratedCSD.dfy(47,15): Error: unresolved identifier: newSteps\n   |\n47 |   stepsLeft := newSteps;\n   |                ^^^^^^^^\n\n2 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 4,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n\n  // Check if the generated prefix is valid\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n  else\n  {\n    // If not valid, roll back to the last valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepsLeft := maxSteps;\n  }\n}\n\n// template then assigns remainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n\n  // Check if the generated prefix is valid\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n  else\n  {\n    // If not valid, roll back to the last valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepsLeft := maxSteps;\n  }\n}\n\n// template then assigns remainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-12T23:29:00.680220",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 48, Column 28): Error: unresolved identifier: next\n  (Line 49, Column 15): Error: unresolved identifier: newSteps\n\nFull Dafny output:\nGeneratedCSD.dfy(48,28): Error: unresolved identifier: next\n   |\n48 |   generated := generated + [next];\n   |                             ^^^^\n\nGeneratedCSD.dfy(49,15): Error: unresolved identifier: newSteps\n   |\n49 |   stepsLeft := newSteps;\n   |                ^^^^^^^^\n\n2 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 5,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepsLeft := maxSteps;\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n\n  // Check if the generated prefix is valid\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n  else\n  {\n    // If not valid, roll back to the last valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepsLeft := maxSteps;\n  }\n}\n\n// template then assigns remainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepsLeft := maxSteps;\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n\n  // Check if the generated prefix is valid\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n  else\n  {\n    // If not valid, roll back to the last valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepsLeft := maxSteps;\n  }\n}\n\n// template then assigns remainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-12T23:29:17.483616",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 8 error(s):\n\n  (Line 23, Column 4): Error: Duplicate local-variable name: stepsLeft\n  (Line 30, Column 12): Error: unresolved identifier: stepCounter\n  (Line 30, Column 32): Error: unresolved identifier: stepCounter\n  (Line 37, Column 6): Error: unresolved identifier: stepCounter\n  (Line 48, Column 28): Error: unresolved identifier: next\n  (Line 49, Column 15): Error: unresolved identifier: newSteps\n  (Line 50, Column 2): Error: unresolved identifier: stepCounter\n  (Line 50, Column 17): Error: unresolved identifier: stepCounter\n\nFull Dafny output:\nGeneratedCSD.dfy(23,4): Error: Duplicate local-variable name: stepsLeft\n   |\n23 | var stepsLeft := maxSteps;\n   |     ^^^^^^^^^\n\nGeneratedCSD.dfy(30,12): Error: unresolved identifier: stepCounter\n   |\n30 |   invariant stepCounter >= 0 && stepCounter < maxSteps\n   |             ^^^^^^^^^^^\n\nGeneratedCSD.dfy(30,32): Error: unresolved identifier: stepCounter\n   |\n30 |   invariant stepCounter >= 0 && stepCounter < maxSteps\n   |                                 ^^^^^^^^^^^\n\nGeneratedCSD.dfy(37,6): Error: unresolved identifier: stepCounter\n   |\n37 |   if (stepCounter % 2 == 0)\n   |       ^^^^^^^^^^^\n\nGeneratedCSD.dfy(48,28): Error: unresolved identifier: next\n   |\n48 |   generated := generated + [next];\n   |                             ^^^^\n\nGeneratedCSD.dfy(49,15): Error: unresolved identifier: newSteps\n   |\n49 |   stepsLeft := newSteps;\n   |                ^^^^^^^^\n\nGeneratedCSD.dfy(50,2): Error: unresolved identifier: stepCounter\n   |\n50 |   stepCounter := stepCounter + 1;\n   |   ^^^^^^^^^^^\n\nGeneratedCSD.dfy(50,17): Error: unresolved identifier: stepCounter\n   |\n50 |   stepCounter := stepCounter + 1;\n   |                  ^^^^^^^^^^^\n\n8 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 8
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 6,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n\n  // Check if the generated prefix is valid\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n  else\n  {\n    // If not valid, roll back to the last valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepsLeft := maxSteps;\n  }\n}\n\n// template then assigns remainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n\n  // Check if the generated prefix is valid\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n  else\n  {\n    // If not valid, roll back to the last valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepsLeft := maxSteps;\n  }\n}\n\n// template then assigns remainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-12T23:29:18.428006",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 7 error(s):\n\n  (Line 30, Column 12): Error: unresolved identifier: stepCounter\n  (Line 30, Column 32): Error: unresolved identifier: stepCounter\n  (Line 37, Column 6): Error: unresolved identifier: stepCounter\n  (Line 48, Column 28): Error: unresolved identifier: next\n  (Line 49, Column 15): Error: unresolved identifier: newSteps\n  (Line 50, Column 2): Error: unresolved identifier: stepCounter\n  (Line 50, Column 17): Error: unresolved identifier: stepCounter\n\nFull Dafny output:\nGeneratedCSD.dfy(30,12): Error: unresolved identifier: stepCounter\n   |\n30 |   invariant stepCounter >= 0 && stepCounter < maxSteps\n   |             ^^^^^^^^^^^\n\nGeneratedCSD.dfy(30,32): Error: unresolved identifier: stepCounter\n   |\n30 |   invariant stepCounter >= 0 && stepCounter < maxSteps\n   |                                 ^^^^^^^^^^^\n\nGeneratedCSD.dfy(37,6): Error: unresolved identifier: stepCounter\n   |\n37 |   if (stepCounter % 2 == 0)\n   |       ^^^^^^^^^^^\n\nGeneratedCSD.dfy(48,28): Error: unresolved identifier: next\n   |\n48 |   generated := generated + [next];\n   |                             ^^^^\n\nGeneratedCSD.dfy(49,15): Error: unresolved identifier: newSteps\n   |\n49 |   stepsLeft := newSteps;\n   |                ^^^^^^^^\n\nGeneratedCSD.dfy(50,2): Error: unresolved identifier: stepCounter\n   |\n50 |   stepCounter := stepCounter + 1;\n   |   ^^^^^^^^^^^\n\nGeneratedCSD.dfy(50,17): Error: unresolved identifier: stepCounter\n   |\n50 |   stepCounter := stepCounter + 1;\n   |                  ^^^^^^^^^^^\n\n7 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 7
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 7,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n\n  // Check if the generated prefix is valid\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n  else\n  {\n    // If not valid, roll back to the last valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepsLeft := maxSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n\n  // Check if the generated prefix is valid\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n  else\n  {\n    // If not valid, roll back to the last valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepsLeft := maxSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-12T23:29:34.995929",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 49, Column 28): Error: unresolved identifier: next\n  (Line 50, Column 15): Error: unresolved identifier: newSteps\n\nFull Dafny output:\nGeneratedCSD.dfy(49,28): Error: unresolved identifier: next\n   |\n49 |   generated := generated + [next];\n   |                             ^^^^\n\nGeneratedCSD.dfy(50,15): Error: unresolved identifier: newSteps\n   |\n50 |   stepsLeft := newSteps;\n   |                ^^^^^^^^\n\n2 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 8,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n\n  // Check if the generated prefix is valid\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n  else\n  {\n    // If not valid, roll back to the last valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepsLeft := maxSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n\n  // Check if the generated prefix is valid\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n  else\n  {\n    // If not valid, roll back to the last valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepsLeft := maxSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-12T23:29:51.074560",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 4 error(s):\n\n  (Line 31, Column 12): Error: unresolved identifier: hasValid\n  (Line 48, Column 28): Error: unresolved identifier: next\n  (Line 49, Column 15): Error: unresolved identifier: newSteps\n  (Line 55, Column 4): Error: unresolved identifier: hasValid\n\nFull Dafny output:\nGeneratedCSD.dfy(31,12): Error: unresolved identifier: hasValid\n   |\n31 |   invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n   |             ^^^^^^^^\n\nGeneratedCSD.dfy(48,28): Error: unresolved identifier: next\n   |\n48 |   generated := generated + [next];\n   |                             ^^^^\n\nGeneratedCSD.dfy(49,15): Error: unresolved identifier: newSteps\n   |\n49 |   stepsLeft := newSteps;\n   |                ^^^^^^^^\n\nGeneratedCSD.dfy(55,4): Error: unresolved identifier: hasValid\n   |\n55 |     hasValid := true;\n   |     ^^^^^^^^\n\n4 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 4
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 9,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n\n  // Check if the generated prefix is valid\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n  else\n  {\n    // If not valid, roll back to the last valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepsLeft := maxSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n\n  // Check if the generated prefix is valid\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n  else\n  {\n    // If not valid, roll back to the last valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepsLeft := maxSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-12T23:30:07.707182",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 4 error(s):\n\n  (Line 31, Column 12): Error: unresolved identifier: hasValid\n  (Line 48, Column 28): Error: unresolved identifier: next\n  (Line 49, Column 15): Error: unresolved identifier: newSteps\n  (Line 55, Column 4): Error: unresolved identifier: hasValid\n\nFull Dafny output:\nGeneratedCSD.dfy(31,12): Error: unresolved identifier: hasValid\n   |\n31 |   invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n   |             ^^^^^^^^\n\nGeneratedCSD.dfy(48,28): Error: unresolved identifier: next\n   |\n48 |   generated := generated + [next];\n   |                             ^^^^\n\nGeneratedCSD.dfy(49,15): Error: unresolved identifier: newSteps\n   |\n49 |   stepsLeft := newSteps;\n   |                ^^^^^^^^\n\nGeneratedCSD.dfy(55,4): Error: unresolved identifier: hasValid\n   |\n55 |     hasValid := true;\n   |     ^^^^^^^^\n\n4 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 4
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 10,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nvar hasValid := false;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n\n  // Check if the generated prefix is valid\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n  else\n  {\n    // If not valid, roll back to the last valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepsLeft := maxSteps;\n  }\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses constrained decoding to generate FOL formulas that adhere to the strict grammar rules provided by the parser. It starts with an empty prefix and iteratively generates tokens until it either completes a valid FOL statement or reaches the maximum number of steps. The strategy alternates between unconstrained steps and constrained steps based on the parser's state and a step counter to ensure that << >> segments are constrained and the rest can be unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nvar hasValid := false;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between unconstrained and constrained steps based on step counter\n  if (stepCounter % 2 == 0)\n  {\n    // Unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n  }\n  else\n  {\n    // Constrained step\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  }\n\n  generated := generated + [next];\n  stepsLeft := newSteps;\n  stepCounter := stepCounter + 1;\n\n  // Check if the generated prefix is valid\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n  else\n  {\n    // If not valid, roll back to the last valid prefix\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepsLeft := maxSteps;\n  }\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-12T23:30:25.086675",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 50, Column 28): Error: unresolved identifier: next\n  (Line 51, Column 15): Error: unresolved identifier: newSteps\n\nFull Dafny output:\nGeneratedCSD.dfy(50,28): Error: unresolved identifier: next\n   |\n50 |   generated := generated + [next];\n   |                             ^^^^\n\nGeneratedCSD.dfy(51,15): Error: unresolved identifier: newSteps\n   |\n51 |   stepsLeft := newSteps;\n   |                ^^^^^^^^\n\n2 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    }
+  ],
+  "failure_patterns": {
+    "verification_failures": 9,
+    "compilation_failures": 0,
+    "runtime_failures": 0,
+    "common_errors": [
+      {
+        "error": "Type error",
+        "count": 8
+      }
+    ]
+  }
+}

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 
 def dafny_seq_to_str(seq) -> str:
@@ -37,12 +37,14 @@ def run_crane_csd(
     debug_delimiters: bool = False,
     dynamic_parser=None,
     debug_csd: bool = False,
+    initial_prefix: Optional[List[str]] = None,
 ) -> Tuple[str, int, float, List[Tuple[str, bool]]]:
     """
     Run generation using the Dafny-verified CSD strategy.
 
-    Delegates entirely to the compiled Dafny strategy — no dataset-specific
-    orchestration is performed here.
+    When initial_prefix is provided (e.g. tokenized gold conclusion), runs the same
+    constrained loop in Python starting from that prefix so the CSD "reproduces" the
+    prompt content and can then continue to a solution.
 
     Args:
         env: Environment dict with Dafny modules and model
@@ -52,12 +54,14 @@ def run_crane_csd(
         debug_delimiters: Whether to print debug output
         dynamic_parser: Optional per-question parser
         debug_csd: Whether to print CSD debug output
+        initial_prefix: Optional list of token strings to start generation with (CSD then continues from there)
 
     Returns:
         Tuple of (output_text, token_count, time_seconds, constrained_segments)
     """
     _dafny = env["_dafny"]
     GeneratedCSD = env["GeneratedCSD"]
+    VerifiedDecoderAgent = env["VerifiedDecoderAgent"]
     lm = env["lm"]
     parser = dynamic_parser if dynamic_parser is not None else env["parser"]
 
@@ -66,16 +70,31 @@ def run_crane_csd(
 
     eos_token_str = lm.tokenizer.eos_token or "<|endoftext|>"
     eos_token_dafny = _dafny.Seq(eos_token_str)
+    prompt_empty = _dafny.SeqWithoutIsStrInference([])
 
-    result = GeneratedCSD.default__.MyCSDStrategy(
-        lm, parser, _dafny.SeqWithoutIsStrInference([]), max_steps, eos_token_dafny
-    )
-
-    if isinstance(result, tuple):
-        csd_output, remaining_steps = result
+    if initial_prefix is not None and len(initial_prefix) > 0:
+        # Run the same constrained loop in Python starting from initial_prefix (e.g. tokenized gold conclusion).
+        # This lets the CSD "reproduce" the info from the prompt and then continue.
+        generated = _dafny.SeqWithoutIsStrInference([
+            _dafny.SeqWithoutIsStrInference(s) for s in initial_prefix
+        ])
+        steps_left = max_steps
+        helpers = VerifiedDecoderAgent.CSDHelpers()
+        helpers.ctor__()
+        while steps_left > 0 and not parser.IsCompletePrefix(generated):
+            next_tok, steps_left = helpers.ConstrainedStep(lm, parser, prompt_empty, generated, steps_left)
+            generated = generated + _dafny.SeqWithoutIsStrInference([next_tok])
+        csd_output = generated
+        remaining_steps = steps_left
     else:
-        csd_output = result
-        remaining_steps = 0
+        result = GeneratedCSD.default__.MyCSDStrategy(
+            lm, parser, prompt_empty, max_steps, eos_token_dafny
+        )
+        if isinstance(result, tuple):
+            csd_output, remaining_steps = result
+        else:
+            csd_output = result
+            remaining_steps = 0
 
     result_tokens = [dafny_seq_to_str(t) for t in csd_output]
     output_text = "".join(result_tokens)

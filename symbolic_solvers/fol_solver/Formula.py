@@ -1,28 +1,25 @@
 from nltk.tree import Tree
 from .fol_parser import FOL_Parser
-from concurrent.futures import ThreadPoolExecutor, TimeoutError, ProcessPoolExecutor
-import signal
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
-# def handler(signum, frame):
-#     raise Exception("Timeout!")
+# Avoid process-wide SIGALRM (signal.alarm); it can fire later during unrelated code (e.g. JAX/LLM)
+# Use a thread-based timeout. 15s is enough for normal formulas; avoids one bad example hanging eval.
+_PARSE_TIMEOUT_SECONDS = 15
+
 
 class FOL_Formula:
     def __init__(self, str_fol) -> None:
         self.parser = FOL_Parser()
-
-        def handler(signum, frame):
-            raise Exception("Timeout!")
-
-        # Set the signal handler and a 5-second alarm
-        signal.signal(signal.SIGALRM, handler)
-        signal.alarm(60)
+        tree = None
         try:
-            tree = self.parser.parse_text_FOL_to_tree(str_fol)
-        except Exception as exc:
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(self.parser.parse_text_FOL_to_tree, str_fol)
+                tree = fut.result(timeout=_PARSE_TIMEOUT_SECONDS)
+        except (FuturesTimeoutError, Exception):
             tree = None
             self.is_valid = False
             return
-    
+
         self.tree = tree
         if tree is None:
             self.is_valid = False

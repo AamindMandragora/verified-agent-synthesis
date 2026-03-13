@@ -162,7 +162,14 @@ Examples:
         help="Vocabulary size for evaluation (default: 2000)"
     )
 
+    parser.add_argument(
+        "--no-eval-4bit",
+        action="store_true",
+        help="Disable 4-bit evaluation (default: use 4-bit for speed and lower memory)"
+    )
+
     args = parser.parse_args()
+    args.eval_4bit = not args.no_eval_4bit
 
     # Resolve Dafny path: prefer repo-local dafny-lang/dafny/dafny if present
     if args.dafny_path is None:
@@ -208,6 +215,7 @@ Examples:
         vocab_size=args.eval_vocab_size,
         sample_size=args.eval_sample_size,
         max_steps=args.eval_max_steps,
+        load_in_4bit=args.eval_4bit,
     )
 
     pipeline = SynthesisPipeline(

@@ -203,6 +203,13 @@ class Parser:
         """
         return list(self._valid_tokens) if self._valid_tokens else []
 
+    def IsPermissive(self, prefix: Prefix) -> bool:
+        """
+        True when every token is a valid next token (e.g. intro/outro).
+        Stub: True when parser accepts everything.
+        """
+        return bool(self._always_valid)
+
 
 # =============================================================================
 # Token Constraint Types (matching Dafny datatypes)

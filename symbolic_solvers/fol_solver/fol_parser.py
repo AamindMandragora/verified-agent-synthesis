@@ -87,7 +87,7 @@ class FOL_Parser:
 
 
     def make_cfg_str(self, token_ls):
-        """
+        r"""
         NOTE: since nltk does not support reg strs like \w+, we cannot separately recognize VAR, PRED, and CONST.
         Instead, we first allow VAR, PRED, and CONST to be matched with all symbols found in the FOL; once the tree is
         parsered, we then go back and figure out the exact type of each symbols

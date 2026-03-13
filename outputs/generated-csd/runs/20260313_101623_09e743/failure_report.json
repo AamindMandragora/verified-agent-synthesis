@@ -1,0 +1,253 @@
+{
+  "task_description": "FOLIO: generate output that may include plain text, then \" << \" then exactly one first-order logic formula (Prover9 grammar: {forall}, {exists}, predicates, {and}, {or}, {not}, {implies}, {iff}, {xor}), then \" >>\". The constrained decoder must respect the grammar only between the delimiters. All structure instructions are in the prompt; use your strategy to satisfy the grammar.",
+  "total_attempts": 10,
+  "timestamp": "2026-03-13T10:18:54.242077",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  if hasValid\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  if hasValid\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n}"
+      },
+      "timestamp": "2026-03-13T10:16:44.706195",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 29, Column 32): Error: this invariant could not be proved to be maintained by the loop\n  (Line 47, Column 63): Error: function precondition could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(29,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n29 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\nGeneratedCSD.dfy(47,63): Error: function precondition could not be proved\n   |\n47 |     hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n   |                                                                ^\n\nVerifiedAgentSynthesis.dfy(261,28): Related location: this proposition could not be proved\n    |\n261 |       requires IsValidPrefix(prefix)\n    |                             ^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 2,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter <= maxSteps\n  decreases maxSteps - |generated|\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter <= maxSteps\n  decreases maxSteps - |generated|\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T10:16:59.276496",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 30, Column 32): Error: this invariant could not be proved to be maintained by the loop\n  (Line 33, Column 44): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(30,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n30 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\nGeneratedCSD.dfy(33,44): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n33 |   invariant stepCounter >= 0 && stepCounter <= maxSteps\n   |                                             ^^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 3,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - |generated|\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - |generated|\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T10:17:01.447839",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 30, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(30,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n30 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 4,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - |generated|\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - |generated|\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T10:17:15.437267",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 30, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(30,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n30 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 5,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - |generated|\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - |generated|\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T10:17:29.736392",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 30, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(30,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n30 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 6,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - |generated|\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - |generated|\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T10:17:43.800417",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 31, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(31,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n31 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 7,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - |generated|\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases maxSteps - |generated|\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T10:17:58.445503",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 31, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(31,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n31 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 8,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T10:18:13.993057",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 31, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(31,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n31 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 9,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T10:18:27.924252",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 31, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(31,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n31 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 10,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a constrained decoding approach to generate output that starts with plain text,\n// followed by exactly one first-order logic formula, and ends with \" >>\". The constrained decoder\n// respects the grammar only between the delimiters. It alternates between unconstrained and\n// constrained steps to ensure the grammar is respected.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar hasValid := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n\n  // Alternate between constrained and unconstrained steps\n  if hasValid || stepCounter % 2 == 0\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := exists token :: token in parser.ValidNextTokens(generated) && parser.ValidNextToken(generated, token);\n  }\n  else\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T10:18:41.859318",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 31, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(31,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n31 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    }
+  ],
+  "failure_patterns": {
+    "verification_failures": 10,
+    "compilation_failures": 0,
+    "runtime_failures": 0,
+    "common_errors": []
+  }
+}
