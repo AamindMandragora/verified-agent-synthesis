@@ -129,8 +129,11 @@ def create_lark_dafny_parser(
             return self._is_valid_prefix(text)
 
         def IsCompletePrefix(self, prefix) -> bool:
-            """Dafny interface: Check if prefix is complete."""
-            if len(prefix) == 0:
+            """Dafny interface: Check if prefix is complete. Empty is valid but never complete."""
+            try:
+                if prefix is None or len(prefix) == 0:
+                    return False
+            except (TypeError, AttributeError):
                 return False
             text = self._tokens_to_text(prefix)
             return self._is_complete(text)
@@ -174,7 +177,8 @@ def create_folio_wrapper_parser(
     tokenizer,
 ):
     """
-    Parser for FOLIO: plain text, then " << ", then FOL (Prover9 grammar), then " >>", then plain text.
+    Parser for FOLIO: plain text, then "$", then FOL (Prover9 grammar), then "%", then plain text.
+    Single-character delimiters $ and % are used so they never appear inside FOL formulas.
     The LLM's single CSD strategy runs over the whole output; structure is enforced by this parser.
     """
     try:
@@ -183,8 +187,8 @@ def create_folio_wrapper_parser(
         token_list = [lm_tokens[i] for i in range(len(lm_tokens))]
 
     fol_parser = fol_parser_instance
-    open_marker = " << "
-    close_marker = " >>"
+    open_marker = "$"
+    close_marker = "%"
 
     def tokens_to_text(prefix):
         if len(prefix) == 0:
@@ -193,6 +197,8 @@ def create_folio_wrapper_parser(
             return "".join(dafny_seq_to_str(prefix[i]) for i in range(len(prefix)))
         except (TypeError, AttributeError, IndexError):
             return str(prefix)
+
+    icp_calls = [0]  # diagnostic counter for IsCompletePrefix
 
     class FOLIOWrapperParser(VerifiedDecoderAgent.Parser):
         def __init__(self):
@@ -238,7 +244,7 @@ def create_folio_wrapper_parser(
             ])
 
         def IsValidPrefix(self, prefix) -> bool:
-            if len(prefix) == 0:
+            if self._prefix_empty(prefix):
                 return True
             text = tokens_to_text(prefix)
             _, _, section = self._get_fol_section(text)
@@ -249,8 +255,31 @@ def create_folio_wrapper_parser(
                 return True
             return self._fol_parser.IsValidPrefix(fol_seq)
 
+        def _prefix_empty(self, prefix) -> bool:
+            """True if prefix is empty. Robust for Dafny-passed seqs (len/__len__/length())."""
+            try:
+                if prefix is None:
+                    return True
+                n = len(prefix)
+                return n == 0
+            except (TypeError, AttributeError):
+                try:
+                    L = getattr(prefix, "length", None)
+                    return (L() if callable(L) else 0) == 0
+                except Exception:
+                    return True  # treat as empty so empty is never considered complete
+
         def IsCompletePrefix(self, prefix) -> bool:
-            if len(prefix) == 0:
+            # Empty is valid prefix but never complete — must not treat as complete or strategy returns immediately
+            is_empty = self._prefix_empty(prefix)
+            icp_calls[0] += 1
+            if icp_calls[0] <= 2:
+                try:
+                    plen = len(prefix)
+                except Exception as e:
+                    plen = str(e)
+                print(f"  [PARSER] IsCompletePrefix call#{icp_calls[0]} len(prefix)={plen} _prefix_empty={is_empty} -> {'False (empty)' if is_empty else '...'}", flush=True)
+            if is_empty:
                 return False
             text = tokens_to_text(prefix)
             if self._open not in text or self._close not in text:
@@ -263,10 +292,7 @@ def create_folio_wrapper_parser(
             fol_text = after_open[:close_idx]
             if not fol_text.strip():
                 return False
-            # Require at least one character after " >>" so we don't stop as soon as " << formula >>" (avoids premature stop).
-            after_close = after_open[close_idx + len(self._close) :].strip()
-            if len(after_close) == 0:
-                return False
+            # Allow complete when we have " << formula >>" with no trailing text, so we stop instead of filling to max_steps with junk.
             try:
                 ids = self._tokenizer.encode(fol_text, add_special_tokens=False)
                 token_strs = [self._tokenizer.decode([i]) for i in ids]
@@ -278,8 +304,8 @@ def create_folio_wrapper_parser(
             return self._fol_parser.IsCompletePrefix(fol_seq)
 
         def _intro_delimiter_tokens(self):
-            """Tokens that would start or continue '<<' / ' << ' with no prior content. Exclude these in empty/whitespace intro."""
-            bad = {"<<", "<", " <<", " << "}
+            """Tokens that would start with the open delimiter. Exclude so we don't begin with $."""
+            bad = {self._open}
             out = []
             for i in range(len(token_list)):
                 t = token_list[i]
@@ -294,8 +320,8 @@ def create_folio_wrapper_parser(
             return out
 
         def ValidNextTokens(self, prefix):
-            if len(prefix) == 0:
-                # Empty intro: disallow any token that can produce "<< <<" (e.g. "<<", "<", " <<", " << ").
+            if self._prefix_empty(prefix):
+                # Empty intro: disallow token that would start with the open delimiter.
                 allowed = self._intro_delimiter_tokens()
                 return _dafny.SeqWithoutIsStrInference(allowed)
             text = tokens_to_text(prefix)
@@ -303,16 +329,39 @@ def create_folio_wrapper_parser(
             if section == "intro" or section == "outro":
                 text_stripped = text.strip()
                 if len(text_stripped) == 0:
-                    # Still only whitespace — same exclusions so we don't get "<< <<".
+                    # Still only whitespace — same exclusions so we don't start with $.
                     allowed = self._intro_delimiter_tokens()
                     return _dafny.SeqWithoutIsStrInference(allowed)
                 return _dafny.SeqWithoutIsStrInference(token_list)
             fol_seq = self._fol_tokens_from_prefix(prefix)
-            return self._fol_parser.ValidNextTokens(fol_seq)
+            valid = self._fol_parser.ValidNextTokens(fol_seq)
+            # Disallow newlines/tabs/spaces inside the formula (grammar ignores WS, so they'd otherwise be valid).
+            try:
+                n = len(valid)
+                filtered = [valid[i] for i in range(n) if self._dafny_seq_to_str(valid[i]).strip() != ""]
+            except (TypeError, AttributeError, IndexError):
+                filtered = []
+                for t in valid:
+                    try:
+                        if self._dafny_seq_to_str(t).strip() != "":
+                            filtered.append(t)
+                    except Exception:
+                        filtered.append(t)
+            # When filtered is empty, the FOL parser only returned WS (formula complete). Offer close delimiter so we don't return [] (which causes tie-break garbage).
+            if not filtered and self._fol_parser.IsCompletePrefix(fol_seq):
+                close_tokens = [t for t in token_list if self._dafny_seq_to_str(t) == self._close]
+                filtered = close_tokens
+            # Whenever the formula is complete, also allow "%" so the model can choose to close instead of overgenerating.
+            elif self._fol_parser.IsCompletePrefix(fol_seq):
+                close_tokens = [t for t in token_list if self._dafny_seq_to_str(t) == self._close]
+                has_close = any(self._dafny_seq_to_str(f) == self._close for f in filtered)
+                if close_tokens and not has_close:
+                    filtered = list(filtered) + close_tokens
+            return _dafny.SeqWithoutIsStrInference(filtered)
 
         def IsPermissive(self, prefix) -> bool:
             """True when any token is valid (intro/outro). Used by Dafny to maintain IsValidPrefix after UnconstrainedStep."""
-            if len(prefix) == 0:
+            if self._prefix_empty(prefix):
                 return True
             text = tokens_to_text(prefix)
             _, _, section = self._get_fol_section(text)

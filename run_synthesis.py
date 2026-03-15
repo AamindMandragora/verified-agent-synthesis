@@ -95,9 +95,15 @@ Examples:
         "--max-tokens",
         type=int,
         default=512,
-        help="Maximum tokens to generate per attempt (default: 512)"
+        help="Max tokens per LLM generation (default: 512). Lower (e.g. 384) speeds up refinement at risk of truncation."
     )
-    
+    parser.add_argument(
+        "--generation-timeout",
+        type=int,
+        default=600,
+        metavar="SECS",
+        help="Max seconds per LLM generation (default: 600). Use 0 to disable. Helps avoid unbounded hangs on slow/CPU runs."
+    )
     parser.add_argument(
         "--no-save-reports",
         action="store_true",
@@ -198,7 +204,8 @@ Examples:
         model_name=args.model,
         device=device,
         max_new_tokens=args.max_tokens,
-        temperature=args.temperature
+        temperature=args.temperature,
+        generation_timeout=args.generation_timeout if args.generation_timeout > 0 else None,
     )
 
     verifier = DafnyVerifier(dafny_path=args.dafny_path)

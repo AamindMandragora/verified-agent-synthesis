@@ -1,0 +1,487 @@
+{
+  "task_description": "FOLIO: generate output that may include plain text, then \" << \" then exactly one first-order logic formula (Prover9 grammar: {forall}, {exists}, predicates, {and}, {or}, {not}, {implies}, {iff}, {xor}), then \" >>\". The constrained decoder must respect the grammar only between the delimiters. All structure instructions are in the prompt; use your strategy to satisfy the grammar.",
+  "total_attempts": 10,
+  "timestamp": "2026-03-13T23:53:29.354979",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\n// template then assigns remainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "constrained_only",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\n// template then assigns remainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T23:49:16.203691",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 34, Column 47): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(34,47): Error: a precondition for this call could not be proved\n   |\n34 |   var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n   |                                                ^\n\nVerifiedAgentSynthesis.dfy(303,15): Related location: this is the precondition that could not be proved\n    |\n303 |       requires forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens\n    |                ^^^^^^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 2,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\n// template then assigns remainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "constrained_only",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}\n// template then assigns remainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T23:49:18.165482",
+      "succeeded": true,
+      "failed_at": "evaluation",
+      "error_summary": "Evaluation Results (3 examples):\n  Accuracy: 0.0% (0/3)\n  Format Rate: 100.0%\n  Syntax Rate: 0.0%\n  Total Time: 70.67s\n\nSample Failures:\n\n  Example 1:\n    Question: Based on the above information, is the following statement true, false, or uncertain? The mixture is...\n    Expected: False\n    Got: << The first order form of the first two premisses is:\n1. Alkale(mix) {and} Alkale(alk)\n2. Alkale(mi\n\n  Example 2:\n    Question: Based on the above information, is the following statement true, false, or uncertain? Beijing is the...\n    Expected: Uncertain\n    Got: << The first order form of the \"be\" is \"be\" and the first order form of the \"is\" is \"is\" and the fir\n\n  Example 3:\n    Question: Based on the above information, is the following statement true, false, or uncertain? Ailton Silva w...\n    Expected: Uncertain\n    Got: << A. A. << {!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+      "verification": {
+        "success": true,
+        "error_count": 0
+      },
+      "compilation": {
+        "success": true,
+        "output_dir": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260313_234900_abbd6c/folio_csd"
+      },
+      "runtime": {
+        "success": true,
+        "output_length": 11,
+        "cost": 11,
+        "execution_time_ms": 79.2381763458252
+      },
+      "evaluation": {
+        "success": true,
+        "accuracy": 0.0,
+        "format_rate": 1.0,
+        "syntax_rate": 0.0,
+        "num_examples": 3,
+        "num_correct": 0,
+        "total_time_seconds": 70.668860912323,
+        "error": null,
+        "sample_outputs": [
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? The mixture is an alkane and contains carbon.",
+            "expected": "False",
+            "actual": "<< The first order form of the first two premisses is:\n1. Alkale(mix) {and} Alkale(alk)\n2. Alkale(mi",
+            "full_output": "<< The first order form of the first two premisses is:\n1. Alkale(mix) {and} Alkale(alk)\n2. Alkale(mix) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} >>",
+            "extracted_segments": [
+              "The first order form of the first two premisses is:\n1. Alkale(mix) {and} Alkale(alk)\n2. Alkale(mix) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and}"
+            ],
+            "is_correct": false,
+            "is_valid_format": true,
+            "is_syntax_valid": false,
+            "token_count": 150,
+            "time_seconds": 20.94855260848999,
+            "gold_premises_fol": "\u2200x (Hydrocarbon(x) \u2192 Orgranic(x) \u2227 Compound(x))\n\u2200x (Alkane(x) \u2192 Hydrocarbon(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Chemical(x) \u2227 Compound(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Contain(x, carbon))\n\u2200x (Chemical(x) \u2227 Compound(x) \u2192 \u2200y \u2200z (\u00ac(Contain(x, y) \u2227 Contain(x, z) \u2227 (y=z))))\n\u00ac((Chemical(mixture) \u2227 Compound(mixture)) \u2295 (\u2200y \u2200z (Contain(x, y) \u2227 Contain(x, z) \u2227 y=z)))",
+            "gold_conclusion_fol": "Alkane(mixture) \u2227 Contain(mixture, carbon)",
+            "folio_debug": {
+              "segments": [
+                "The first order form of the first two premisses is:\n1. Alkale(mix) {and} Alkale(alk)\n2. Alkale(mix) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and}"
+              ],
+              "conclusion_raw": "The first order form of the first two premisses is:\n1. Alkale(mix) {and} Alkale(alk)\n2. Alkale(mix) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and} Alkale(alk) {and}",
+              "conclusion": "The first order form of the first two premisses is:\n1. Alkale(mix) \u2227 Alkale(alk)\n2. Alkale(mix) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227",
+              "logic_program": "Premises:\n\u2200x (Hydrocarbon(x) \u2192 Orgranic(x) \u2227 Compound(x))\n\u2200x (Alkane(x) \u2192 Hydrocarbon(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Chemical(x) \u2227 Compound(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Contain(x, carbon))\n\u2200x (Chemical(x) \u2227 Compound(x) \u2192 \u2200y \u2200z (\u00ac(Contain(x, y) \u2227 Contain(x, z) \u2227 (y=z))))\n\u00ac((Chemical(mixture) \u2227 Compound(mixture)) \u2295 (\u2200y \u2200z (Contain(x, y) \u2227 Contain(x, z) \u2227 y=z))) ::: premise\nConclusion:\nThe first order form of the first two premisses is:\n1. Alkale(mix) \u2227 Alkale(alk)\n2. Alkale(mix) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 Alkale(alk) \u2227 ::: conclusion",
+              "prover9_ok": false,
+              "prover9_answer": null,
+              "prover9_error": null,
+              "fallback_used": true,
+              "premises_used": [
+                "\u2200x (Hydrocarbon(x) \u2192 Orgranic(x) \u2227 Compound(x))\n\u2200x (Alkane(x) \u2192 Hydrocarbon(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Chemical(x) \u2227 Compound(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Contain(x, carbon))\n\u2200x (Chemical(x) \u2227 Compound(x) \u2192 \u2200y \u2200z (\u00ac(Contain(x, y) \u2227 Contain(x, z) \u2227 (y=z))))\n\u00ac((Chemical(mixture) \u2227 Compound(mixture)) \u2295 (\u2200y \u2200z (Contain(x, y) \u2227 Contain(x, z) \u2227 y=z)))"
+              ],
+              "reason": "prover9_parse_fail"
+            }
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? Beijing is the second largest Chinese city.",
+            "expected": "Uncertain",
+            "actual": "<< The first order form of the \"be\" is \"be\" and the first order form of the \"is\" is \"is\" and the fir",
+            "full_output": "<< The first order form of the \"be\" is \"be\" and the first order form of the \"is\" is \"is\" and the first order form of the \"the\" is \"the\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order >>",
+            "extracted_segments": [
+              "The first order form of the \"be\" is \"be\" and the first order form of the \"is\" is \"is\" and the first order form of the \"the\" is \"the\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order"
+            ],
+            "is_correct": false,
+            "is_valid_format": true,
+            "is_syntax_valid": false,
+            "token_count": 150,
+            "time_seconds": 20.227774620056152,
+            "gold_premises_fol": "CapitalOf(beijing, peoplesRepublicOfChina)\n\u2203x (CapitalOf(beijing, x) \u2192 WorldsMostPopulousNation(x))\nLocatedIn(beijing, northernChina)\nHosted(beijing, 2008SummerOlympics) \u2227 Hosted(beijing, 2008SummerParalympicGames)\nHosted(beijing, summerOlympics) \u2227 Hosted(beijing, winterOlympics) \u2227 Hosted(beijing, summerParalympicGames)  \u2227 Hosted(beijing, winterParalympicGames)\n\u2203x (University(x) \u2227 InBeijing(x) \u2227 ConsistentlyRankAmongTheBestIn(x, theWorld))",
+            "gold_conclusion_fol": "SecondLargestChineseCity(beijing)",
+            "folio_debug": {
+              "segments": [
+                "The first order form of the \"be\" is \"be\" and the first order form of the \"is\" is \"is\" and the first order form of the \"the\" is \"the\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order"
+              ],
+              "conclusion_raw": "The first order form of the \"be\" is \"be\" and the first order form of the \"is\" is \"is\" and the first order form of the \"the\" is \"the\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order",
+              "conclusion": "The first order form of the \"be\" is \"be\" and the first order form of the \"is\" is \"is\" and the first order form of the \"the\" is \"the\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order",
+              "logic_program": "Premises:\nCapitalOf(beijing, peoplesRepublicOfChina)\n\u2203x (CapitalOf(beijing, x) \u2192 WorldsMostPopulousNation(x))\nLocatedIn(beijing, northernChina)\nHosted(beijing, 2008SummerOlympics) \u2227 Hosted(beijing, 2008SummerParalympicGames)\nHosted(beijing, summerOlympics) \u2227 Hosted(beijing, winterOlympics) \u2227 Hosted(beijing, summerParalympicGames)  \u2227 Hosted(beijing, winterParalympicGames)\n\u2203x (University(x) \u2227 InBeijing(x) \u2227 ConsistentlyRankAmongTheBestIn(x, theWorld)) ::: premise\nConclusion:\nThe first order form of the \"be\" is \"be\" and the first order form of the \"is\" is \"is\" and the first order form of the \"the\" is \"the\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order form of \"the\" is \"the\" and the first order form of \"of\" is \"of\" and the first order ::: conclusion",
+              "prover9_ok": false,
+              "prover9_answer": null,
+              "prover9_error": null,
+              "fallback_used": true,
+              "premises_used": [
+                "CapitalOf(beijing, peoplesRepublicOfChina)\n\u2203x (CapitalOf(beijing, x) \u2192 WorldsMostPopulousNation(x))\nLocatedIn(beijing, northernChina)\nHosted(beijing, 2008SummerOlympics) \u2227 Hosted(beijing, 2008SummerParalympicGames)\nHosted(beijing, summerOlympics) \u2227 Hosted(beijing, winterOlympics) \u2227 Hosted(beijing, summerParalympicGames)  \u2227 Hosted(beijing, winterParalympicGames)\n\u2203x (University(x) \u2227 InBeijing(x) \u2227 ConsistentlyRankAmongTheBestIn(x, theWorld))"
+              ],
+              "reason": "prover9_parse_fail"
+            }
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? Ailton Silva was loaned out to a football club.",
+            "expected": "Uncertain",
+            "actual": "<< A. A. << {!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+            "full_output": "<< A. A. << {!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! >>",
+            "extracted_segments": [
+              "{!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+            ],
+            "is_correct": false,
+            "is_valid_format": true,
+            "is_syntax_valid": false,
+            "token_count": 150,
+            "time_seconds": 20.876391172409058,
+            "gold_premises_fol": "BornIn(ailtonSilva, year1995) \u2227 CommonlyKnownAs(ailtonSilva, ailton)\nFootballPlayer(ailton) \u2227 LoanedTo(ailton, braga)\nBrazilian(ailtonSilva) \u2227 Footballplayer(ailtonSilva) \u2227 PlayFor(ailtonSilva, nautico)\nFootballClub(nautico) \u2227 FootballClub(braga)\nFootballClub(fluminense)",
+            "gold_conclusion_fol": "\u2203x (FootballClub(x) \u2227 LoanedTo(ailtonSilva, x))",
+            "folio_debug": {
+              "segments": [
+                "{!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+              ],
+              "conclusion_raw": "{!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+              "conclusion": "{!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+              "logic_program": "Premises:\nBornIn(ailtonSilva, year1995) \u2227 CommonlyKnownAs(ailtonSilva, ailton)\nFootballPlayer(ailton) \u2227 LoanedTo(ailton, braga)\nBrazilian(ailtonSilva) \u2227 Footballplayer(ailtonSilva) \u2227 PlayFor(ailtonSilva, nautico)\nFootballClub(nautico) \u2227 FootballClub(braga)\nFootballClub(fluminense) ::: premise\nConclusion:\n{!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! ::: conclusion",
+              "prover9_ok": false,
+              "prover9_answer": null,
+              "prover9_error": null,
+              "fallback_used": true,
+              "premises_used": [
+                "BornIn(ailtonSilva, year1995) \u2227 CommonlyKnownAs(ailtonSilva, ailton)\nFootballPlayer(ailton) \u2227 LoanedTo(ailton, braga)\nBrazilian(ailtonSilva) \u2227 Footballplayer(ailtonSilva) \u2227 PlayFor(ailtonSilva, nautico)\nFootballClub(nautico) \u2227 FootballClub(braga)\nFootballClub(fluminense)"
+              ],
+              "reason": "prover9_parse_fail"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "attempt_number": 3,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  decreases stepsLeft\n{\n  if stepCounter % 2 == 0 {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  stepCounter := stepCounter + 1;\n}\n// template then assigns remainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  decreases stepsLeft\n{\n  if stepCounter % 2 == 0 {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  stepCounter := stepCounter + 1;\n}\n// template then assigns remainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T23:50:47.200440",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 3 error(s):\n\n  (Line 32, Column 32): Error: this invariant could not be proved to be maintained by the loop\n  (Line 35, Column 44): Error: this loop invariant could not be proved on entry\n  (Line 35, Column 44): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(32,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n32 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\nGeneratedCSD.dfy(35,44): Error: this loop invariant could not be proved on entry\n Related message: loop invariant violation\n   |\n35 |   invariant stepCounter >= 0 && stepCounter < maxSteps\n   |                                             ^\n\nGeneratedCSD.dfy(35,44): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n35 |   invariant stepCounter >= 0 && stepCounter < maxSteps\n   |                                             ^\n\n\nDafny program verifier finished with 1 verified, 3 errors",
+      "verification": {
+        "success": false,
+        "error_count": 3
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 4,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  decreases stepsLeft\n{\n  if stepCounter % 2 == 0 {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  stepCounter := stepCounter + 1;\n}\n// template then assigns remainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  decreases stepsLeft\n{\n  if stepCounter % 2 == 0 {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  stepCounter := stepCounter + 1;\n}\n// template then assigns remainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T23:50:49.288784",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 3 error(s):\n\n  (Line 35, Column 44): Error: this loop invariant could not be proved on entry\n  (Line 35, Column 44): Error: this invariant could not be proved to be maintained by the loop\n  (Line 42, Column 56): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(35,44): Error: this loop invariant could not be proved on entry\n Related message: loop invariant violation\n   |\n35 |   invariant stepCounter >= 0 && stepCounter < maxSteps\n   |                                             ^\n\nGeneratedCSD.dfy(35,44): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n35 |   invariant stepCounter >= 0 && stepCounter < maxSteps\n   |                                             ^\n\nGeneratedCSD.dfy(42,56): Error: a precondition for this call could not be proved\n   |\n42 |     CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n   |                                                         ^\n\nVerifiedAgentSynthesis.dfy(354,34): Related location: this is the precondition that could not be proved\n    |\n354 |       requires parser.IsPermissive(generated)\n    |                                   ^\n\n\nDafny program verifier finished with 1 verified, 3 errors",
+      "verification": {
+        "success": false,
+        "error_count": 3
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 5,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  decreases stepsLeft\n{\n  var validTokens := parser.ValidNextTokens(generated);\n  if hasValid || stepCounter % 2 == 0 {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  stepCounter := stepCounter + 1;\n}\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  decreases stepsLeft\n{\n  var validTokens := parser.ValidNextTokens(generated);\n  if hasValid || stepCounter % 2 == 0 {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  stepCounter := stepCounter + 1;\n}\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T23:51:06.165118",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 3 error(s):\n\n  (Line 32, Column 32): Error: this invariant could not be proved to be maintained by the loop\n  (Line 35, Column 44): Error: this loop invariant could not be proved on entry\n  (Line 35, Column 44): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(32,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n32 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\nGeneratedCSD.dfy(35,44): Error: this loop invariant could not be proved on entry\n Related message: loop invariant violation\n   |\n35 |   invariant stepCounter >= 0 && stepCounter < maxSteps\n   |                                             ^\n\nGeneratedCSD.dfy(35,44): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n35 |   invariant stepCounter >= 0 && stepCounter < maxSteps\n   |                                             ^\n\n\nDafny program verifier finished with 1 verified, 3 errors",
+      "verification": {
+        "success": false,
+        "error_count": 3
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 6,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  decreases stepsLeft\n{\n  var validTokens := parser.ValidNextTokens(generated);\n  if !parser.IsPermissive(generated) || hasValid || stepCounter % 2 == 0 {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  stepCounter := stepCounter + 1;\n}\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\nvar hasValid := false;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter >= 0 && stepCounter < maxSteps\n  decreases stepsLeft\n{\n  var validTokens := parser.ValidNextTokens(generated);\n  if !parser.IsPermissive(generated) || hasValid || stepCounter % 2 == 0 {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  stepCounter := stepCounter + 1;\n}\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T23:51:08.299975",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 35, Column 44): Error: this loop invariant could not be proved on entry\n  (Line 35, Column 44): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(35,44): Error: this loop invariant could not be proved on entry\n Related message: loop invariant violation\n   |\n35 |   invariant stepCounter >= 0 && stepCounter < maxSteps\n   |                                             ^\n\nGeneratedCSD.dfy(35,44): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n35 |   invariant stepCounter >= 0 && stepCounter < maxSteps\n   |                                             ^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 7,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepsLeft := maxSteps;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var validTokens := parser.ValidNextTokens(generated);\n  if !parser.IsPermissive(generated) || stepsLeft == 0 {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepsLeft := maxSteps;\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var validTokens := parser.ValidNextTokens(generated);\n  if !parser.IsPermissive(generated) || stepsLeft == 0 {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T23:51:25.406853",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 28, Column 4): Error: Duplicate local-variable name: stepsLeft\n\nFull Dafny output:\nGeneratedCSD.dfy(28,4): Error: Duplicate local-variable name: stepsLeft\n   |\n28 | var stepsLeft := maxSteps;\n   |     ^^^^^^^^^\n\n1 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 8,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var validTokens := parser.ValidNextTokens(generated);\n  if !parser.IsPermissive(generated) || stepsLeft == 0 {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >>\".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var validTokens := parser.ValidNextTokens(generated);\n  if !parser.IsPermissive(generated) || stepsLeft == 0 {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T23:51:26.314816",
+      "succeeded": true,
+      "failed_at": "evaluation",
+      "error_summary": "Evaluation Results (3 examples):\n  Accuracy: 33.3% (1/3)\n  Format Rate: 100.0%\n  Syntax Rate: 66.7%\n  Total Time: 84.88s\n\nSample Failures:\n\n  Example 1:\n    Question: Based on the above information, is the following statement true, false, or uncertain? The mixture is...\n    Expected: False\n    Got: << << Alkale(mix) >>\n\n  Example 2:\n    Question: Based on the above information, is the following statement true, false, or uncertain? Ailton Silva w...\n    Expected: Uncertain\n    Got: << << {!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+      "verification": {
+        "success": true,
+        "error_count": 0
+      },
+      "compilation": {
+        "success": true,
+        "output_dir": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260313_234900_abbd6c/folio_csd_20260313_235130_11ab45"
+      },
+      "runtime": {
+        "success": true,
+        "output_length": 11,
+        "cost": 11,
+        "execution_time_ms": 37.42623329162598
+      },
+      "evaluation": {
+        "success": true,
+        "accuracy": 0.3333333333333333,
+        "format_rate": 1.0,
+        "syntax_rate": 0.6666666666666666,
+        "num_examples": 3,
+        "num_correct": 1,
+        "total_time_seconds": 84.88206434249878,
+        "error": null,
+        "sample_outputs": [
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? The mixture is an alkane and contains carbon.",
+            "expected": "False",
+            "actual": "<< << Alkale(mix) >>",
+            "full_output": "<< << Alkale(mix) >>",
+            "extracted_segments": [
+              "Alkale(mix)"
+            ],
+            "is_correct": false,
+            "is_valid_format": true,
+            "is_syntax_valid": true,
+            "token_count": 150,
+            "time_seconds": 28.59850287437439,
+            "gold_premises_fol": "\u2200x (Hydrocarbon(x) \u2192 Orgranic(x) \u2227 Compound(x))\n\u2200x (Alkane(x) \u2192 Hydrocarbon(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Chemical(x) \u2227 Compound(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Contain(x, carbon))\n\u2200x (Chemical(x) \u2227 Compound(x) \u2192 \u2200y \u2200z (\u00ac(Contain(x, y) \u2227 Contain(x, z) \u2227 (y=z))))\n\u00ac((Chemical(mixture) \u2227 Compound(mixture)) \u2295 (\u2200y \u2200z (Contain(x, y) \u2227 Contain(x, z) \u2227 y=z)))",
+            "gold_conclusion_fol": "Alkane(mixture) \u2227 Contain(mixture, carbon)",
+            "folio_debug": {
+              "segments": [
+                "Alkale(mix)"
+              ],
+              "conclusion_raw": "Alkale(mix)",
+              "conclusion": "Alkale(mix)",
+              "logic_program": "Premises:\n\u2200x (Hydrocarbon(x) \u2192 Orgranic(x) \u2227 Compound(x))\n\u2200x (Alkane(x) \u2192 Hydrocarbon(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Chemical(x) \u2227 Compound(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Contain(x, carbon))\n\u2200x (Chemical(x) \u2227 Compound(x) \u2192 \u2200y \u2200z (\u00ac(Contain(x, y) \u2227 Contain(x, z) \u2227 (y=z))))\n\u00ac((Chemical(mixture) \u2227 Compound(mixture)) \u2295 (\u2200y \u2200z (Contain(x, y) \u2227 Contain(x, z) \u2227 y=z))) ::: premise\nConclusion:\nAlkale(mix) ::: conclusion",
+              "prover9_ok": false,
+              "prover9_answer": null,
+              "prover9_error": null,
+              "fallback_used": true,
+              "premises_used": [
+                "\u2200x (Hydrocarbon(x) \u2192 Orgranic(x) \u2227 Compound(x))\n\u2200x (Alkane(x) \u2192 Hydrocarbon(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Chemical(x) \u2227 Compound(x))\n\u2200x (Orgranic(x) \u2227 Compound(x) \u2192 Contain(x, carbon))\n\u2200x (Chemical(x) \u2227 Compound(x) \u2192 \u2200y \u2200z (\u00ac(Contain(x, y) \u2227 Contain(x, z) \u2227 (y=z))))\n\u00ac((Chemical(mixture) \u2227 Compound(mixture)) \u2295 (\u2200y \u2200z (Contain(x, y) \u2227 Contain(x, z) \u2227 y=z)))"
+              ],
+              "reason": "prover9_parse_fail"
+            }
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? Beijing is the second largest Chinese city.",
+            "expected": "Uncertain",
+            "actual": "Unknown",
+            "full_output": "<< << SecondLargest( be  ) >>",
+            "extracted_segments": [
+              "SecondLargest( be  )"
+            ],
+            "is_correct": true,
+            "is_valid_format": true,
+            "is_syntax_valid": true,
+            "token_count": 150,
+            "time_seconds": 29.547698736190796,
+            "gold_premises_fol": "CapitalOf(beijing, peoplesRepublicOfChina)\n\u2203x (CapitalOf(beijing, x) \u2192 WorldsMostPopulousNation(x))\nLocatedIn(beijing, northernChina)\nHosted(beijing, 2008SummerOlympics) \u2227 Hosted(beijing, 2008SummerParalympicGames)\nHosted(beijing, summerOlympics) \u2227 Hosted(beijing, winterOlympics) \u2227 Hosted(beijing, summerParalympicGames)  \u2227 Hosted(beijing, winterParalympicGames)\n\u2203x (University(x) \u2227 InBeijing(x) \u2227 ConsistentlyRankAmongTheBestIn(x, theWorld))",
+            "gold_conclusion_fol": "SecondLargestChineseCity(beijing)",
+            "folio_debug": {
+              "segments": [
+                "SecondLargest( be  )"
+              ],
+              "conclusion_raw": "SecondLargest( be  )",
+              "conclusion": "SecondLargest( be  )",
+              "logic_program": "Premises:\nCapitalOf(beijing, peoplesRepublicOfChina)\n\u2203x (CapitalOf(beijing, x) \u2192 WorldsMostPopulousNation(x))\nLocatedIn(beijing, northernChina)\nHosted(beijing, 2008SummerOlympics) \u2227 Hosted(beijing, 2008SummerParalympicGames)\nHosted(beijing, summerOlympics) \u2227 Hosted(beijing, winterOlympics) \u2227 Hosted(beijing, summerParalympicGames)  \u2227 Hosted(beijing, winterParalympicGames)\n\u2203x (University(x) \u2227 InBeijing(x) \u2227 ConsistentlyRankAmongTheBestIn(x, theWorld)) ::: premise\nConclusion:\nSecondLargest( be  ) ::: conclusion",
+              "prover9_ok": true,
+              "prover9_answer": "Unknown",
+              "prover9_error": null,
+              "fallback_used": false,
+              "premises_used": [
+                "CapitalOf(beijing, peoplesRepublicOfChina)\n\u2203x (CapitalOf(beijing, x) \u2192 WorldsMostPopulousNation(x))\nLocatedIn(beijing, northernChina)\nHosted(beijing, 2008SummerOlympics) \u2227 Hosted(beijing, 2008SummerParalympicGames)\nHosted(beijing, summerOlympics) \u2227 Hosted(beijing, winterOlympics) \u2227 Hosted(beijing, summerParalympicGames)  \u2227 Hosted(beijing, winterParalympicGames)\n\u2203x (University(x) \u2227 InBeijing(x) \u2227 ConsistentlyRankAmongTheBestIn(x, theWorld))"
+              ]
+            }
+          },
+          {
+            "question": "Based on the above information, is the following statement true, false, or uncertain? Ailton Silva was loaned out to a football club.",
+            "expected": "Uncertain",
+            "actual": "<< << {!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+            "full_output": "<< << {!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! >>",
+            "extracted_segments": [
+              "{!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+            ],
+            "is_correct": false,
+            "is_valid_format": true,
+            "is_syntax_valid": false,
+            "token_count": 150,
+            "time_seconds": 16.782345056533813,
+            "gold_premises_fol": "BornIn(ailtonSilva, year1995) \u2227 CommonlyKnownAs(ailtonSilva, ailton)\nFootballPlayer(ailton) \u2227 LoanedTo(ailton, braga)\nBrazilian(ailtonSilva) \u2227 Footballplayer(ailtonSilva) \u2227 PlayFor(ailtonSilva, nautico)\nFootballClub(nautico) \u2227 FootballClub(braga)\nFootballClub(fluminense)",
+            "gold_conclusion_fol": "\u2203x (FootballClub(x) \u2227 LoanedTo(ailtonSilva, x))",
+            "folio_debug": {
+              "segments": [
+                "{!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+              ],
+              "conclusion_raw": "{!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+              "conclusion": "{!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+              "logic_program": "Premises:\nBornIn(ailtonSilva, year1995) \u2227 CommonlyKnownAs(ailtonSilva, ailton)\nFootballPlayer(ailton) \u2227 LoanedTo(ailton, braga)\nBrazilian(ailtonSilva) \u2227 Footballplayer(ailtonSilva) \u2227 PlayFor(ailtonSilva, nautico)\nFootballClub(nautico) \u2227 FootballClub(braga)\nFootballClub(fluminense) ::: premise\nConclusion:\n{!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! ::: conclusion",
+              "prover9_ok": false,
+              "prover9_answer": null,
+              "prover9_error": null,
+              "fallback_used": true,
+              "premises_used": [
+                "BornIn(ailtonSilva, year1995) \u2227 CommonlyKnownAs(ailtonSilva, ailton)\nFootballPlayer(ailton) \u2227 LoanedTo(ailton, braga)\nBrazilian(ailtonSilva) \u2227 Footballplayer(ailtonSilva) \u2227 PlayFor(ailtonSilva, nautico)\nFootballClub(nautico) \u2227 FootballClub(braga)\nFootballClub(fluminense)"
+              ],
+              "reason": "prover9_parse_fail"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "attempt_number": 9,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >> \".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var validTokens := parser.ValidNextTokens(generated);\n\n  // Alternate between constrained and unconstrained steps\n  if stepCounter % 2 == 0 {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  // Increment the step counter\n  stepCounter := stepCounter + 1;\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >> \".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var validTokens := parser.ValidNextTokens(generated);\n\n  // Alternate between constrained and unconstrained steps\n  if stepCounter % 2 == 0 {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  // Increment the step counter\n  stepCounter := stepCounter + 1;\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T23:53:10.398623",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 51, Column 56): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(51,56): Error: a precondition for this call could not be proved\n   |\n51 |     CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n   |                                                         ^\n\nVerifiedAgentSynthesis.dfy(354,34): Related location: this is the precondition that could not be proved\n    |\n354 |       requires parser.IsPermissive(generated)\n    |                                   ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 10,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >> \".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var validTokens := parser.ValidNextTokens(generated);\n\n  // Alternate between constrained and unconstrained steps\n  if stepCounter % 2 == 0 {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  // Increment the step counter\n  stepCounter := stepCounter + 1;\n}\n\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This CSD strategy generates a valid prefix that starts with optional plain text,\n// followed by a Prover9-style first-order logic formula, and ends with \" >> \".\n// It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.\n// The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.\n// The loop continues until the maximum number of steps is reached or a complete formula is generated.\n// The strategy ensures that << >> segments are constrained and the rest is unconstrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var validTokens := parser.ValidNextTokens(generated);\n\n  // Alternate between constrained and unconstrained steps\n  if stepCounter % 2 == 0 {\n    // Constrained step for << >> segments\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  } else {\n    // Unconstrained step for plain text\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  // Increment the step counter\n  stepCounter := stepCounter + 1;\n}\n\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-13T23:53:27.359056",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 33, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(33,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n33 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    }
+  ],
+  "failure_patterns": {
+    "verification_failures": 8,
+    "compilation_failures": 0,
+    "runtime_failures": 0,
+    "common_errors": [
+      {
+        "error": "Type error",
+        "count": 1
+      }
+    ]
+  }
+}

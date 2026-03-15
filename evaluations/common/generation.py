@@ -67,6 +67,9 @@ def run_crane_csd(
 
     lm.instruction_text = prompt_text
     start_time = time.time()
+    import sys
+    print("  [GEN] run_crane_csd entered", flush=True)
+    sys.stdout.flush()
 
     eos_token_str = lm.tokenizer.eos_token or "<|endoftext|>"
     eos_token_dafny = _dafny.Seq(eos_token_str)
@@ -87,25 +90,61 @@ def run_crane_csd(
         csd_output = generated
         remaining_steps = steps_left
     else:
-        result = GeneratedCSD.default__.MyCSDStrategy(
-            lm, parser, prompt_empty, max_steps, eos_token_dafny
-        )
+        try:
+            result = GeneratedCSD.default__.MyCSDStrategy(
+                lm, parser, prompt_empty, max_steps, eos_token_dafny
+            )
+        except Exception as e:
+            import traceback
+            print(f"  [GEN] MyCSDStrategy RAISED: {e!r}", flush=True)
+            traceback.print_exc()
+            raise
+        print("  [GEN] MyCSDStrategy returned", flush=True)
         if isinstance(result, tuple):
             csd_output, remaining_steps = result
         else:
             csd_output = result
             remaining_steps = 0
+        print(f"  [GEN] csd_output type={type(csd_output).__name__} len={getattr(csd_output, '__len__', lambda: '?')() if hasattr(csd_output, '__len__') else 'no len'}", flush=True)
 
-    result_tokens = [dafny_seq_to_str(t) for t in csd_output]
+    # Build result_tokens: prefer iteration (Dafny Seq may report len()==0 when passed to Python)
+    result_tokens = []
+    try:
+        for t in csd_output:
+            result_tokens.append(dafny_seq_to_str(t))
+    except (TypeError, AttributeError):
+        try:
+            n_out = len(csd_output)
+            result_tokens = [dafny_seq_to_str(csd_output[i]) for i in range(n_out)]
+        except (TypeError, AttributeError, IndexError):
+            try:
+                i = 0
+                while True:
+                    t = csd_output[i]
+                    result_tokens.append(dafny_seq_to_str(t))
+                    i += 1
+            except (IndexError, KeyError, TypeError):
+                pass
     output_text = "".join(result_tokens)
+    print(f"  [GEN] result_tokens: {len(result_tokens)} (output_text len={len(output_text)} repr={repr(output_text[:120])})", flush=True)
     execution_time = time.time() - start_time
 
     constrained_segments: List[Tuple[str, bool]] = []
 
+    if len(result_tokens) == 0 and initial_prefix is None:
+        print("  [GEN] WARNING: Strategy returned 0 tokens. parser.IsCompletePrefix(empty) may be True.", flush=True)
+    # Always log so we can see empty vs whitespace
+    print(f"  [GEN] output: len={len(output_text)} chars, {len(result_tokens)} tokens, repr={repr(output_text[:200])}", flush=True)
+    sys.stdout.flush()
     if debug_delimiters or debug_csd:
         steps_used = max_steps - remaining_steps
         print(f"  [DEBUG] Generation finished in {execution_time:.2f}s. Steps used: {steps_used}. Tokens: {len(result_tokens)}")
 
+    # Ensure diagnostics visible (stdout can be buffered)
+    import sys
+    msg = f"  [GEN] RETURN len={len(output_text)} tokens={len(result_tokens)} repr={repr(output_text[:150])}"
+    print(msg, flush=True)
+    print(msg, file=sys.stderr, flush=True)
     return output_text, len(result_tokens), execution_time, constrained_segments
 
 

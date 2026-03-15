@@ -21,9 +21,11 @@ module GeneratedCSD {
 // It uses the parser to ensure the generated prefix is grammatically correct within the specified constraints.
 // The strategy alternates between unconstrained and constrained steps, depending on the presence of a complete formula.
 // The loop continues until the maximum number of steps is reached or a complete formula is generated.
+// The strategy ensures that << >> segments are constrained and the rest is unconstrained.
 // CSD_RATIONALE_END
 
 generated := [];
+
 while stepsLeft > 0 && !parser.IsCompletePrefix(generated)
   invariant lm.ValidTokensIdsLogits()
   invariant parser.IsValidPrefix(generated)
@@ -31,12 +33,23 @@ while stepsLeft > 0 && !parser.IsCompletePrefix(generated)
   invariant |generated| + stepsLeft == maxSteps
   decreases stepsLeft
 {
-  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);
-  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);
-  generated := generated + [next];
-  stepsLeft := newSteps;
+  var validTokens := parser.ValidNextTokens(generated);
+  if !parser.IsPermissive(generated) || stepsLeft == 0 {
+    // Constrained step for << >> segments
+    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);
+    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);
+    generated := generated + [next];
+    stepsLeft := newSteps;
+  } else {
+    // Unconstrained step for plain text
+    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);
+    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);
+    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);
+    generated := generated + [next];
+    stepsLeft := newSteps;
+  }
 }
-// template then assigns remainingSteps := stepsLeft;
+remainingSteps := stepsLeft;
     remainingSteps := stepsLeft;
   }
 }

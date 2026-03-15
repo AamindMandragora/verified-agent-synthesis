@@ -3,15 +3,15 @@ import re
 
 class FOL_Parser:
     def __init__(self) -> None:
-        self.op_ls = ['⊕', '∨', '∧', '→', '↔', '∀', '∃', '¬', '(', ')', ',']
+        self.op_ls = ['⊕', '∨', '∧', '→', '↔', '∀', '∃', '¬', '(', ')', ',', '=']
 
-        self.sym_reg = re.compile(r'[^⊕∨∧→↔∀∃¬(),]+')
+        self.sym_reg = re.compile(r'[^⊕∨∧→↔∀∃¬(),=]+')
 
-        # modified a bit. 
+        # F includes equality (TERM '=' TERM) and quantified subformulas (Q F) for FOLIO-style premises
         self.cfg_template = """
         S -> F | Q F | '¬' S | '(' S ')'
         Q -> QUANT VAR | QUANT VAR Q
-        F -> '¬' '(' F ')' | '(' F ')' | F OP F | L
+        F -> '¬' '(' F ')' | '(' F ')' | F OP F | L | TERM '=' TERM | Q F
         OP -> '⊕' | '∨' | '∧' | '→' | '↔'
         L -> '¬' PRED '(' TERMS ')' | PRED '(' TERMS ')'
         TERMS -> TERM | TERM ',' TERMS
@@ -90,9 +90,10 @@ class FOL_Parser:
         r"""
         NOTE: since nltk does not support reg strs like \w+, we cannot separately recognize VAR, PRED, and CONST.
         Instead, we first allow VAR, PRED, and CONST to be matched with all symbols found in the FOL; once the tree is
-        parsered, we then go back and figure out the exact type of each symbols
+        parsered, we then go back and figure out the exact type of each symbols.
+        Exclude '=' from sym_ls so it is only used as the equality literal in F -> TERM '=' TERM.
         """
-        sym_ls = list(set([e for e in token_ls if self.sym_reg.match(e)]))
+        sym_ls = list(set([e for e in token_ls if self.sym_reg.match(e) and e != '=']))
         sym_str = ' | '.join(["'%s'" % s for s in sym_ls])
         cfg_str = self.cfg_template + 'VAR -> %s\nPRED -> %s\nCONST -> %s' % (sym_str,sym_str,sym_str)
         return cfg_str

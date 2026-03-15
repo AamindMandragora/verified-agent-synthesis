@@ -27,7 +27,7 @@ QUANT -> '∀' | '∃'
 
 class Prover9_FOL_Formula:
     def __init__(self, fol_formula : FOL_Formula) -> None:
-        self.tokens = ['QUANT', 'VAR', 'NOT', 'LPAREN', 'RPAREN', 'OP', 'PRED', 'COMMA', 'CONST']
+        self.tokens = ['QUANT', 'VAR', 'NOT', 'LPAREN', 'RPAREN', 'OP', 'PRED', 'COMMA', 'CONST', 'EQUAL']
 
         self.t_QUANT = r'∀|∃'
         self.t_NOT = r'¬'
@@ -35,6 +35,7 @@ class Prover9_FOL_Formula:
         self.t_RPAREN = r'\)'
         self.t_OP = r'⊕|∨|∧|→|↔'
         self.t_COMMA = r','
+        self.t_EQUAL = r'='
 
         if len(fol_formula.variables) > 0:
             self.t_VAR = r'|'.join(list(fol_formula.variables))
@@ -71,9 +72,17 @@ class Prover9_FOL_Formula:
         '''expr : F'''
         p[0] = p[1]
 
-    # S -> QUANT VAR S
+    # S -> QUANT VAR expr (quantified formula at top level)
     def p_S_quantified_S(self, p):
         '''expr : QUANT VAR expr'''
+        if p[1] == "∀":
+            p[0] = f"all {p[2]}.({p[3]})"
+        elif p[1] == "∃":
+            p[0] = f"some {p[2]}.({p[3]})"
+
+    # F -> QUANT VAR expr (quantified subformula, e.g. right-hand side of ⊕)
+    def p_F_quantified(self, p):
+        '''F : QUANT VAR expr'''
         if p[1] == "∀":
             p[0] = f"all {p[2]}.({p[3]})"
         elif p[1] == "∃":
@@ -118,6 +127,11 @@ class Prover9_FOL_Formula:
         '''F : L'''
         p[0] = p[1]
 
+    # F -> TERM '=' TERM (equality)
+    def p_F_equal(self, p):
+        '''F : TERM EQUAL TERM'''
+        p[0] = f"({p[1]} = {p[3]})"
+
     # L -> '¬' PRED '(' TERMS ')'
     def p_L_not(self, p):
         '''L : NOT PRED LPAREN TERMS RPAREN'''
@@ -153,6 +167,9 @@ class Prover9_FOL_Formula:
         pass
 
     def parse(self, s):
+        # Ensure '=' is surrounded by spaces so the lexer tokenizes equality (e.g. "y=z" -> "y = z")
+        if "=" in s and " = " not in s:
+            s = s.replace("=", " = ")
         return self.parser.parse(s, lexer=self.lexer)
 
 if __name__ == "__main__":

@@ -83,14 +83,14 @@ class EvaluationResult:
             lines.append(f"  Parsed answer (actual): {s.get('actual', 'N/A')}")
             lines.append(f"  Match: {'YES' if s.get('is_correct') else 'NO'}")
             lines.append(f"  Full raw output:\n    {_truncate_for_display(s.get('full_output') or '', 350)}")
-            # FOLIO: last << >> segment sent to Prover9; result diffed to expected
+            # FOLIO: last $ % segment sent to Prover9; result diffed to expected
             folio_debug = s.get("folio_debug")
             if folio_debug:
                 reason = folio_debug.get("reason", "")
                 if reason:
                     lines.append(f"  FOLIO extraction: {reason}")
                 if folio_debug.get("segments"):
-                    lines.append(f"  Model << >> segments ({len(folio_debug['segments'])}):")
+                    lines.append(f"  Model $ % segments ({len(folio_debug['segments'])}):")
                     for j, seg in enumerate(folio_debug["segments"]):
                         lines.append(f"    [{j+1}] {_truncate_for_display(seg, 180)}")
                 lines.append(f"  Conclusion sent to Prover9: {_truncate_for_display(folio_debug.get('conclusion_raw') or folio_debug.get('conclusion', ''), 200)}")
@@ -110,7 +110,8 @@ class EvaluationResult:
                             lines.append(f"    {_truncate_for_display(line, 120)}")
             if not folio_debug:
                 segs = s.get("extracted_segments") or []
-                lines.append(f"  Extracted from << >> ({len(segs)} segment(s)):")
+                delim_label = " $ % " if (getattr(self, "dataset_name", None) == "folio") else " << >> "
+                lines.append(f"  Extracted from{delim_label}({len(segs)} segment(s)):")
                 for j, seg in enumerate(segs):
                     lines.append(f"    [{j+1}] {_truncate_for_display(seg, 200)}")
             if s.get("gold_premises_fol") is not None:
@@ -121,6 +122,52 @@ class EvaluationResult:
                 lines.append(f"  Gold conclusion (FOL): {s.get('gold_conclusion_fol')}")
             lines.append("")
         return "\n".join(lines)
+
+    def print_outputs_vs_expected(self, max_samples: Optional[int] = None) -> None:
+        """
+        Print expected vs actual outputs to stdout during evaluation.
+        For FOLIO, also prints the conclusion sent to Prover9 and Prover9's result
+        so you can see when 'Unknown' (malformed) is counted as correct via Uncertain.
+        """
+        samples = self.sample_outputs[:max_samples] if max_samples is not None else self.sample_outputs
+        print("  --- Outputs vs expected ---")
+        for i, s in enumerate(samples):
+            expected = s.get("expected", "N/A")
+            actual = s.get("actual", "N/A")
+            is_correct = s.get("is_correct", False)
+            prompt_preview = s.get("prompt") or s.get("question", "")
+            print(f"  Example {i+1}:")
+            print(f"    Prompt (first 400 chars): {_truncate_for_display(prompt_preview, 400)}")
+            print(f"    Expected: {expected}")
+            print(f"    Actual (parsed): {actual}")
+            # Highlight when match is due to Unknown=Uncertain, or when we rejected it (conclusion ≠ gold)
+            if is_correct and actual and expected:
+                a, e = str(actual).strip().lower(), str(expected).strip().lower()
+                if (a == "unknown" and e == "uncertain") or (a == "uncertain" and e == "unknown"):
+                    print(f"    Match: YES (Prover9 returned Unknown, conclusion matched gold)")
+                else:
+                    print(f"    Match: YES")
+            else:
+                match_note = ""
+                if not is_correct and actual and expected:
+                    a, e = str(actual).strip().lower(), str(expected).strip().lower()
+                    if (a == "unknown" and e == "uncertain") or (a == "uncertain" and e == "unknown"):
+                        match_note = " (Prover9 Unknown but conclusion did not match gold)"
+                print(f"    Match: {'YES' if is_correct else 'NO'}{match_note}")
+            folio_debug = s.get("folio_debug")
+            if folio_debug is not None:
+                conclusion = folio_debug.get("conclusion_raw") or folio_debug.get("conclusion") or ""
+                prover9_ans = folio_debug.get("prover9_answer")
+                prover9_ok = folio_debug.get("prover9_ok", False)
+                print(f"    Conclusion sent to Prover9: {_truncate_for_display(conclusion, 300)}")
+                if prover9_ok:
+                    print(f"    Prover9 result: {prover9_ans}")
+                else:
+                    print(f"    Prover9: failed or fallback — {_truncate_for_display(folio_debug.get('prover9_error') or 'N/A', 120)}")
+            print("")
+        if not samples:
+            print("    (no samples)")
+        print("  " + "-" * 40)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -259,10 +306,13 @@ class Evaluator:
                 grammar_file=self._get_grammar_file(),
                 start_rule="start",
                 load_in_4bit=self.load_in_4bit,
+                add_fol_keyword_tokens=(self.dataset_name == "folio"),
             )
 
     def _extract_constrained_content(self, output: str) -> List[str]:
-        """Extract content within << >> delimiters."""
+        """Extract content within delimiters. FOLIO uses $ ... %; GSM uses << ... >>."""
+        if self.dataset_name == "folio":
+            return re.findall(r"\$\s*([^$%]+?)\s*%", output)
         return re.findall(r"<<\s*([^<>]+?)\s*>>", output)
 
     def _extract_answer_gsm(self, output: str) -> Optional[str]:
@@ -286,10 +336,10 @@ class Evaluator:
 
     def _extract_answer_folio(self, output: str, example: Optional[Any] = None) -> Optional[str]:
         """
-        Take the last << >> delimited string, evaluate it with Prover9 (with problem
+        Take the last $ % delimited string (FOLIO), evaluate it with Prover9 (with problem
         premises), then return True/False/Unknown. Compare that to expected for grading.
         """
-        from evaluations.folio.fol_utils import fol_keyword_to_unicode
+        from evaluations.folio.fol_utils import fol_keyword_to_unicode, fol_normalize_spacing
 
         debug: Dict[str, Any] = {
             "segments": [], "conclusion_raw": "", "conclusion": "",
@@ -303,7 +353,7 @@ class Evaluator:
 
         debug["segments"] = list(segments)
         conclusion_raw = segments[-1].strip()
-        conclusion = fol_keyword_to_unicode(conclusion_raw)
+        conclusion = fol_normalize_spacing(fol_keyword_to_unicode(conclusion_raw))
         debug["conclusion_raw"] = conclusion_raw
         debug["conclusion"] = conclusion
 
@@ -312,11 +362,11 @@ class Evaluator:
             fol_premises = self._example_field(example, "fol_premises", None)
             if fol_premises:
                 if isinstance(fol_premises, list):
-                    premises = [fol_keyword_to_unicode(p.strip()) for p in fol_premises]
+                    premises = [fol_normalize_spacing(fol_keyword_to_unicode(p.strip())) for p in fol_premises]
                 else:
-                    premises = [fol_keyword_to_unicode(str(fol_premises).strip())]
+                    premises = [fol_normalize_spacing(fol_keyword_to_unicode(str(fol_premises).strip()))]
         if not premises and len(segments) >= 2:
-            premises = [fol_keyword_to_unicode(s.strip()) for s in segments[:-1]]
+            premises = [fol_normalize_spacing(fol_keyword_to_unicode(s.strip())) for s in segments[:-1]]
         debug["premises_used"] = list(premises)
 
         logic_lines = ["Premises:"]
@@ -373,21 +423,48 @@ class Evaluator:
         return None
 
     def _extract_answer_folio_fallback(self, output: str) -> Optional[str]:
-        """Fallback: extract answer via keyword matching when no << >> segment."""
+        """Fallback: extract answer via keyword matching when no $ % segment."""
         return self._normalize_folio_answer(output)
 
-    def _answers_match(self, actual: Optional[str], expected: str) -> bool:
-        """Check if actual and expected answers match, normalizing Uncertain/Unknown."""
+    def _folio_conclusion_matches_gold(self, conclusion_sent: str, gold_conclusion: Optional[str]) -> bool:
+        """True if the conclusion we sent to Prover9 matches the gold (normalized for comparison)."""
+        if not conclusion_sent or not gold_conclusion:
+            return False
+        from evaluations.folio.fol_utils import fol_keyword_to_unicode, fol_unicode_to_keyword, fol_normalize_spacing
+        # Normalize both to same form: keyword form, normalized spacing
+        def norm(s: str) -> str:
+            s = fol_normalize_spacing(s.strip())
+            # If s looks like unicode (∀, ∧, etc.), convert to keyword then normalize
+            if any(c in s for c in ("∀", "∃", "∧", "∨", "¬", "→", "↔", "⊕")):
+                s = fol_unicode_to_keyword(s)
+            return fol_normalize_spacing(s)
+        return norm(conclusion_sent) == norm(gold_conclusion)
+
+    def _answers_match(
+        self,
+        actual: Optional[str],
+        expected: str,
+        conclusion_sent: Optional[str] = None,
+        gold_conclusion: Optional[str] = None,
+    ) -> bool:
+        """Check if actual and expected answers match, normalizing Uncertain/Unknown.
+        Prover9 returns Unknown when neither goal nor negation is provable; FOLIO labels that Uncertain.
+        When actual is Unknown and expected is Uncertain, we only count correct if the conclusion
+        sent to Prover9 matches the gold conclusion (avoids crediting garbage output)."""
         if actual is None:
             return False
         a = str(actual).strip().lower()
         e = str(expected).strip().lower()
-        # Normalize "uncertain" and "unknown" to be equivalent
         if a in ("uncertain", "unknown"):
             a = "unknown"
         if e in ("uncertain", "unknown"):
             e = "unknown"
-        return a == e
+        if a != e:
+            return False
+        # When both are unknown/uncertain, require the sent conclusion to match gold (if we have it)
+        if a == "unknown" and self.dataset_name == "folio" and gold_conclusion and conclusion_sent:
+            return self._folio_conclusion_matches_gold(conclusion_sent, gold_conclusion)
+        return True
 
     @staticmethod
     def _example_field(example: Any, key: str, default: Any = None) -> Any:
@@ -440,27 +517,29 @@ class Evaluator:
                 conclusion_fol = fol_unicode_to_keyword(str(fol_conclusion).strip())
                 prompt_parts.append(f"The conclusion in first-order logic is: {conclusion_fol}\n\n")
             prompt_parts.append(
-                "Instructions: Start your answer with plain text reasoning (at least one sentence). "
-                "Do not start with the characters <<. After your reasoning, write exactly \" << \" (space, two angle brackets, space). "
-                "Then write exactly one first-order logic formula. Use the same predicate and constant names as in the given conclusion (e.g. Alkane not Alkale, mixture not mix). "
-                "Use this grammar: "
-                "quantifiers {forall} and {exists}; predicates like P(x), Q(a,b); "
-                "connectives {and}, {or}, {not}, {implies}, {iff}, {xor}; "
-                "variables as single lowercase letters, constants as longer lowercase identifiers. "
-                "Then write exactly \" >>\" (space, two angle brackets). "
-                "Only the substring between \" << \" and \" >>\" must be valid FOL; the rest is free text. "
-                "Between << and >> write only one well-formed formula (predicates, constants, variables, and the connectives above). No sentences, no periods, no explanatory text — or the formula will fail to parse.\n\n"
+                "Instructions: Your first token must be a word (e.g. \"The\", \"Based\", \"Therefore\"), not a space or $. "
+                "Start with plain text reasoning (at least one sentence), then put the formula between $ and % (e.g. $ formula %). "
+                "You may write one or more $ formula % segments; we use only the last one for grading. "
+                "Copy predicate and constant names exactly from the given FOL conclusion above: e.g. Alkane not Alkale, mixture not mix, SecondLargestChineseCity not SecondLargest. "
+                "Grammar: quantifiers {forall} and {exists}; predicates like P(x), Q(a,b); connectives {and}, {or}, {not}, {implies}, {iff}, {xor}; variables single lowercase, constants longer lowercase. "
+                "Between $ and % put only one well-formed formula per segment — no prose, no newlines, no numbers, no periods, or it will fail to parse. "
+                "End with a final statement in $ % that matches the conclusion to evaluate (e.g. The final statement to evaluate is therefore $ formula %).\n\n"
+                "Example format:\n"
+                "Reasoning here. $ Predicate(constant) {and} OtherPred(constant) % The final statement to evaluate is therefore $ Predicate(constant) {and} OtherPred(constant) %\n\n"
                 "Answer:"
             )
             return "".join(prompt_parts)
 
-    @staticmethod
-    def _ensure_delimiters_around_constrained(output: str) -> str:
+    def _ensure_delimiters_around_constrained(self, output: str) -> str:
         """
-        Ensure the constrained part(s) are inside << >>. If the CSD output has no
-        delimiters, treat the whole output as one constrained segment and wrap it.
-        This way only the constrained part is in delimiters, not necessarily the entire reply.
+        Ensure the constrained part(s) are inside delimiters. FOLIO: $ ... %; GSM: << ... >>.
+        If the CSD output has no delimiters, wrap the whole output.
         """
+        if self.dataset_name == "folio":
+            if "$" in output and "%" in output:
+                return output
+            s = output.strip()
+            return f"${s}%" if s else output
         if "<<" in output and ">>" in output:
             return output
         s = output.strip()
@@ -469,7 +548,9 @@ class Evaluator:
         return f"<< {s} >>"
 
     def _check_format_validity(self, output: str) -> bool:
-        """Check if the output has valid format with << >> delimiters."""
+        """Check if the output has valid format with the dataset's delimiters."""
+        if self.dataset_name == "folio":
+            return "$" in output and "%" in output
         return "<<" in output and ">>" in output
 
     @staticmethod
@@ -588,6 +669,7 @@ class Evaluator:
                         dynamic_parser=dynamic_parser,
                     )
                     output_text = self._ensure_delimiters_around_constrained(output_text)
+                    print(f"    [EVAL] raw output: len={len(output_text)}, repr={repr(output_text[:300])}", flush=True)
 
                     t0 = time.time()
                     if self.dataset_name == "gsm_symbolic":
@@ -597,7 +679,18 @@ class Evaluator:
                     extract_time = time.time() - t0
                     print(f"    (gen: {gen_time:.1f}s, extract: {extract_time:.1f}s)", flush=True)
 
-                    is_correct = self._answers_match(actual, expected)
+                    conclusion_sent = None
+                    gold_conclusion = None
+                    if self.dataset_name == "folio" and example is not None:
+                        debug = getattr(self, "_last_folio_debug", None)
+                        if debug:
+                            conclusion_sent = debug.get("conclusion_raw") or debug.get("conclusion") or ""
+                        gold_conclusion = self._example_field(example, "fol_conclusion", None)
+                    is_correct = self._answers_match(
+                        actual, expected,
+                        conclusion_sent=conclusion_sent,
+                        gold_conclusion=gold_conclusion,
+                    )
                     if is_correct:
                         num_correct += 1
 
@@ -612,6 +705,7 @@ class Evaluator:
                     extracted_segments = self._extract_constrained_content(output_text)
                     sample_entry: Dict[str, Any] = {
                         "question": str(question_str)[:200],
+                        "prompt": prompt,
                         "expected": expected,
                         "actual": actual or output_text[:100],
                         "full_output": output_text,
@@ -632,6 +726,7 @@ class Evaluator:
                     question_str = self._example_field(example, "question", "") or str(self._example_field(example, "premises", ""))
                     sample_outputs.append({
                         "question": str(question_str)[:200],
+                        "prompt": prompt,
                         "expected": expected,
                         "actual": None,
                         "full_output": None,

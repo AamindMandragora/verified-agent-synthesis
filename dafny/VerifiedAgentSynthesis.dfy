@@ -4,6 +4,10 @@ module VerifiedDecoderAgent {
   type Id = nat
   type Logit = real
 
+  // Delimiter tokens for << >> (FOLIO/GSM). Use these constants; Token has no members like LeftDelimiter.
+  const LeftDelimiter: Token := "<<"
+  const RightDelimiter: Token := ">>"
+
   class LM {
     // Library functions to be implemented in Python using TensorFlow.
 

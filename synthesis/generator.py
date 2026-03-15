@@ -5,6 +5,7 @@ Uses HuggingFace Transformers to load Qwen and generate Dafny strategy code.
 """
 
 import re
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Optional
 
@@ -47,6 +48,7 @@ class StrategyGenerator:
         max_new_tokens: int = 512,
         temperature: float = 0.7,
         top_p: float = 0.9,
+        generation_timeout: Optional[int] = None,
     ):
         """
         Initialize the strategy generator.
@@ -58,11 +60,13 @@ class StrategyGenerator:
             max_new_tokens: Maximum tokens to generate
             temperature: Sampling temperature
             top_p: Top-p (nucleus) sampling parameter
+            generation_timeout: Max seconds per LLM call (None = no limit). Use to avoid unbounded hangs.
         """
         self.model_name = model_name or self.DEFAULT_MODEL
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
         self.top_p = top_p
+        self.generation_timeout = generation_timeout  # seconds; None = no timeout
         
         # Auto-detect device
         if device is None:
@@ -190,38 +194,44 @@ class StrategyGenerator:
             Generated text
         """
         self._ensure_model_loaded()
-        
-        # Format as chat messages
+
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ]
-        
-        # Apply chat template
         text = self._tokenizer.apply_chat_template(
             messages,
             tokenize=False,
             add_generation_prompt=True
         )
-        
-        # Tokenize
         inputs = self._tokenizer(text, return_tensors="pt").to(self.device)
-        
-        # Generate
-        with torch.no_grad():
-            outputs = self._model.generate(
-                **inputs,
-                max_new_tokens=self.max_new_tokens,
-                temperature=self.temperature,
-                top_p=self.top_p,
-                do_sample=True,
-                pad_token_id=self._tokenizer.eos_token_id
-            )
-        
-        # Decode only the new tokens
-        generated = outputs[0][inputs["input_ids"].shape[1]:]
-        response = self._tokenizer.decode(generated, skip_special_tokens=True)
-        
+
+        def _run_generate():
+            with torch.no_grad():
+                out = self._model.generate(
+                    **inputs,
+                    max_new_tokens=self.max_new_tokens,
+                    temperature=self.temperature,
+                    top_p=self.top_p,
+                    do_sample=True,
+                    pad_token_id=self._tokenizer.eos_token_id
+                )
+            gen = out[0][inputs["input_ids"].shape[1]:]
+            return self._tokenizer.decode(gen, skip_special_tokens=True)
+
+        if self.generation_timeout is not None and self.generation_timeout > 0:
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_run_generate)
+                try:
+                    response = fut.result(timeout=self.generation_timeout)
+                except FuturesTimeoutError:
+                    raise RuntimeError(
+                        f"Generation timed out after {self.generation_timeout}s. "
+                        "If the model is on CPU or slow GPU, try --generation-timeout 0 (disable) or lower --max-tokens."
+                    ) from None
+        else:
+            response = _run_generate()
+
         return response.strip()
     
     def _extract_strategy(self, raw_output: str) -> str:
@@ -256,6 +266,13 @@ class StrategyGenerator:
         # Replace `++` when it is used like an operator (surrounded by optional whitespace).
         # This avoids touching tokens like "C++" inside words.
         strategy = re.sub(r"\s*\+\+\s*", " + ", strategy)
+
+        # Heuristic repair: malformed for-loop "for i in 0 .. |prompt| - 1" (Python/Rust-style) -> Dafny "for i := 0 to |prompt| - 1"
+        strategy = re.sub(
+            r"for\s+(\w+)\s+in\s+0\s*\.\.\s*\|(\w+)\|\s*-\s*1\b",
+            r"for \1 := 0 to |\2| - 1",
+            strategy,
+        )
         
         # If it looks like a full function/method definition, extract just the body.
         # We match the *final* '}' so nested braces inside the body are preserved.

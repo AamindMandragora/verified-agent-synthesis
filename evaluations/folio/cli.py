@@ -26,7 +26,7 @@ from evaluations.common.parser_utils import create_lark_dafny_parser
 from evaluations.folio.metrics import FOLIOMetrics
 from evaluations.folio.generation import run_crane_csd, run_unconstrained
 from evaluations.folio.environment import setup_dafny_environment, verify_critical_tokens
-from evaluations.folio.fol_utils import fol_keyword_to_unicode
+from evaluations.folio.fol_utils import fol_keyword_to_unicode, fol_normalize_spacing
 from evaluations.common.cli_utils import add_common_eval_args
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -42,8 +42,8 @@ def _solve_fol(constrained_segments: list[str]) -> str | None:
     if not constrained_segments:
         return None
 
-    # Convert {keyword} syntax to Unicode
-    fol_segments = [fol_keyword_to_unicode(seg.strip()) for seg in constrained_segments]
+    # Convert {keyword} syntax to Unicode and normalize spacing for parser (e.g. Alkale(mix) -> Alkale ( mix ))
+    fol_segments = [fol_normalize_spacing(fol_keyword_to_unicode(seg.strip())) for seg in constrained_segments]
 
     if len(fol_segments) >= 2:
         premises, conclusion = fol_segments[:-1], fol_segments[-1]

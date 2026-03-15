@@ -7,11 +7,17 @@ for multi-GPU setups using accelerate's device_map="auto".
 
 from __future__ import annotations
 
+import math
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Set precision before any torch operations to avoid TensorFloat32 warning
 torch.set_float32_matmul_precision('high')
+
+# FOL (FOLIO) grammar keywords as single tokens so ValidNextTokens can extend formulas (e.g. Pred(x) + "{and}")
+FOL_KEYWORD_TOKENS = [
+    "{forall}", "{exists}", "{and}", "{or}", "{not}", "{implies}", "{iff}", "{xor}",
+]
 
 
 def get_model_input_device(model) -> torch.device:
@@ -70,6 +76,7 @@ def create_huggingface_lm(
     token_ids=None,
     load_in_4bit: bool = False,
     load_in_8bit: bool = False,
+    add_fol_keyword_tokens: bool = False,
 ):
     """
     Create a HuggingFace LM wrapped with a Dafny-compatible interface.
@@ -93,7 +100,13 @@ def create_huggingface_lm(
     
     print(f"Loading model: {model_name} on {device}... ({prec_str})")
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    
+
+    # Add FOL keywords as single tokens so "{and}", "{or}" etc. are one token (ValidNextTokens can then extend formulas)
+    if add_fol_keyword_tokens:
+        added = tokenizer.add_tokens(FOL_KEYWORD_TOKENS, special_tokens=False)
+        if added:
+            print(f"  Added {added} FOL keyword token(s) for single-token formula extension.")
+
     # Always use device_map="auto" for CUDA to leverage all available GPUs
     if device.startswith("cuda"):
         kwargs = {
@@ -130,8 +143,18 @@ def create_huggingface_lm(
 
     model.eval()
 
+    # Resize embeddings if we added FOL tokens
+    if add_fol_keyword_tokens and len(tokenizer) != model.get_input_embeddings().weight.shape[0]:
+        model.resize_token_embeddings(len(tokenizer))
+
     if token_ids is None:
         token_ids = list(range(vocab_size))
+        if add_fol_keyword_tokens:
+            # Include new FOL keyword IDs so they appear in _Tokens and can be chosen by ValidNextTokens
+            for t in FOL_KEYWORD_TOKENS:
+                tid = tokenizer.convert_tokens_to_ids(t)
+                if tid != tokenizer.unk_token_id and tid not in token_ids:
+                    token_ids.append(tid)
 
     tokens_dafny = _dafny.SeqWithoutIsStrInference(
         [_dafny.Seq(tokenizer.decode([tid])) for tid in token_ids]
@@ -140,6 +163,9 @@ def create_huggingface_lm(
     class HuggingFaceLM(VerifiedDecoderAgent.LM):
         """Wrapper that bridges HuggingFace models to the Dafny LM interface."""
         
+        # Token IDs that must not be chosen as the first output token (so we get plain text before the delimiter)
+        _FORBID_FIRST_STRINGS = frozenset({"<<", "<", " <<", " << ", "$"})
+
         def __init__(self, hf_model, hf_tokenizer, tokens, tids, dev):
             super().__init__()
             self.model = hf_model
@@ -154,6 +180,25 @@ def create_huggingface_lm(
                 self.Logits[i] = _dafny.BigRational(0)
             # Store full logits for unconstrained generation
             self._full_logits = None
+            # Cache token IDs forbidden as first output token (delimiter + EOS so we get real text, not empty)
+            vocab_size = hf_tokenizer.vocab_size if hasattr(hf_tokenizer, "vocab_size") else len(hf_tokenizer)
+            self._forbid_first_token_ids = set()
+            for vid in range(min(vocab_size, 200000)):  # cap for speed
+                try:
+                    s = hf_tokenizer.decode([vid])
+                    if s in HuggingFaceLM._FORBID_FIRST_STRINGS:
+                        self._forbid_first_token_ids.add(vid)
+                    elif not s:  # forbid tokens that decode to empty string
+                        self._forbid_first_token_ids.add(vid)
+                except Exception:
+                    pass
+            # Forbid EOS/pad as first token so the model cannot immediately stop (which produced empty output)
+            eos_id = getattr(hf_tokenizer, "eos_token_id", None)
+            if eos_id is not None:
+                self._forbid_first_token_ids.add(int(eos_id))
+            pad_id = getattr(hf_tokenizer, "pad_token_id", None)
+            if pad_id is not None and pad_id != eos_id:
+                self._forbid_first_token_ids.add(int(pad_id))
 
         def _to_str(self, obj):
             """Convert a Dafny object (potentially a Seq of chars) to a Python string."""
@@ -199,11 +244,23 @@ def create_huggingface_lm(
                 output = self.model(**inputs)
                 logits = output.logits[0, -1, :].float().cpu()
             
+            # Forbid delimiter + EOS as first output token so model outputs plain text before the formula
+            self._first_token_choice = len(input_prefix) == 0
+            if self._first_token_choice and getattr(self, "_forbid_first_token_ids", None):
+                for vid in self._forbid_first_token_ids:
+                    if vid < logits.shape[0]:
+                        logits[vid] = float("-inf")
+
             # Store full logits for unconstrained generation
             self._full_logits = logits
 
+            # BigRational cannot represent ±inf; clamp so forbidden tokens stay worst
+            _LOGIT_FORBIDDEN = -1e30
             for i, tid in enumerate(self._token_ids):
-                self.Logits[i] = _dafny.BigRational(float(logits[tid].item()))
+                v = float(logits[tid].item())
+                if not math.isfinite(v):
+                    v = _LOGIT_FORBIDDEN
+                self.Logits[i] = _dafny.BigRational(v)
 
         def ChooseNextToken(self):
             """Return the token with the highest logit score (constrained to vocab)."""
@@ -234,8 +291,19 @@ def create_huggingface_lm(
 
             if self._full_logits is None:
                 raise RuntimeError("Must call GenerateLogits before ChooseNextTokenUnconstrained")
-            best_idx = int(self._full_logits.argmax().item())
+            logits = self._full_logits.clone()
+            best_idx = int(logits.argmax().item())
             token_text = self.tokenizer.decode([best_idx])
+            # If this was the first token and we got empty/EOS (mask failed or tokenizer quirk), take next-best
+            if getattr(self, "_first_token_choice", False):
+                self._first_token_choice = False
+                eos_str = self.tokenizer.decode([self.tokenizer.eos_token_id]) if getattr(self.tokenizer, "eos_token_id", None) is not None else ""
+                for _ in range(50):
+                    if token_text and token_text.strip() and token_text != eos_str:
+                        break
+                    logits[best_idx] = float("-inf")
+                    best_idx = int(logits.argmax().item())
+                    token_text = self.tokenizer.decode([best_idx])
             
             if debug:
                 print(f"    [UNCONSTRAINED DEBUG] chosen_token={repr(token_text)}")
@@ -246,6 +314,8 @@ def create_huggingface_lm(
             """Mask all tokens except those in valid_tokens.
             
             This implementation follows the Dafny specification strictly.
+            When this is the first token (_first_token_choice), we also exclude EOS and
+            empty-decoding tokens so strategies that use ConstrainedStep first still get real text.
             """
             import os
             debug = debug or os.environ.get('CSD_MASK_DEBUG', '').lower() in ('1', 'true', 'yes')
@@ -264,6 +334,15 @@ def create_huggingface_lm(
             valid_set = set()
             for i in range(len(valid_tokens)):
                 valid_set.add(seq_to_str(valid_tokens[i]))
+
+            # First token: exclude EOS and delimiter so we don't produce blank output (some strategies use ConstrainedStep first)
+            if getattr(self, "_first_token_choice", False):
+                self._first_token_choice = False
+                eos_str = self.tokenizer.decode([self.tokenizer.eos_token_id]) if getattr(self.tokenizer, "eos_token_id", None) is not None else ""
+                forbid = {"", eos_str} | set(HuggingFaceLM._FORBID_FIRST_STRINGS)
+                reduced = valid_set - forbid
+                if reduced:
+                    valid_set = reduced
 
             # Mask everything not in the valid set
             masked_val = _dafny.BigRational(-1000000000, 1) # -1e9

@@ -3,11 +3,8 @@
 # Usage: bash scripts/make_csd/folio_qwen3b.sh
 set -e
 
-# FOLIO: structure (plain text, then << FOL >>) is in the prompt; parser allows that. Pure LLM CSD.
-TASK_DESC="FOLIO: generate output that may include plain text, then \" << \" then exactly one \
-first-order logic formula (Prover9 grammar: {forall}, {exists}, predicates, {and}, {or}, {not}, {implies}, {iff}, {xor}), then \" >>\". \
-The constrained decoder must respect the grammar only between the delimiters. \
-All structure instructions are in the prompt; use your strategy to satisfy the grammar."
+# FOLIO: allow multiple << formula >> windows; evaluation uses the last one. Plain text unconstrained, then constrained inside delimiters.
+TASK_DESC="FOLIO: the strategy must generate plain text first (unconstrained), then one or more \" << \" formula \" >>\" segments (Prover9 grammar: {forall}, {exists}, predicates, {and}, {or}, {not}, {implies}, {iff}, {xor}). Evaluation uses only the last << >> segment. Use UnconstrainedStep for plain text; use ConstrainedStep only for the segment between the delimiters. Respect the grammar only between the delimiters. All structure instructions are in the prompt."
 
 echo "Making FOLIO CSD (Qwen 3B)..."
 echo "Task: $TASK_DESC"

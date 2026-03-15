@@ -1,0 +1,8 @@
+{
+  "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses ConstrainedStep to ensure that the generated text adheres to the specified grammar\n// between the \"<<\" and \">>\" delimiters. It starts with plain text, then a first-order logic formula,\n// and finally appends the \">>\" delimiter.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}",
+  "tool_choice_rationale": "This strategy uses ConstrainedStep to ensure that the generated text adheres to the specified grammar\nbetween the \"<<\" and \">>\" delimiters. It starts with plain text, then a first-order logic formula,\nand finally appends the \">>\" delimiter.",
+  "dafny_file": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260314_005015_7b008d/folio_csd.dfy",
+  "compiled_dir": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260314_005015_7b008d/folio_csd",
+  "total_attempts": 2,
+  "timestamp": "2026-03-14T00:52:37.285523"
+}

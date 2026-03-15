@@ -186,11 +186,14 @@ def create_synthetic_folio_examples() -> List[FOLIOExample]:
 
 
 # Label normalization utilities
+# Prover9 returns "Unknown" when neither the goal nor its negation is provable from the premises.
+# FOLIO uses "Uncertain" for the same notion (truth value not determined by the premises).
+# For grading we treat them as equivalent (Unknown -> Uncertain).
 LABEL_MAP = {
     "true": "True",
     "True": "True",
     "TRUE": "True",
-    "false": "False", 
+    "false": "False",
     "False": "False",
     "FALSE": "False",
     "uncertain": "Uncertain",

@@ -1,0 +1,258 @@
+{
+  "task_description": "FOLIO: the strategy must generate plain text first (unconstrained), then \" << \" then exactly one first-order logic formula (Prover9 grammar: {forall}, {exists}, predicates, {and}, {or}, {not}, {implies}, {iff}, {xor}), then \" >>\". Use UnconstrainedStep for the plain-text part; use ConstrainedStep only for the segment between the delimiters. Respect the grammar only between the delimiters. All structure instructions are in the prompt.",
+  "total_attempts": 10,
+  "timestamp": "2026-03-14T01:03:19.743750",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:01:05.002787",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 3 error(s):\n\n  (Line 30, Column 32): Error: this invariant could not be proved to be maintained by the loop\n  (Line 35, Column 52): Error: index out of range\n  (Line 45, Column 49): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(30,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n30 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\nGeneratedCSD.dfy(35,52): Error: index out of range\n   |\n35 |   if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n   |                                                     ^\n\nGeneratedCSD.dfy(45,49): Error: a precondition for this call could not be proved\n   |\n45 |     var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n   |                                                  ^\n\nVerifiedAgentSynthesis.dfy(307,15): Related location: this is the precondition that could not be proved\n    |\n307 |       requires forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens\n    |                ^^^^^^\n\n\nDafny program verifier finished with 1 verified, 3 errors",
+      "verification": {
+        "success": false,
+        "error_count": 3
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 2,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:01:07.323067",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 35, Column 52): Error: index out of range\n  (Line 39, Column 56): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(35,52): Error: index out of range\n   |\n35 |   if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n   |                                                     ^\n\nGeneratedCSD.dfy(39,56): Error: a precondition for this call could not be proved\n   |\n39 |     CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n   |                                                         ^\n\nVerifiedAgentSynthesis.dfy(358,34): Related location: this is the precondition that could not be proved\n    |\n358 |       requires parser.IsPermissive(generated)\n    |                                   ^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 3,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:01:22.876915",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 35, Column 52): Error: index out of range\n  (Line 39, Column 56): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(35,52): Error: index out of range\n   |\n35 |   if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n   |                                                     ^\n\nGeneratedCSD.dfy(39,56): Error: a precondition for this call could not be proved\n   |\n39 |     CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n   |                                                         ^\n\nVerifiedAgentSynthesis.dfy(358,34): Related location: this is the precondition that could not be proved\n    |\n358 |       requires parser.IsPermissive(generated)\n    |                                   ^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 4,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\nvar helpers := new CSDHelpers();\nvar stepsLeft := maxSteps;\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var next: Token; var newSteps: nat;\n\n  if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\nvar helpers := new CSDHelpers();\nvar stepsLeft := maxSteps;\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var next: Token; var newSteps: nat;\n\n  if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:01:38.787525",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 26, Column 4): Error: Duplicate local-variable name: helpers\n  (Line 27, Column 4): Error: Duplicate local-variable name: stepsLeft\n\nFull Dafny output:\nGeneratedCSD.dfy(26,4): Error: Duplicate local-variable name: helpers\n   |\n26 | var helpers := new CSDHelpers();\n   |     ^^^^^^^\n\nGeneratedCSD.dfy(27,4): Error: Duplicate local-variable name: stepsLeft\n   |\n27 | var stepsLeft := maxSteps;\n   |     ^^^^^^^^^\n\n2 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 5,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var next: Token; var newSteps: nat;\n\n  if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var next: Token; var newSteps: nat;\n\n  if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:01:39.827489",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 30, Column 32): Error: this invariant could not be proved to be maintained by the loop\n  (Line 37, Column 52): Error: index out of range\n\nFull Dafny output:\nGeneratedCSD.dfy(30,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n30 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\nGeneratedCSD.dfy(37,52): Error: index out of range\n   |\n37 |   if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n   |                                                     ^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 6,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var next: Token; var newSteps: nat;\n\n  if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  var next: Token; var newSteps: nat;\n\n  if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:01:42.090536",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 37, Column 52): Error: index out of range\n  (Line 41, Column 56): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(37,52): Error: index out of range\n   |\n37 |   if parser.IsCompletePrefix(generated) || generated[|generated|-1] != LeftDelimiter\n   |                                                     ^\n\nGeneratedCSD.dfy(41,56): Error: a precondition for this call could not be proved\n   |\n41 |     CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n   |                                                         ^\n\nVerifiedAgentSynthesis.dfy(358,34): Related location: this is the precondition that could not be proved\n    |\n358 |       requires parser.IsPermissive(generated)\n    |                                   ^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 7,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nvar hasValid := false;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter <= maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  var next: Token; var newSteps: nat;\n\n  if stepCounter < maxSteps && !parser.IsCompletePrefix(generated)\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n    hasValid := true;\n  }\n  else if stepCounter == maxSteps && !parser.IsCompletePrefix(generated)\n  {\n    // If we've reached the maximum number of steps and the prefix is not complete,\n    // we should roll back to a valid prefix and continue from there.\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepCounter := 0;\n    hasValid := false;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n    hasValid := true;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": true
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nvar hasValid := false;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter <= maxSteps\n  invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n  decreases stepsLeft\n{\n  var next: Token; var newSteps: nat;\n\n  if stepCounter < maxSteps && !parser.IsCompletePrefix(generated)\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n    hasValid := true;\n  }\n  else if stepCounter == maxSteps && !parser.IsCompletePrefix(generated)\n  {\n    // If we've reached the maximum number of steps and the prefix is not complete,\n    // we should roll back to a valid prefix and continue from there.\n    generated := helpers.RollbackToValidPrefix(parser, generated);\n    stepCounter := 0;\n    hasValid := false;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n    hasValid := true;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:02:04.112082",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 4 error(s):\n\n  (Line 31, Column 0): Error: decreases expression might not decrease\n  (Line 37, Column 46): Error: this invariant could not be proved to be maintained by the loop\n  (Line 37, Column 67): Error: index out of range\n  (Line 46, Column 56): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(31,0): Error: decreases expression might not decrease\n   |\n31 | while stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n   | ^^^^^\n\nGeneratedCSD.dfy(37,46): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n37 |   invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n   |                                               ^\n\nVerifiedAgentSynthesis.dfy(260,12): Related location: this proposition could not be proved\n    |\n260 |       token in ValidNextTokens(prefix)\n    |             ^^\n\nGeneratedCSD.dfy(37,67): Error: index out of range\n   |\n37 |   invariant hasValid ==> parser.ValidNextToken(generated, generated[|generated|-1])\n   |                                                                    ^\n\nGeneratedCSD.dfy(46,56): Error: a precondition for this call could not be proved\n   |\n46 |     CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n   |                                                         ^\n\nVerifiedAgentSynthesis.dfy(358,34): Related location: this is the precondition that could not be proved\n    |\n358 |       requires parser.IsPermissive(generated)\n    |                                   ^\n\n\nDafny program verifier finished with 1 verified, 4 errors",
+      "verification": {
+        "success": false,
+        "error_count": 4
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 8,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter <= maxSteps\n  decreases stepsLeft\n{\n  var next: Token; var newSteps: nat;\n\n  if stepCounter == 0 || parser.IsCompletePrefix(generated) || parser.IsDeadPrefix(generated)\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter <= maxSteps\n  decreases stepsLeft\n{\n  var next: Token; var newSteps: nat;\n\n  if stepCounter == 0 || parser.IsCompletePrefix(generated) || parser.IsDeadPrefix(generated)\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n  }\n  else\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:02:21.665942",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 35, Column 24): Error: this invariant could not be proved to be maintained by the loop\n  (Line 44, Column 56): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(35,24): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n35 |   invariant stepCounter <= maxSteps\n   |                         ^^\n\nGeneratedCSD.dfy(44,56): Error: a precondition for this call could not be proved\n   |\n44 |     CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n   |                                                         ^\n\nVerifiedAgentSynthesis.dfy(358,34): Related location: this is the precondition that could not be proved\n    |\n358 |       requires parser.IsPermissive(generated)\n    |                                   ^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 9,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nvar hasValid := false;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter <= maxSteps\n  decreases stepsLeft\n{\n  var next: Token; var newSteps: nat;\n\n  if !hasValid\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n  }\n  else if !parser.IsCompletePrefix(generated)\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n    hasValid := true;\n  }\n  else\n  {\n    // Emit the right delimiter\n    generated := generated + [RightDelimiter];\n    stepsLeft := stepsLeft - 1;\n    stepCounter := stepCounter + 1;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nvar hasValid := false;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter <= maxSteps\n  decreases stepsLeft\n{\n  var next: Token; var newSteps: nat;\n\n  if !hasValid\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n  }\n  else if !parser.IsCompletePrefix(generated)\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n    hasValid := true;\n  }\n  else\n  {\n    // Emit the right delimiter\n    generated := generated + [RightDelimiter];\n    stepsLeft := stepsLeft - 1;\n    stepCounter := stepCounter + 1;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:02:40.994465",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 36, Column 24): Error: this invariant could not be proved to be maintained by the loop\n  (Line 45, Column 56): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(36,24): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n36 |   invariant stepCounter <= maxSteps\n   |                         ^^\n\nGeneratedCSD.dfy(45,56): Error: a precondition for this call could not be proved\n   |\n45 |     CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n   |                                                         ^\n\nVerifiedAgentSynthesis.dfy(358,34): Related location: this is the precondition that could not be proved\n    |\n358 |       requires parser.IsPermissive(generated)\n    |                                   ^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 10,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// The strategy uses UnconstrainedStep for generating plain text and ConstrainedStep\n// for generating the constrained Prover9 formula. This ensures that the plain text\n// is not constrained and the Prover9 formula is only generated when needed.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nvar hasValid := false;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter <= maxSteps\n  decreases stepsLeft\n{\n  var next: Token; var newSteps: nat;\n\n  if parser.IsCompletePrefix(generated) || !hasValid\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n    hasValid := true;\n  }\n  else if !parser.IsCompletePrefix(generated)\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n    hasValid := true;\n  }\n  else\n  {\n    // Emit the right delimiter\n    generated := generated + [RightDelimiter];\n    stepsLeft := stepsLeft - 1;\n    stepCounter := stepCounter + 1;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// The strategy is to generate plain text first using UnconstrainedStep,\n// then emit the left delimiter \" << \", followed by a single Prover9 formula\n// using ConstrainedStep, and finally emit the right delimiter \" >> \".\n// The constraints are applied only within the delimiter segment.\n// The loop continues until the prefix is complete or the maximum number of steps is reached.\n// The strategy uses UnconstrainedStep for generating plain text and ConstrainedStep\n// for generating the constrained Prover9 formula. This ensures that the plain text\n// is not constrained and the Prover9 formula is only generated when needed.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nvar hasValid := false;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant stepCounter <= maxSteps\n  decreases stepsLeft\n{\n  var next: Token; var newSteps: nat;\n\n  if parser.IsCompletePrefix(generated) || !hasValid\n  {\n    // Generate unconstrained text\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n    hasValid := true;\n  }\n  else if !parser.IsCompletePrefix(generated)\n  {\n    // Generate constrained Prover9 formula\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    stepCounter := stepCounter + 1;\n    hasValid := true;\n  }\n  else\n  {\n    // Emit the right delimiter\n    generated := generated + [RightDelimiter];\n    stepsLeft := stepsLeft - 1;\n    stepCounter := stepCounter + 1;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:03:02.924317",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 39, Column 24): Error: this invariant could not be proved to be maintained by the loop\n  (Line 48, Column 56): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(39,24): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n39 |   invariant stepCounter <= maxSteps\n   |                         ^^\n\nGeneratedCSD.dfy(48,56): Error: a precondition for this call could not be proved\n   |\n48 |     CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n   |                                                         ^\n\nVerifiedAgentSynthesis.dfy(358,34): Related location: this is the precondition that could not be proved\n    |\n358 |       requires parser.IsPermissive(generated)\n    |                                   ^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    }
+  ],
+  "failure_patterns": {
+    "verification_failures": 10,
+    "compilation_failures": 0,
+    "runtime_failures": 0,
+    "common_errors": [
+      {
+        "error": "Type error",
+        "count": 1
+      }
+    ]
+  }
+}

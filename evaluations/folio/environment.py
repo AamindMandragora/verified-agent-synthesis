@@ -23,8 +23,9 @@ def setup_dafny_environment(
     device: str,
     vocab_size: int,
     grammar_file: Path,
+    **kwargs: Any,
 ) -> Dict[str, Any]:
-    """Setup Dafny environment with FOL grammar start rule."""
+    """Setup Dafny environment with FOL grammar start rule and FOL keywords as single tokens."""
     return _setup_dafny_environment(
         run_dir=run_dir,
         model_name=model_name,
@@ -32,6 +33,8 @@ def setup_dafny_environment(
         vocab_size=vocab_size,
         grammar_file=grammar_file,
         start_rule="start",
+        add_fol_keyword_tokens=True,
+        **kwargs,
     )
 
 

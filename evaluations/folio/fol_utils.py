@@ -17,7 +17,7 @@ FOL_KEYWORD_TO_UNICODE = {
     "{iff}": "↔",
 }
 
-# Reverse mapping: show gold FOL in prompt using grammar keywords so model can copy into << >>
+# Reverse mapping: show gold FOL in prompt using grammar keywords so model can copy into $ %
 FOL_UNICODE_TO_KEYWORD = {v: k for k, v in FOL_KEYWORD_TO_UNICODE.items()}
 
 
@@ -36,3 +36,21 @@ def fol_unicode_to_keyword(text: str) -> str:
     for symbol, keyword in FOL_UNICODE_TO_KEYWORD.items():
         out = out.replace(symbol, keyword)
     return out
+
+
+def fol_normalize_spacing(text: str) -> str:
+    """
+    Ensure spaces around parentheses and commas so FOL parsers (e.g. FOL_Parser
+    in symbolic_solvers) can tokenize predicate applications like "Alkale(mix)"
+    into separate tokens ["Alkale", "(", "mix", ")"]. Without this, "Alkale(mix)"
+    is one token and parsing fails.
+    """
+    if not text or not text.strip():
+        return text
+    out = text.strip()
+    for ch in ("(", ")", ","):
+        out = out.replace(ch, f" {ch} ")
+    # Collapse multiple spaces to single space
+    while "  " in out:
+        out = out.replace("  ", " ")
+    return out.strip()

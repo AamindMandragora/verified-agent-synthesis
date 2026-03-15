@@ -1,0 +1,253 @@
+{
+  "task_description": "FOLIO: the strategy must generate plain text first (unconstrained), then \" << \" then exactly one first-order logic formula (Prover9 grammar: {forall}, {exists}, predicates, {and}, {or}, {not}, {implies}, {iff}, {xor}), then \" >>\". Use UnconstrainedStep for the plain-text part; use ConstrainedStep only for the segment between the delimiters. Respect the grammar only between the delimiters. All structure instructions are in the prompt.",
+  "total_attempts": 10,
+  "timestamp": "2026-03-14T01:11:40.608902",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses an if-else block to alternate between unconstrained and constrained steps.\n// The plain text part is generated using UnconstrainedStep, and the constrained part is generated\n// using ConstrainedStep. The loop continues until the maximum number of steps is reached or the\n// prefix is complete. The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if parser.IsCompletePrefix(generated) || |generated| == 0\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses an if-else block to alternate between unconstrained and constrained steps.\n// The plain text part is generated using UnconstrainedStep, and the constrained part is generated\n// using ConstrainedStep. The loop continues until the maximum number of steps is reached or the\n// prefix is complete. The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if parser.IsCompletePrefix(generated) || |generated| == 0\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:09:10.539136",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 29, Column 32): Error: this invariant could not be proved to be maintained by the loop\n  (Line 42, Column 49): Error: a precondition for this call could not be proved\n\nFull Dafny output:\nGeneratedCSD.dfy(29,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n29 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\nGeneratedCSD.dfy(42,49): Error: a precondition for this call could not be proved\n   |\n42 |     var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n   |                                                  ^\n\nVerifiedAgentSynthesis.dfy(307,15): Related location: this is the precondition that could not be proved\n    |\n307 |       requires forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens\n    |                ^^^^^^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 2,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses an if-else block to alternate between unconstrained and constrained steps.\n// The plain text part is generated using UnconstrainedStep, and the constrained part is generated\n// using ConstrainedStep. The loop continues until the maximum number of steps is reached or the\n// prefix is complete. The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if parser.IsCompletePrefix(generated) || |generated| == 0\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses an if-else block to alternate between unconstrained and constrained steps.\n// The plain text part is generated using UnconstrainedStep, and the constrained part is generated\n// using ConstrainedStep. The loop continues until the maximum number of steps is reached or the\n// prefix is complete. The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if parser.IsCompletePrefix(generated) || |generated| == 0\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:09:12.571019",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 29, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(29,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n29 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 3,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy alternates between unconstrained and constrained steps to generate a valid prefix.\n// It uses UnconstrainedStep for the plain text part and ConstrainedStep for the constrained part.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if parser.IsCompletePrefix(generated) || |generated| == 0\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy alternates between unconstrained and constrained steps to generate a valid prefix.\n// It uses UnconstrainedStep for the plain text part and ConstrainedStep for the constrained part.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  if parser.IsCompletePrefix(generated) || |generated| == 0\n  {\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:09:24.255363",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 29, Column 32): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(29,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n29 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 4,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses UnconstrainedStep for plain text and ConstrainedStep for the constrained part.\n// It handles both plain text and delimited constrained parts by switching based on the parser.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  // Determine if we are in the constrained part by checking if we are past the delimiter\n  var inConstrainedPart := false;\n  for i := 0 to |prompt| - 1 do\n    if prompt[i] == LeftDelimiter\n      inConstrainedPart := true;\n      break;\n\n  if inConstrainedPart\n  {\n    // Inside the constrained part, use ConstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Outside the constrained part, use UnconstrainedStep\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses UnconstrainedStep for plain text and ConstrainedStep for the constrained part.\n// It handles both plain text and delimited constrained parts by switching based on the parser.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  // Determine if we are in the constrained part by checking if we are past the delimiter\n  var inConstrainedPart := false;\n  for i := 0 to |prompt| - 1 do\n    if prompt[i] == LeftDelimiter\n      inConstrainedPart := true;\n      break;\n\n  if inConstrainedPart\n  {\n    // Inside the constrained part, use ConstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Outside the constrained part, use UnconstrainedStep\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:09:39.513774",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 3 error(s):\n\n  (Line 36, Column 29): Error: missing semicolon at end of statement\n  (Line 38, Column 6): Error: lbrace expected\n  (Line 60, Column 0): Error: rbrace expected\n\nFull Dafny output:\nGeneratedCSD.dfy(36,29): Error: missing semicolon at end of statement\n   |\n36 |   for i := 0 to |prompt| - 1 do\n   |                              ^^\n\nGeneratedCSD.dfy(38,6): Error: lbrace expected\n   |\n38 |       inConstrainedPart := true;\n   |       ^\n\nGeneratedCSD.dfy(60,0): Error: rbrace expected\n3 parse errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 3
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 5,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses UnconstrainedStep for plain text and ConstrainedStep for the constrained part.\n// It handles both plain text and delimited constrained parts by switching based on the parser.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  // Determine if we are in the constrained part by checking if we are past the delimiter\n  var inConstrainedPart := false;\n  for i := 0 to |prompt| - 1 do\n    if prompt[i] == LeftDelimiter\n      inConstrainedPart := true;\n      break;\n\n  if inConstrainedPart\n  {\n    // Inside the constrained part, use ConstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Outside the constrained part, use UnconstrainedStep\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses UnconstrainedStep for plain text and ConstrainedStep for the constrained part.\n// It handles both plain text and delimited constrained parts by switching based on the parser.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  // Determine if we are in the constrained part by checking if we are past the delimiter\n  var inConstrainedPart := false;\n  for i := 0 to |prompt| - 1 do\n    if prompt[i] == LeftDelimiter\n      inConstrainedPart := true;\n      break;\n\n  if inConstrainedPart\n  {\n    // Inside the constrained part, use ConstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Outside the constrained part, use UnconstrainedStep\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:09:54.336233",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 3 error(s):\n\n  (Line 36, Column 29): Error: missing semicolon at end of statement\n  (Line 38, Column 6): Error: lbrace expected\n  (Line 60, Column 0): Error: rbrace expected\n\nFull Dafny output:\nGeneratedCSD.dfy(36,29): Error: missing semicolon at end of statement\n   |\n36 |   for i := 0 to |prompt| - 1 do\n   |                              ^^\n\nGeneratedCSD.dfy(38,6): Error: lbrace expected\n   |\n38 |       inConstrainedPart := true;\n   |       ^\n\nGeneratedCSD.dfy(60,0): Error: rbrace expected\n3 parse errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 3
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 6,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses UnconstrainedStep for plain text and ConstrainedStep for the constrained part.\n// It handles both plain text and delimited constrained parts by branching based on the parser.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  // Determine if we are in the constrained part by checking if we are past the delimiter\n  var inConstrainedPart := false;\n  for i := 0 to |prompt| - 1 do\n    if prompt[i] == LeftDelimiter\n      inConstrainedPart := true;\n      break;\n\n  if inConstrainedPart\n  {\n    // Inside the constrained part, use ConstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Outside the constrained part, use UnconstrainedStep\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses UnconstrainedStep for plain text and ConstrainedStep for the constrained part.\n// It handles both plain text and delimited constrained parts by branching based on the parser.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  // Determine if we are in the constrained part by checking if we are past the delimiter\n  var inConstrainedPart := false;\n  for i := 0 to |prompt| - 1 do\n    if prompt[i] == LeftDelimiter\n      inConstrainedPart := true;\n      break;\n\n  if inConstrainedPart\n  {\n    // Inside the constrained part, use ConstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Outside the constrained part, use UnconstrainedStep\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:10:09.192481",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 3 error(s):\n\n  (Line 36, Column 29): Error: missing semicolon at end of statement\n  (Line 38, Column 6): Error: lbrace expected\n  (Line 60, Column 0): Error: rbrace expected\n\nFull Dafny output:\nGeneratedCSD.dfy(36,29): Error: missing semicolon at end of statement\n   |\n36 |   for i := 0 to |prompt| - 1 do\n   |                              ^^\n\nGeneratedCSD.dfy(38,6): Error: lbrace expected\n   |\n38 |       inConstrainedPart := true;\n   |       ^\n\nGeneratedCSD.dfy(60,0): Error: rbrace expected\n3 parse errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 3
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 7,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses UnconstrainedStep for the initial plain text generation\n// and ConstrainedStep within the delimited constrained part. It ensures\n// that the constrained segment is generated correctly and that the overall\n// prefix remains valid under the grammar.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  // Determine if we are in the constrained part by checking if we are past the delimiter\n  var inConstrainedPart := false;\n  for i := 0 to |prompt| - 1 do\n    if prompt[i] == LeftDelimiter\n      inConstrainedPart := true;\n      break;\n\n  if inConstrainedPart\n  {\n    // Inside the constrained part, use ConstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Outside the constrained part, use UnconstrainedStep\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses UnconstrainedStep for the initial plain text generation\n// and ConstrainedStep within the delimited constrained part. It ensures\n// that the constrained segment is generated correctly and that the overall\n// prefix remains valid under the grammar.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  // Determine if we are in the constrained part by checking if we are past the delimiter\n  var inConstrainedPart := false;\n  for i := 0 to |prompt| - 1 do\n    if prompt[i] == LeftDelimiter\n      inConstrainedPart := true;\n      break;\n\n  if inConstrainedPart\n  {\n    // Inside the constrained part, use ConstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Outside the constrained part, use UnconstrainedStep\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n}"
+      },
+      "timestamp": "2026-03-14T01:10:24.293321",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 3 error(s):\n\n  (Line 38, Column 29): Error: missing semicolon at end of statement\n  (Line 40, Column 6): Error: lbrace expected\n  (Line 62, Column 0): Error: rbrace expected\n\nFull Dafny output:\nGeneratedCSD.dfy(38,29): Error: missing semicolon at end of statement\n   |\n38 |   for i := 0 to |prompt| - 1 do\n   |                              ^^\n\nGeneratedCSD.dfy(40,6): Error: lbrace expected\n   |\n40 |       inConstrainedPart := true;\n   |       ^\n\nGeneratedCSD.dfy(62,0): Error: rbrace expected\n3 parse errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 3
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 8,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses UnconstrainedStep for the initial plain text generation\n// and ConstrainedStep within the delimited constrained part. It ensures\n// that the constrained segment is generated correctly and that the overall\n// prefix remains valid under the grammar.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar inConstrainedPart := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant inConstrainedPart ==> !parser.IsCompletePrefix(generated)\n  invariant !inConstrainedPart ==> parser.IsCompletePrefix(generated) || |generated| == 0\n  decreases stepsLeft\n{\n  // Determine if we are in the constrained part by checking if we are past the delimiter\n  for i := 0 to |prompt| - 1 do\n    if prompt[i] == LeftDelimiter\n      inConstrainedPart := true;\n      break;\n\n  if inConstrainedPart\n  {\n    // Inside the constrained part, use ConstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Outside the constrained part, use UnconstrainedStep\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  // Increment the step counter for the loop invariant\n  stepCounter := stepCounter + 1;\n}\n\n// Assign remainingSteps to the template's remainingSteps\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses UnconstrainedStep for the initial plain text generation\n// and ConstrainedStep within the delimited constrained part. It ensures\n// that the constrained segment is generated correctly and that the overall\n// prefix remains valid under the grammar.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar inConstrainedPart := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant inConstrainedPart ==> !parser.IsCompletePrefix(generated)\n  invariant !inConstrainedPart ==> parser.IsCompletePrefix(generated) || |generated| == 0\n  decreases stepsLeft\n{\n  // Determine if we are in the constrained part by checking if we are past the delimiter\n  for i := 0 to |prompt| - 1 do\n    if prompt[i] == LeftDelimiter\n      inConstrainedPart := true;\n      break;\n\n  if inConstrainedPart\n  {\n    // Inside the constrained part, use ConstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Outside the constrained part, use UnconstrainedStep\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  // Increment the step counter for the loop invariant\n  stepCounter := stepCounter + 1;\n}\n\n// Assign remainingSteps to the template's remainingSteps\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-14T01:10:43.105917",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 3 error(s):\n\n  (Line 41, Column 29): Error: missing semicolon at end of statement\n  (Line 43, Column 6): Error: lbrace expected\n  (Line 71, Column 0): Error: rbrace expected\n\nFull Dafny output:\nGeneratedCSD.dfy(41,29): Error: missing semicolon at end of statement\n   |\n41 |   for i := 0 to |prompt| - 1 do\n   |                              ^^\n\nGeneratedCSD.dfy(43,6): Error: lbrace expected\n   |\n43 |       inConstrainedPart := true;\n   |       ^\n\nGeneratedCSD.dfy(71,0): Error: rbrace expected\n3 parse errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 3
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 9,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses UnconstrainedStep for the initial plain text generation\n// and ConstrainedStep within the delimited constrained part. It ensures\n// that the constrained segment is generated correctly and that the overall\n// prefix remains valid under the grammar.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// If the task requires both plain text and a constrained part, it branches accordingly.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar inConstrainedPart := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant inConstrainedPart ==> !parser.IsCompletePrefix(generated)\n  invariant !inConstrainedPart ==> parser.IsCompletePrefix(generated) || |generated| == 0\n  decreases stepsLeft\n{\n  // Determine if we are in the constrained part by checking if we are past the delimiter\n  if !inConstrainedPart\n  {\n    // Outside the constrained part, use UnconstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Inside the constrained part, use ConstrainedStep\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  // Increment the step counter for the loop invariant\n  stepCounter := stepCounter + 1;\n}\n\n// Assign remainingSteps to the template's remainingSteps\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses UnconstrainedStep for the initial plain text generation\n// and ConstrainedStep within the delimited constrained part. It ensures\n// that the constrained segment is generated correctly and that the overall\n// prefix remains valid under the grammar.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// If the task requires both plain text and a constrained part, it branches accordingly.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar inConstrainedPart := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant inConstrainedPart ==> !parser.IsCompletePrefix(generated)\n  invariant !inConstrainedPart ==> parser.IsCompletePrefix(generated) || |generated| == 0\n  decreases stepsLeft\n{\n  // Determine if we are in the constrained part by checking if we are past the delimiter\n  if !inConstrainedPart\n  {\n    // Outside the constrained part, use UnconstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Inside the constrained part, use ConstrainedStep\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  // Increment the step counter for the loop invariant\n  stepCounter := stepCounter + 1;\n}\n\n// Assign remainingSteps to the template's remainingSteps\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-14T01:11:01.285653",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 34, Column 32): Error: this invariant could not be proved to be maintained by the loop\n  (Line 38, Column 70): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(34,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n34 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\nGeneratedCSD.dfy(38,70): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n38 |   invariant !inConstrainedPart ==> parser.IsCompletePrefix(generated) || |generated| == 0\n   |                                                                       ^^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 10,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses UnconstrainedStep for the initial plain text generation\n// and ConstrainedStep within the delimited constrained part. It ensures\n// that the constrained segment is generated correctly and that the overall\n// prefix remains valid under the grammar.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// If the task requires both plain text and a constrained part, it branches accordingly.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar inConstrainedPart := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant inConstrainedPart ==> !parser.IsCompletePrefix(generated)\n  invariant !inConstrainedPart ==> parser.IsCompletePrefix(generated) || |generated| == 0\n  decreases stepsLeft\n{\n  // Determine if we are in the constrained part by checking if we are past the delimiter\n  if !inConstrainedPart\n  {\n    // Outside the constrained part, use UnconstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Inside the constrained part, use ConstrainedStep\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  // Increment the step counter for the loop invariant\n  stepCounter := stepCounter + 1;\n}\n\n// Assign remainingSteps to the template's remainingSteps\nremainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses UnconstrainedStep for the initial plain text generation\n// and ConstrainedStep within the delimited constrained part. It ensures\n// that the constrained segment is generated correctly and that the overall\n// prefix remains valid under the grammar.\n// The loop continues until the maximum number of steps is reached or the prefix is complete.\n// The parser ensures that only valid tokens are added to the prefix.\n// If the task requires both plain text and a constrained part, it branches accordingly.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar inConstrainedPart := false;\nvar stepCounter := 0;\n\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  invariant inConstrainedPart ==> !parser.IsCompletePrefix(generated)\n  invariant !inConstrainedPart ==> parser.IsCompletePrefix(generated) || |generated| == 0\n  decreases stepsLeft\n{\n  // Determine if we are in the constrained part by checking if we are past the delimiter\n  if !inConstrainedPart\n  {\n    // Outside the constrained part, use UnconstrainedStep\n    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n    var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Inside the constrained part, use ConstrainedStep\n    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  // Increment the step counter for the loop invariant\n  stepCounter := stepCounter + 1;\n}\n\n// Assign remainingSteps to the template's remainingSteps\nremainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-14T01:11:20.861286",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 34, Column 32): Error: this invariant could not be proved to be maintained by the loop\n  (Line 38, Column 70): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(34,32): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n34 |   invariant parser.IsValidPrefix(generated)\n   |                                 ^\n\nGeneratedCSD.dfy(38,70): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n38 |   invariant !inConstrainedPart ==> parser.IsCompletePrefix(generated) || |generated| == 0\n   |                                                                       ^^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    }
+  ],
+  "failure_patterns": {
+    "verification_failures": 10,
+    "compilation_failures": 0,
+    "runtime_failures": 0,
+    "common_errors": []
+  }
+}

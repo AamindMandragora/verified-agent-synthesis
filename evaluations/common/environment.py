@@ -98,6 +98,7 @@ def setup_dafny_environment(
     start_rule: str = "start",
     load_in_4bit: bool = False,
     load_in_8bit: bool = False,
+    add_fol_keyword_tokens: bool = False,
 ) -> Dict[str, Any]:
     """
     Load model and setup Dafny environment once.
@@ -118,11 +119,8 @@ def setup_dafny_environment(
     """
     _dafny, VerifiedDecoderAgent, GeneratedCSD = load_compiled_modules(run_dir)
 
-    from transformers import AutoTokenizer
     from evaluations.common.model_utils import create_huggingface_lm
     from evaluations.common.parser_utils import create_lark_dafny_parser
-
-    tok = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
 
     used_cpu_fallback = False
     try:
@@ -134,6 +132,7 @@ def setup_dafny_environment(
             _dafny,
             load_in_4bit=load_in_4bit,
             load_in_8bit=load_in_8bit,
+            add_fol_keyword_tokens=add_fol_keyword_tokens,
         )
     except RuntimeError as e:
         if "out of memory" not in str(e).lower():
@@ -150,6 +149,7 @@ def setup_dafny_environment(
             _dafny,
             load_in_4bit=load_in_4bit,
             load_in_8bit=load_in_8bit,
+            add_fol_keyword_tokens=add_fol_keyword_tokens,
         )
         used_cpu_fallback = True
 
@@ -165,7 +165,7 @@ def setup_dafny_environment(
         "GeneratedCSD": GeneratedCSD,
         "lm": lm,
         "parser": parser,
-        "tokenizer": tok,
+        "tokenizer": lm.tokenizer,
     }
     if used_cpu_fallback:
         result["_eval_cpu_fallback"] = True

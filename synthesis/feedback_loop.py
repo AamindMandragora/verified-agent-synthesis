@@ -7,6 +7,7 @@ iterative refinement based on errors.
 
 import json
 import secrets
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -38,6 +39,140 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
     import re
     repaired = strategy_code
     changed = False
+
+    # Fix: malformed for-loop "for i in 0 .. |prompt| - 1" (Python/Rust-style) -> Dafny "for i := 0 to |prompt| - 1"
+    for_loop_pattern = re.compile(
+        r"for\s+(\w+)\s+in\s+0\s*\.\.\s*\|(\w+)\|\s*-\s*1\b"
+    )
+    new_repaired = for_loop_pattern.sub(r"for \1 := 0 to |\2| - 1", repaired)
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: "Ambiguous use of && and ||" — Dafny requires parentheses. Wrap the && part: "A || B && C" -> "A || (B && C)"
+    if "Ambiguous use of && and ||" in error_summary or "Use parentheses to disambiguate" in error_summary:
+        new_repaired = re.sub(
+            r"\|\|\s*(\|generated\|\s*>\s*0\s*&&\s*generated\[\|generated\|-1\]\s*!=\s*LeftDelimiter)\b",
+            r"|| (\1)",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: Dafny for-loop uses braces not "do" — "for i := 0 to |prompt| - 1 do" -> "for i := 0 to |prompt| - 1 {"
+    if "missing semicolon" in error_summary or "lbrace expected" in error_summary or "rbrace expected" in error_summary:
+        new_repaired = re.sub(
+            r"\bto\s+\|(\w+)\|\s*-\s*1\s+do\b",
+            r"to |\1| - 1 {",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: "if condition" without braces then multiple statements — add { } when lbrace expected
+    if "lbrace expected" in error_summary and "if " in repaired and " if " in repaired:
+        # Pattern: "if prompt[i] == LeftDelimiter\n      inConstrainedPart := true;\n      break;" -> add braces
+        new_repaired = re.sub(
+            r"if\s+(prompt\[i\]\s*==\s*LeftDelimiter)\s*\n(\s+)(inConstrainedPart\s*:=\s*true\s*;\s*\n)\2(break\s*;\s*)",
+            r"if \1 {\n\2\3\2\4\n\2}",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: template already assigns remainingSteps; remove duplicate "remainingSteps := stepsLeft;"
+    if "remainingSteps" in repaired and "remainingSteps := stepsLeft" in repaired:
+        remove_remaining = re.compile(
+            r"^\s*//\s*Assign remainingSteps[^\n]*\n\s*remainingSteps\s*:=\s*stepsLeft\s*;\s*\n?",
+            re.IGNORECASE | re.MULTILINE,
+        )
+        new_repaired = remove_remaining.sub("", repaired)
+        if new_repaired == repaired:
+            remove_remaining = re.compile(
+                r"^\s*remainingSteps\s*:=\s*stepsLeft\s*;\s*\n?",
+                re.MULTILINE,
+            )
+            new_repaired = remove_remaining.sub("", repaired)
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: when only failure is invariant parser.IsValidPrefix(generated) and strategy uses UnconstrainedStep, fall back to ConstrainedStep-only loop (mixed strategy cannot preserve invariant with non-permissive parser)
+    if (
+        "invariant could not be proved" in error_summary
+        and "IsValidPrefix(generated)" in error_summary
+        and "UnconstrainedStep" in repaired
+        and "ConstrainedStep" in repaired
+    ):
+        # Replace the if/else that chooses UnconstrainedStep vs ConstrainedStep with a single ConstrainedStep body (with lemma before it)
+        simple_loop = re.compile(
+            r"if\s+parser\.IsCompletePrefix\s*\(\s*generated\s*\)\s*\|\|\s*\|generated\|\s*==\s*0\s*"
+            r"\{\s*"
+            r"(?:var\s+)?next\s*,\s*newSteps\s*:=\s*helpers\.UnconstrainedStep\s*\([^)]*\)\s*;\s*"
+            r"generated\s*:=\s*generated\s*\+\s*\[next\]\s*;\s*stepsLeft\s*:=\s*newSteps\s*;\s*"
+            r"\}\s*else\s*\{\s*"
+            r"(?:CSDHelpers\.RollbackPreservesTokenInvariant\s*\(\s*lm\s*,\s*parser\s*,\s*generated\s*\)\s*;\s*)?"
+            r"(?:var\s+)?next\s*,\s*newSteps\s*:=\s*helpers\.ConstrainedStep\s*\([^)]*\)\s*;\s*"
+            r"generated\s*:=\s*generated\s*\+\s*\[next\]\s*;\s*stepsLeft\s*:=\s*newSteps\s*;\s*"
+            r"\}",
+            re.MULTILINE | re.DOTALL,
+        )
+        replacement = (
+            "  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n"
+            "  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n"
+            "  generated := generated + [next];\n"
+            "  stepsLeft := newSteps;\n"
+            "  }"
+        )
+        new_repaired = simple_loop.sub(replacement, repaired, count=1)
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: "index out of range" when accessing generated[|generated|-1] with empty generated — guard with |generated| > 0
+    if "index out of range" in error_summary and "generated[|generated|-1]" in repaired:
+        # Wrap last-element access in condition: (|generated| > 0 && generated[|generated|-1] != LeftDelimiter) etc.
+        new_repaired = re.sub(
+            r"generated\[\|generated\|-1\]\s*!=\s*LeftDelimiter",
+            r"(|generated| > 0 && generated[|generated|-1] != LeftDelimiter)",
+            repaired,
+        )
+        if new_repaired == repaired:
+            new_repaired = re.sub(
+                r"generated\[\|generated\|-1\]\s*==\s*LeftDelimiter",
+                r"(|generated| > 0 && generated[|generated|-1] == LeftDelimiter)",
+                repaired,
+            )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: "precondition for this call could not be proved" for UnconstrainedPreservesValidWhenPermissive (requires parser.IsPermissive) — remove the lemma call; parser may not be permissive
+    if "precondition for this call could not be proved" in error_summary and ("IsPermissive" in error_summary or "UnconstrainedPreservesValidWhenPermissive" in error_summary):
+        if "UnconstrainedPreservesValidWhenPermissive" in repaired:
+            remove_lemma = re.compile(
+                r"\s*CSDHelpers\.UnconstrainedPreservesValidWhenPermissive\s*\(\s*parser\s*,\s*generated\s*,\s*next\s*\)\s*;\s*\n?",
+                re.MULTILINE,
+            )
+            new_repaired = remove_lemma.sub("\n", repaired)
+            if new_repaired != repaired:
+                repaired = new_repaired
+                changed = True
+
+    # Fix: "invariant could not be proved" for stepCounter <= maxSteps — remove that invariant (stepCounter can grow without bound in some branches)
+    if "invariant could not be proved" in error_summary and "stepCounter" in error_summary and "maxSteps" in error_summary:
+        for pat in [
+            r"\s*invariant\s+stepCounter\s*<=\s*maxSteps\s*\n",
+            r"\s*invariant\s+stepCounter\s*>=\s*0\s*&&\s*stepCounter\s*<=\s*maxSteps\s*\n",
+        ]:
+            new_repaired = re.sub(pat, "\n", repaired)
+            if new_repaired != repaired:
+                repaired = new_repaired
+                changed = True
+                break
 
     # Fix: "Duplicate local-variable name: stepsLeft" -> template already declares it; remove duplicate
     if "Duplicate local-variable name: stepsLeft" in error_summary:
@@ -217,6 +352,20 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
                     changed = True
                     break
 
+    # Fix: "the method returns 0 value but is assigned to 1 variable" for RollbackPreservesTokenInvariant — it's a lemma (returns nothing). Call as statement, do not assign.
+    if "returns 0 value but is assigned to 1 variable" in error_summary and "RollbackPreservesTokenInvariant" in repaired:
+        lemma_assign = re.compile(
+            r"\s*generated\s*:=\s*(helpers|CSDHelpers)\s*\.\s*RollbackPreservesTokenInvariant\s*\(\s*lm\s*,\s*parser\s*,\s*generated\s*\)\s*;\s*",
+            re.IGNORECASE,
+        )
+        new_repaired = lemma_assign.sub(
+            r" \1.RollbackPreservesTokenInvariant(lm, parser, generated);\n  ",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
     # Fix: "the method returns 1 value but is assigned to 0 variable" for RollbackToValidPrefix — LLM calls it without assigning. Must assign: generated := ...RollbackToValidPrefix(...)
     if "returns 1 value but is assigned to 0 variable" in error_summary and "RollbackToValidPrefix" in repaired:
         # Standalone call "helpers.RollbackToValidPrefix(...)" or "CSDHelpers.RollbackToValidPrefix(...)" -> assign to generated
@@ -235,17 +384,6 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
                 changed = True
                 break
 
-    # Fix: "invariant could not be proved" for stepCounter <= maxSteps — stepCounter is redundant with stepsLeft; remove the invariant so verification can succeed.
-    if "invariant could not be proved" in error_summary and "stepCounter" in error_summary and "maxSteps" in error_summary:
-        new_repaired = re.sub(
-            r"\s*invariant\s+stepCounter\s*>=\s*0\s*&&\s*stepCounter\s*<=\s*maxSteps\s*\n",
-            "\n",
-            repaired,
-        )
-        if new_repaired != repaired:
-            repaired = new_repaired
-            changed = True
-
     # Fix: "decreases expression might not decrease" when using "decreases maxSteps - |generated|" — use stepsLeft as variant instead.
     if "decreases expression might not decrease" in error_summary and "decreases maxSteps - |generated|" in repaired:
         new_repaired = re.sub(
@@ -257,9 +395,8 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
             repaired = new_repaired
             changed = True
 
-    # Fix: "invariant could not be proved" for parser.IsValidPrefix(generated) when loop uses UnconstrainedStep — use IsPermissive + lemma so else branch only runs when parser allows any token.
+    # Fix: "invariant could not be proved" for parser.IsValidPrefix(generated) when loop uses UnconstrainedStep — insert RollbackPreservesTokenInvariant at loop start only (do NOT add UnconstrainedPreservesValidWhenPermissive; many parsers are not permissive).
     if "invariant could not be proved" in error_summary and "IsValidPrefix(generated)" in error_summary and "UnconstrainedStep" in repaired and "ConstrainedStep" in repaired:
-        # (1) Insert RollbackPreservesTokenInvariant at loop start if missing
         if "RollbackPreservesTokenInvariant" not in repaired:
             loop_start = re.compile(r"(while\s+stepsLeft\s*>\s*0\s*&&\s*!parser\.IsCompletePrefix\s*\(generated\)\s*\n(?:\s*invariant[^\n]*\n)*\s*decreases\s+stepsLeft\s*)\n(\s*\{)\n(\s*)", re.MULTILINE)
             def add_lemma_at_loop_start(m: re.Match) -> str:
@@ -269,31 +406,6 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
             if new_repaired != repaired:
                 repaired = new_repaired
                 changed = True
-        # (2) Insert UnconstrainedPreservesValidWhenPermissive(parser, generated, next) after UnconstrainedStep in else branch (so Dafny can prove invariant after generated := generated + [next])
-        if "UnconstrainedPreservesValidWhenPermissive" not in repaired:
-            unconstrained_line = re.compile(
-                r"^(\s*)(var\s+next\s*,\s*newSteps\s*:=\s*helpers\.UnconstrainedStep\s*\([^)]*\)\s*;\s*)\n",
-                re.MULTILINE,
-            )
-            def add_lemma_after_unconstrained(m: re.Match) -> str:
-                indent, line = m.group(1), m.group(2)
-                return f"{indent}{line}\n{indent}CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next);\n"
-            new_repaired = unconstrained_line.sub(add_lemma_after_unconstrained, repaired, count=1)
-            if new_repaired != repaired:
-                repaired = new_repaired
-                changed = True
-        # (3) Guard ConstrainedStep branch with !parser.IsPermissive(generated) so else (UnconstrainedStep) is only taken when parser is permissive
-        if "IsPermissive(generated)" not in repaired:
-            for old_cond, new_cond in [
-                (r"if\s*\((hasValid\s*\|\|\s*stepCounter\s*%\s*2\s*==\s*0)\)\s*\{", r"if (!parser.IsPermissive(generated) || (hasValid || stepCounter % 2 == 0)) {"),
-                (r"if\s*\((hasValid)\)\s*\{", r"if (!parser.IsPermissive(generated) || (hasValid)) {"),
-                (r"if\s+hasValid\s*\|\|\s*stepCounter\s*%\s*2\s*==\s*0\s*\{", r"if !parser.IsPermissive(generated) || hasValid || stepCounter % 2 == 0 {"),
-            ]:
-                new_repaired = re.sub(old_cond, new_cond, repaired, count=1)
-                if new_repaired != repaired:
-                    repaired = new_repaired
-                    changed = True
-                    break
 
     return repaired, changed
 
@@ -611,9 +723,11 @@ class SynthesisPipeline:
             extra_args=list(self.compiler.extra_args),
         )
 
-        # Initial generation
-        print(f"Generating initial strategy for: {task_description}")
+        # Initial generation (one LLM call, can take 30–90s or longer on CPU/slow GPU)
+        print(f"Generating initial strategy for: {task_description[:80]}...")
+        t0 = time.perf_counter()
         strategy_code = self.generator.generate_initial(task_description)
+        print(f"  (initial generation took {time.perf_counter() - t0:.1f}s)")
 
         for iteration in range(self.max_iterations):
             attempt_num = iteration + 1
@@ -635,8 +749,10 @@ class SynthesisPipeline:
 
             # Stage 1: Verification
             print("\n[1/4] Verifying with Dafny...")
+            t0 = time.perf_counter()
             verification_result = self.verifier.verify(full_code)
             attempt.verification_result = verification_result
+            print(f"  (verification took {time.perf_counter() - t0:.1f}s)")
 
             if not verification_result.success:
                 print("  ✗ Verification failed")
@@ -674,11 +790,13 @@ class SynthesisPipeline:
                 if strategy_code != pre_repair_code:
                     print("  Applied automatic fix (e.g. duplicate stepsLeft / Rollback assignment / precondition); re-verifying...")
                     continue
-                # Refine based on verification error via model
-                print("  Refining based on verification error...")
+                # Refine based on verification error via model (one LLM call; can take minutes if GPU is slow or OOM → CPU)
+                print("  Refining based on verification error... (Qwen generating new strategy; watch for timing below)")
+                t0 = time.perf_counter()
                 strategy_code = self.generator.refine_after_verification_error(
                     strategy_code, error_msg
                 )
+                print(f"  (refinement took {time.perf_counter() - t0:.1f}s)")
                 continue
 
             print("  ✓ Verification passed")
@@ -751,6 +869,9 @@ class SynthesisPipeline:
                 sample_size=self.eval_sample_size,
             )
             attempt.eval_result = eval_result
+
+            # Always print outputs vs expected so we can spot Prover9 "Unknown" cheesing
+            eval_result.print_outputs_vs_expected()
 
             if not eval_result.success:
                 print(f"  ✗ Evaluation failed: {eval_result.error}")
