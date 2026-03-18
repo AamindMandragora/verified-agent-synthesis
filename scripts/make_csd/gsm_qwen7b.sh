@@ -31,6 +31,6 @@ python run_synthesis.py \
   --min-format-rate 0.5 \
   --min-syntax-rate 0.5 \
   --eval-sample-size 10 \
-  --eval-max-steps 512
+  --eval-max-steps 2048
 
 echo "GSM CSD (Qwen 7B) done. Run dir: outputs/generated-csd/runs/ (see latest_run.txt)"
