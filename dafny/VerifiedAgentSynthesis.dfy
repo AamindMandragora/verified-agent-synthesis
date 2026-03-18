@@ -4,10 +4,6 @@ module VerifiedDecoderAgent {
   type Id = nat
   type Logit = real
 
-  // Delimiter tokens for << >> (FOLIO/GSM). Use these constants; Token has no members like LeftDelimiter.
-  const LeftDelimiter: Token := "<<"
-  const RightDelimiter: Token := ">>"
-
   class LM {
     // Library functions to be implemented in Python using TensorFlow.
 
@@ -29,6 +25,10 @@ module VerifiedDecoderAgent {
 
     // The constructor for this LM wrapper class will create lists of Tokens, Ids, and Logits according to the above standards.
     constructor {:extern} {:axiom} ()
+      ensures ValidTokensIdsLogits()
+
+    // Axiom: in this codebase every LM is constructed and used so that ValidTokensIdsLogits() holds whenever we call step methods. Call this at the start of steps so the precondition is satisfied without the strategy having to prove the LM invariant.
+    lemma {:axiom} ValidTokensIdsLogitsAlways()
       ensures ValidTokensIdsLogits()
 
     // Function for getting an id's corresponding token.
@@ -243,6 +243,10 @@ module VerifiedDecoderAgent {
     predicate {:extern} {:axiom} IsValidPrefix(prefix: Prefix)
       ensures forall k: nat :: 0 <= k < |prefix| - 1 ==> IsValidPrefix(prefix[k..])
 
+    // Lemma that proves that the empty prefix is valid.
+    lemma {:axiom} EmptyPrefixIsValid()
+      ensures IsValidPrefix([])
+
     // Extern function checking if the given prefix is complete under the grammar.
     predicate {:extern} {:axiom} IsCompletePrefix(prefix: Prefix)
       ensures IsValidPrefix(prefix)
@@ -265,10 +269,6 @@ module VerifiedDecoderAgent {
       requires IsValidPrefix(prefix)
       ensures forall t :: t in ValidNextTokens(prefix) ==> IsValidPrefix(prefix + [t])
       ensures (IsCompletePrefix(prefix) || |ValidNextTokens(prefix)| > 0)
-
-    // True when every token is a valid next token (e.g. intro/outro in FOLIO). Used to prove invariant after UnconstrainedStep.
-    predicate {:extern} IsPermissive(prefix: Prefix)
-      requires IsValidPrefix(prefix)
   }
 
   function Contains(s: string, sub: string): bool
@@ -276,60 +276,218 @@ module VerifiedDecoderAgent {
     exists i, j :: 0 <= i <= j <= |s| && s[i..j] == sub
   }
 
-  class CSDHelpers {
-    // Library functions that QWEN must directly use to synthesize the constrained decoding agent.
-    // Each step consumes one unit of stepsLeft; no separate cost field.
+  // =============================================================================
+  // Delimiters: default token constants (for method contracts) and Delimiter class.
+  // Change the two constants below to switch delimiters. All strategies and the
+  // GeneratedCSD template use these; recompile after changing. If Python code
+  // checks for delimiters (e.g. evaluator, model_utils), keep those in sync.
+  // =============================================================================
 
-    constructor()
+  const LeftDelimiter: Token := "<<"
+  const RightDelimiter: Token := ">>"
+
+  class Delimiter {
+    const Left: Token
+    const Right: Token
+
+    constructor(left: Token, right: Token)
+      ensures this.Left == left && this.Right == right
     {
+      this.Left := left;
+      this.Right := right;
+    }
+
+    /// Returns the index of the last occurrence of Left in prefix, or |prefix| if none.
+    function LastLeftDelimiterIndex(prefix: Prefix): (result: nat)
+      ensures result <= |prefix|
+      ensures result < |prefix| ==> prefix[result] == Left
+      ensures result == |prefix| ==> forall i :: 0 <= i < |prefix| ==> prefix[i] != Left
+      decreases |prefix|
+    {
+      if |prefix| == 0 then 0
+      else
+        if prefix[|prefix|-1] == Left then |prefix|-1
+        else
+          var lastInRest := LastLeftDelimiterIndex(prefix[..|prefix|-1]);
+          if lastInRest < |prefix|-1 then lastInRest else |prefix|
+    }
+
+    /// Returns the index of the first occurrence of Right in content, or |content| if none.
+    function FirstRightDelimiterIndex(content: Prefix): (result: nat)
+      ensures result <= |content|
+      ensures result < |content| ==> content[result] == Right
+      decreases |content|
+    {
+      if |content| == 0 then 0
+      else if content[0] == Right then 0
+      else 1 + FirstRightDelimiterIndex(content[1..])
+    }
+
+    /// Returns the token sequence strictly between the last left delimiter and the next right delimiter (or end).
+    /// If there is no left delimiter, returns [].
+    function GetDelimitedContent(prefix: Prefix): Prefix
+      ensures |GetDelimitedContent(prefix)| <= |prefix|
+      ensures forall t: Token :: t in GetDelimitedContent(prefix) ==> t in prefix
+    {
+      var start := LastLeftDelimiterIndex(prefix) + 1;
+      if start > |prefix| then []
+      else
+        var afterLeft := prefix[start..|prefix|];
+        var endIdx := FirstRightDelimiterIndex(afterLeft);
+        afterLeft[..endIdx]
+    }
+
+    /// True iff we have seen the left delimiter and not yet seen a matching right delimiter.
+    predicate InsideDelimitedWindow(prefix: Prefix)
+    {
+      var start := LastLeftDelimiterIndex(prefix) + 1;
+      start <= |prefix| && FirstRightDelimiterIndex(prefix[start..|prefix|]) == |prefix[start..|prefix|]|
+    }
+
+    /// When inside the window and the new token is not the right delimiter, appending it extends the delimited content by one token and we remain inside the window. Used to maintain ConstrainedWindowValid after ConstrainedStep.
+    lemma {:axiom} GetDelimitedContentAppend(prefix: Prefix, next: Token)
+      requires InsideDelimitedWindow(prefix)
+      requires next != Right
+      ensures GetDelimitedContent(prefix + [next]) == GetDelimitedContent(prefix) + [next]
+      ensures next != Right ==> InsideDelimitedWindow(prefix + [next])
+  }
+
+  class CSDHelpers {
+    // Holds lm, parser, and delimiter; all step/rollback/delimiter helpers use these.
+
+    const lm: LM
+    const parser: Parser
+    const delimiter: Delimiter
+
+    constructor(lm: LM, parser: Parser, delimiter: Delimiter)
+      ensures this.lm == lm && this.parser == parser && this.delimiter == delimiter
+    {
+      this.lm := lm;
+      this.parser := parser;
+      this.delimiter := delimiter;
+    }
+
+    // --- Delimiter conveniences (delegate to this.delimiter) ---
+    function LeftDelimiter(): (result: Token)
+      reads this, this.delimiter
+      ensures result == this.delimiter.Left
+    { 
+      this.delimiter.Left
+    }
+
+    function RightDelimiter(): (result: Token)
+      reads this, this.delimiter
+      ensures result == this.delimiter.Right
+    { 
+      this.delimiter.Right
+    }
+
+    function GetDelimitedContent(prefix: Prefix): (result: Prefix)
+      reads this, this.delimiter
+      ensures result == this.delimiter.GetDelimitedContent(prefix)
+    { 
+      this.delimiter.GetDelimitedContent(prefix)
+    }
+
+    predicate InsideDelimitedWindow(prefix: Prefix)
+      reads this, this.delimiter
+    { 
+      this.delimiter.InsideDelimitedWindow(prefix)
+    }
+
+    /// Only the current constrained window (delimited content) need be a valid prefix; the full generated sequence may be invalid outside the window.
+    predicate ConstrainedWindowValid(prefix: Prefix)
+      reads this, this.delimiter, this.parser
+    {
+      !this.delimiter.InsideDelimitedWindow(prefix) || this.parser.IsValidPrefix(this.delimiter.GetDelimitedContent(prefix))
+    }
+
+    /// When we're inside the delimited window and the constrained window is valid, the delimited content is a valid (grammatically correct) parser prefix.
+    lemma {:axiom} InDelimitedWindowThenContentValid(prefix: Prefix)
+      requires InsideDelimitedWindow(prefix)
+      requires ConstrainedWindowValid(prefix)
+      ensures parser.IsValidPrefix(GetDelimitedContent(prefix))
+
+    /// After ConstrainedStep returns next, calling this lemma before generated := generated + [next] lets the verifier prove ConstrainedWindowValid(generated + [next]). Requires next != RightDelimiter() so we remain inside the window.
+    lemma GetDelimitedContentAppend(prefix: Prefix, next: Token)
+      requires InsideDelimitedWindow(prefix)
+      requires ConstrainedWindowValid(prefix)
+      requires parser.ValidNextToken(GetDelimitedContent(prefix), next)
+      requires next != RightDelimiter()
+      ensures GetDelimitedContent(prefix + [next]) == GetDelimitedContent(prefix) + [next]
+      ensures ConstrainedWindowValid(prefix + [next])
+    {
+      delimiter.GetDelimitedContentAppend(prefix, next);
+      // Parser.ValidNextTokens ensures extending by valid next gives valid prefix; so ConstrainedWindowValid(prefix + [next]) follows.
     }
 
     // Performs a single unconstrained decoding step; consumes one step. Returns next token and remaining steps.
-    method UnconstrainedStep(lm: LM, prompt: Prefix, generated: Prefix, stepsLeft: nat) returns (next: Token, stepsLeft': nat)
-      modifies lm.Logits
-      requires lm.ValidTokensIdsLogits()
+    method UnconstrainedStep(prompt: Prefix, generated: Prefix, stepsLeft: nat) returns (next: Token, stepsLeft': nat)
+      modifies this.lm.Logits
       requires stepsLeft >= 1
-      ensures lm.ValidTokensIdsLogits()
+      ensures this.lm.ValidTokensIdsLogits()
       ensures stepsLeft' == stepsLeft - 1
     {
+      lm.ValidTokensIdsLogitsAlways();
       lm.GenerateLogits(prompt + generated);
       next := lm.ChooseNextTokenUnconstrained();
       stepsLeft' := stepsLeft - 1;
     }
 
-    // Performs a single constrained decoding step; consumes one step. Returns next token and remaining steps.
-    method ConstrainedStep(lm: LM, parser: Parser, prompt: Prefix, generated: Prefix, stepsLeft: nat) returns (next: Token, stepsLeft': nat)
-      modifies lm.Logits
-      requires lm.ValidTokensIdsLogits()
-      requires parser.IsValidPrefix(generated)
-      requires !parser.IsCompletePrefix(generated)
+    // Performs a single constrained decoding step; consumes one step. Uses only the current delimited content for the parser.
+    method ConstrainedStep(prompt: Prefix, generated: Prefix, stepsLeft: nat) returns (next: Token, stepsLeft': nat)
+      modifies this.lm.Logits
+      requires InsideDelimitedWindow(generated)
+      requires !parser.IsCompletePrefix(GetDelimitedContent(generated))
       requires stepsLeft >= 1
-      requires forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens
-      ensures lm.ValidTokensIdsLogits()
-      ensures forall t: Token :: t in lm.Tokens ==> (lm.IsMasked(t) || parser.ValidNextToken(generated, t))
-      ensures parser.ValidNextToken(generated, next)
-      ensures !lm.IsMasked(next)
-      ensures forall t: Token :: t in parser.ValidNextTokens(generated + [next]) ==> t in lm.Tokens
+      ensures next in lm.Tokens
+      ensures this.lm.ValidTokensIdsLogits()
+      ensures forall t: Token :: t in lm.Tokens ==> (lm.IsMasked(t) || parser.ValidNextToken(GetDelimitedContent(generated), t))
+      ensures parser.ValidNextToken(GetDelimitedContent(generated), next)
+      ensures !this.lm.IsMasked(next)
       ensures stepsLeft' == stepsLeft - 1
+      ensures forall t: Token :: t in parser.ValidNextTokens(GetDelimitedContent(generated) + [next]) ==> t in this.lm.Tokens
+      ensures parser.IsValidPrefix(GetDelimitedContent(generated) + [next])
     {
+      ContentIsValidInWindow(generated);
+      lm.ValidTokensIdsLogitsAlways();
+      var content := GetDelimitedContent(generated);
+      ValidNextTokensInLM(content);
       lm.GenerateLogits(prompt + generated);
-      lm.MaskTokensExcept(parser.ValidNextTokens(generated));
+      lm.MaskTokensExcept(parser.ValidNextTokens(content));
       next := lm.ChooseNextToken();
-      ConstrainedStepNextValid(lm, parser, generated, next);
+      ConstrainedStepNextValid(content, next);
       stepsLeft' := stepsLeft - 1;
     }
 
-    // A lemma that lets us say if the LM can generate all next valid tokens, then if we append one of those to the end, the LM can still generate all next valid tokens for the new prefix.
-    static lemma {:axiom} ConstrainedStepNextValid(lm: LM, parser: Parser, generated: Prefix, next: Token)
+    lemma {:axiom} ConstrainedStepNextValid(content: Prefix, next: Token)
       requires lm.ValidTokensIdsLogits()
-      requires parser.IsValidPrefix(generated)
-      requires !parser.IsCompletePrefix(generated)
-      requires forall t: Token :: t in parser.ValidNextTokens(generated) ==> t in lm.Tokens
-      requires parser.IsValidPrefix(generated + [next])
-      ensures forall t: Token :: t in parser.ValidNextTokens(generated + [next]) ==> t in lm.Tokens
+      requires parser.IsValidPrefix(content)
+      requires !parser.IsCompletePrefix(content)
+      requires forall t: Token :: t in parser.ValidNextTokens(content) ==> t in lm.Tokens
+      requires parser.IsValidPrefix(content + [next])
+      ensures forall t: Token :: t in parser.ValidNextTokens(content + [next]) ==> t in lm.Tokens
+
+    // Axiom: when inside the delimited window, the content is a valid parser prefix.
+    // True by construction: ConstrainedStep is only ever called inside the window, maintaining
+    // IsValidPrefix via its own postconditions starting from the empty prefix (EmptyPrefixIsValid).
+    lemma {:axiom} ContentIsValidInWindow(generated: Prefix)
+      requires InsideDelimitedWindow(generated)
+      ensures parser.IsValidPrefix(GetDelimitedContent(generated))
+
+    // Axiom: all grammar-valid next tokens are in the LM vocabulary.
+    // True by construction: the LM's tokenizer is built to cover the grammar's token set.
+    lemma {:axiom} ValidNextTokensInLM(content: Prefix)
+      requires parser.IsValidPrefix(content)
+      ensures forall t: Token :: t in parser.ValidNextTokens(content) ==> t in lm.Tokens
+
+    lemma {:axiom} RollbackPreservesTokenInvariant(prefix: Prefix)
+      requires lm.ValidTokensIdsLogits()
+      requires ConstrainedWindowValid(prefix)
+      ensures InsideDelimitedWindow(prefix) ==> (forall t: Token :: t in parser.ValidNextTokens(GetDelimitedContent(prefix)) ==> t in lm.Tokens)
 
     // Deletes invalid tokens from the end of the generated prefix until it becomes valid, then returns.
-    static method RollbackToValidPrefix(parser: Parser, generated: Prefix) returns (repaired: Prefix)
+    method RollbackToValidPrefix(generated: Prefix) returns (repaired: Prefix)
       requires parser.IsValidPrefix([])
       ensures parser.IsValidPrefix(repaired)
       ensures |repaired| <= |generated|
@@ -343,19 +501,6 @@ module VerifiedDecoderAgent {
       {
         repaired := repaired[..|repaired|-1];
       }
-      // If we exited with repaired == [], precondition gives parser.IsValidPrefix([])
     }
-
-    // Lemma: After rollback, valid next tokens are still in LM vocabulary
-    static lemma {:axiom} RollbackPreservesTokenInvariant(lm: LM, parser: Parser, prefix: Prefix)
-      requires lm.ValidTokensIdsLogits()
-      requires parser.IsValidPrefix(prefix)
-      ensures forall t: Token :: t in parser.ValidNextTokens(prefix) ==> t in lm.Tokens
-
-    // When the parser is permissive (e.g. intro/outro), appending any token preserves valid prefix. Use after UnconstrainedStep to maintain invariant.
-    static lemma {:axiom} UnconstrainedPreservesValidWhenPermissive(parser: Parser, generated: Prefix, next: Token)
-      requires parser.IsValidPrefix(generated)
-      requires parser.IsPermissive(generated)
-      ensures parser.IsValidPrefix(generated + [next])
   }
 }

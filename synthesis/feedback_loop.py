@@ -40,6 +40,75 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
     repaired = strategy_code
     changed = False
 
+    # Fix: model re-declares "var delimiter := new Delimiter(...)"; template already provides "delim"
+    new_repaired = re.sub(
+        r"^\s*var\s+delimiter\s*:=\s*new\s+Delimiter\s*\([^)]*\)\s*;\s*\n?",
+        "",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: model uses "delimiter.LeftDelimiter" (no such field) — should be module constant "LeftDelimiter"
+    new_repaired = re.sub(r"\bdelimiter\.LeftDelimiter\b", "LeftDelimiter", repaired)
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: model uses "delimiter.RightDelimiter" (no such field) — should be module constant "RightDelimiter"
+    new_repaired = re.sub(r"\bdelimiter\.RightDelimiter\b", "RightDelimiter", repaired)
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: remaining "delimiter" references — template variable is "delim", not "delimiter"
+    new_repaired = re.sub(r"\bdelimiter\b", "delim", repaired)
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: old API — helpers.UnconstrainedStep(lm, prompt, ...) -> helpers.UnconstrainedStep(prompt, ...)
+    new_repaired = re.sub(
+        r"helpers\.UnconstrainedStep\s*\(\s*lm\s*,\s*",
+        "helpers.UnconstrainedStep(",
+        repaired,
+    )
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: old API — helpers.ConstrainedStep(lm, parser, prompt, ...) -> helpers.ConstrainedStep(prompt, ...)
+    new_repaired = re.sub(
+        r"helpers\.ConstrainedStep\s*\(\s*lm\s*,\s*parser\s*,\s*",
+        "helpers.ConstrainedStep(",
+        repaired,
+    )
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: old API — helpers.RollbackToValidPrefix(parser, generated) -> helpers.RollbackToValidPrefix(generated)
+    new_repaired = re.sub(
+        r"helpers\.RollbackToValidPrefix\s*\(\s*parser\s*,\s*",
+        "helpers.RollbackToValidPrefix(",
+        repaired,
+    )
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: old static lemma — CSDHelpers.RollbackPreservesTokenInvariant(...) no longer exists; remove the call
+    new_repaired = re.sub(
+        r"[ \t]*CSDHelpers\.RollbackPreservesTokenInvariant\s*\([^)]+\)\s*;\s*\n?",
+        "",
+        repaired,
+    )
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
     # Fix: malformed for-loop "for i in 0 .. |prompt| - 1" (Python/Rust-style) -> Dafny "for i := 0 to |prompt| - 1"
     for_loop_pattern = re.compile(
         r"for\s+(\w+)\s+in\s+0\s*\.\.\s*\|(\w+)\|\s*-\s*1\b"
@@ -121,8 +190,7 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
             re.MULTILINE | re.DOTALL,
         )
         replacement = (
-            "  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n"
-            "  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n"
+            "  var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n"
             "  generated := generated + [next];\n"
             "  stepsLeft := newSteps;\n"
             "  }"
@@ -183,9 +251,9 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
             repaired = new_repaired
             changed = True
 
-    # Fix: "Duplicate local-variable name: helpers" -> template already declares "var helpers := new CSDHelpers();"; remove duplicate
+    # Fix: "Duplicate local-variable name: helpers" -> template already declares "var helpers := new CSDHelpers(...)"; remove duplicate
     if "Duplicate local-variable name: helpers" in error_summary:
-        helpers_line = re.compile(r"^\s*var\s+helpers\s*:=\s*new\s+CSDHelpers\s*\(\s*\)\s*;\s*$", re.IGNORECASE | re.MULTILINE)
+        helpers_line = re.compile(r"^\s*var\s+helpers\s*:=\s*new\s+CSDHelpers\s*\([^)]*\)\s*;\s*$", re.IGNORECASE | re.MULTILINE)
         new_repaired = helpers_line.sub("", repaired)
         if new_repaired != repaired:
             repaired = new_repaired
@@ -231,15 +299,14 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
     if "decreases expression might not decrease" in error_summary and "stepsLeft := maxSteps" in repaired:
         else_block = re.compile(
             r"\s*else\s*\{\s*(?:\s*//[^\n]*\n)*\s*"
-            r"generated\s*:=\s*helpers\.RollbackToValidPrefix\s*\(\s*parser\s*,\s*generated\s*\)\s*;\s*"
+            r"generated\s*:=\s*helpers\.RollbackToValidPrefix\s*\(\s*(?:parser\s*,\s*)?generated\s*\)\s*;\s*"
             r"\s*stepsLeft\s*:=\s*maxSteps\s*;\s*"
             r"\s*\}",
             re.MULTILINE,
         )
         replacement = (
             " else {\n"
-            "    CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n"
-            "    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n"
+            "    var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n"
             "    generated := generated + [next];\n"
             "    stepsLeft := newSteps;\n"
             "  }"
@@ -256,7 +323,7 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
         if "RollbackToValidPrefix" in repaired:
             # Remove line(s) that assign generated from RollbackToValidPrefix inside the loop body
             repaired = re.sub(
-                r"\s*generated\s*:=\s*helpers\.RollbackToValidPrefix\s*\(\s*parser\s*,\s*generated\s*\)\s*;\s*",
+                r"\s*generated\s*:=\s*helpers\.RollbackToValidPrefix\s*\(\s*(?:parser\s*,\s*)?generated\s*\)\s*;\s*",
                 "\n",
                 repaired,
             )
@@ -315,6 +382,39 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
                     repaired = repaired.replace(match.group(0), f"{indent}var next: Token; var newSteps: nat;\n{match.group(0)}", 1)
                     changed = True
 
+    # Fix: "precondition for this call could not be proved" for InsideDelimitedWindow — ConstrainedStep called before window is open.
+    # Replace a bare ConstrainedStep in the loop body with an if/else: ConstrainedStep when inside window, UnconstrainedStep otherwise.
+    if (
+        "precondition for this call could not be proved" in error_summary
+        and "InsideDelimitedWindow" in error_summary
+        and "ConstrainedStep" in repaired
+    ):
+        bare_constrained = re.compile(
+            r"^(\s*)(var\s+next\s*,\s*newSteps\s*:=\s*helpers\.ConstrainedStep\s*\([^)]*\)\s*;\s*\n"
+            r"\s*generated\s*:=\s*generated\s*\+\s*\[next\]\s*;\s*\n"
+            r"\s*stepsLeft\s*:=\s*newSteps\s*;\s*)$",
+            re.MULTILINE,
+        )
+        def wrap_with_window_guard(m: re.Match) -> str:
+            indent, block = m.group(1), m.group(2)
+            lines = block.strip().split("\n")
+            inner_cs = "\n".join(f"{indent}  {l.strip()}" for l in lines)
+            inner_us = f"{indent}  next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);"
+            return (
+                f"{indent}var next: Token; var newSteps: nat;\n"
+                f"{indent}if helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)) {{\n"
+                f"{inner_cs}\n"
+                f"{indent}}} else {{\n"
+                f"{inner_us}\n"
+                f"{indent}  generated := generated + [next];\n"
+                f"{indent}  stepsLeft := newSteps;\n"
+                f"{indent}}}\n"
+            )
+        new_repaired = bare_constrained.sub(wrap_with_window_guard, repaired, count=1)
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
     # Fix: "precondition for this call could not be proved" when "stepsLeft >= 1" — guard Step calls so we only call when stepsLeft >= 1.
     if "precondition for this call could not be proved" in error_summary and "stepsLeft >= 1" in error_summary:
         # Wrap the 3-line block (Step call; generated := ...; stepsLeft := newSteps;) in "if stepsLeft >= 1 { ... } else { break; }"
@@ -333,56 +433,19 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
             repaired = new_repaired
             changed = True
 
-    # Fix: "precondition for this call could not be proved" for ConstrainedStep (ValidNextTokens in lm.Tokens)
-    # Insert lemma call CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated) before ConstrainedStep if missing.
-    if "precondition for this call could not be proved" in error_summary and "ValidNextTokens" in error_summary:
-        lemma_call = "CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);"
-        if "RollbackPreservesTokenInvariant" not in repaired and "ConstrainedStep" in repaired:
-            def insert_lemma_before_line(match: re.Match) -> str:
-                indent, full_line = match.group(1), match.group(2)
-                return f"{indent}{lemma_call}\n{indent}{full_line}"
-            # Match "var next, newSteps :=" or "next, newSteps :=" (after scope fix) + helpers.ConstrainedStep(...);
-            for pattern in [
-                re.compile(r"^(\s*)(var\s+next\s*,\s*newSteps\s*:=\s*helpers\.ConstrainedStep\s*\([^)]*\)\s*;\s*)$", re.MULTILINE),
-                re.compile(r"^(\s*)(next\s*,\s*newSteps\s*:=\s*helpers\.ConstrainedStep\s*\([^)]*\)\s*;\s*)$", re.MULTILINE),
-            ]:
-                new_repaired = pattern.sub(insert_lemma_before_line, repaired, count=1)
-                if new_repaired != repaired:
-                    repaired = new_repaired
-                    changed = True
-                    break
-
-    # Fix: "the method returns 0 value but is assigned to 1 variable" for RollbackPreservesTokenInvariant — it's a lemma (returns nothing). Call as statement, do not assign.
-    if "returns 0 value but is assigned to 1 variable" in error_summary and "RollbackPreservesTokenInvariant" in repaired:
-        lemma_assign = re.compile(
-            r"\s*generated\s*:=\s*(helpers|CSDHelpers)\s*\.\s*RollbackPreservesTokenInvariant\s*\(\s*lm\s*,\s*parser\s*,\s*generated\s*\)\s*;\s*",
-            re.IGNORECASE,
+    # Fix: "the method returns 1 value but is assigned to 0 variable" for RollbackToValidPrefix — LLM calls it without assigning. Must assign: generated := helpers.RollbackToValidPrefix(generated)
+    if "returns 1 value but is assigned to 0 variable" in error_summary and "RollbackToValidPrefix" in repaired:
+        standalone_rollback = re.compile(
+            r"^(\s*)helpers\.RollbackToValidPrefix\s*\(\s*(?:parser\s*,\s*)?generated\s*\)\s*;(?:\s*//[^\n]*)?\s*$",
+            re.MULTILINE,
         )
-        new_repaired = lemma_assign.sub(
-            r" \1.RollbackPreservesTokenInvariant(lm, parser, generated);\n  ",
+        new_repaired = standalone_rollback.sub(
+            lambda m: f"{m.group(1)}generated := helpers.RollbackToValidPrefix(generated);",
             repaired,
         )
         if new_repaired != repaired:
             repaired = new_repaired
             changed = True
-
-    # Fix: "the method returns 1 value but is assigned to 0 variable" for RollbackToValidPrefix — LLM calls it without assigning. Must assign: generated := ...RollbackToValidPrefix(...)
-    if "returns 1 value but is assigned to 0 variable" in error_summary and "RollbackToValidPrefix" in repaired:
-        # Standalone call "helpers.RollbackToValidPrefix(...)" or "CSDHelpers.RollbackToValidPrefix(...)" -> assign to generated
-        for prefix in [r"helpers", r"CSDHelpers"]:
-            standalone_rollback = re.compile(
-                rf"^(\s*){re.escape(prefix)}\.RollbackToValidPrefix\s*\(\s*parser\s*,\s*generated\s*\)\s*;(?:\s*//[^\n]*)?\s*$",
-                re.MULTILINE,
-            )
-            def make_assign(pfx: str):
-                def assign_rollback(m: re.Match) -> str:
-                    return f"{m.group(1)}generated := {pfx}.RollbackToValidPrefix(parser, generated);"
-                return assign_rollback
-            new_repaired = standalone_rollback.sub(make_assign(prefix), repaired)
-            if new_repaired != repaired:
-                repaired = new_repaired
-                changed = True
-                break
 
     # Fix: "decreases expression might not decrease" when using "decreases maxSteps - |generated|" — use stepsLeft as variant instead.
     if "decreases expression might not decrease" in error_summary and "decreases maxSteps - |generated|" in repaired:
@@ -395,17 +458,17 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
             repaired = new_repaired
             changed = True
 
-    # Fix: "invariant could not be proved" for parser.IsValidPrefix(generated) when loop uses UnconstrainedStep — insert RollbackPreservesTokenInvariant at loop start only (do NOT add UnconstrainedPreservesValidWhenPermissive; many parsers are not permissive).
-    if "invariant could not be proved" in error_summary and "IsValidPrefix(generated)" in error_summary and "UnconstrainedStep" in repaired and "ConstrainedStep" in repaired:
-        if "RollbackPreservesTokenInvariant" not in repaired:
-            loop_start = re.compile(r"(while\s+stepsLeft\s*>\s*0\s*&&\s*!parser\.IsCompletePrefix\s*\(generated\)\s*\n(?:\s*invariant[^\n]*\n)*\s*decreases\s+stepsLeft\s*)\n(\s*\{)\n(\s*)", re.MULTILINE)
-            def add_lemma_at_loop_start(m: re.Match) -> str:
-                pre, brace, indent = m.group(1), m.group(2), m.group(3)
-                return f"{pre}\n{brace}\n{indent}CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n{indent}"
-            new_repaired = loop_start.sub(add_lemma_at_loop_start, repaired, count=1)
-            if new_repaired != repaired:
-                repaired = new_repaired
-                changed = True
+    # Fix: "invariant could not be proved" for parser.IsValidPrefix(generated) when loop uses UnconstrainedStep —
+    # drop the IsValidPrefix invariant since UnconstrainedStep cannot guarantee it with a non-permissive parser.
+    if "invariant could not be proved" in error_summary and "IsValidPrefix(generated)" in error_summary and "UnconstrainedStep" in repaired:
+        new_repaired = re.sub(
+            r"[ \t]*invariant\s+parser\.IsValidPrefix\s*\(\s*generated\s*\)\s*\n",
+            "",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
 
     return repaired, changed
 

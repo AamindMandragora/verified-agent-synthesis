@@ -36,16 +36,16 @@ You must output ONLY the Dafny method body for:
     ...
     ensures remainingSteps >= 0 && remainingSteps <= maxSteps
 
-The template already provides: var helpers := new CSDHelpers(); var stepsLeft := maxSteps; [YOUR BODY]; remainingSteps := stepsLeft;
+The template already provides: var delim := new Delimiter(LeftDelimiter, RightDelimiter); var helpers := new CSDHelpers(lm, parser, delim); var stepsLeft := maxSteps; [YOUR BODY]; remainingSteps := stepsLeft;
 So you must only assign to `generated` and update `stepsLeft` in your loop. Do NOT assign to remainingSteps (the template does that).
 
 Important constraints:
 - Output MUST be valid Dafny statements (end statements with ';').
 - Initialize/assign the out-parameter `generated` (e.g. generated := []).
 - **stepsLeft is ALREADY DECLARED by the template.** Do NOT write \"var stepsLeft := maxSteps;\" or \"var stepsLeft :=\"; that causes \"Duplicate local-variable name: stepsLeft\". Just use stepsLeft in your loop and assign stepsLeft := newSteps after each step call.
-- Do NOT redeclare `generated` or `stepsLeft`. Do NOT assign to `remainingSteps`.
-- You MUST use the `helpers` instance (type `CSDHelpers`) which is already instantiated.
-- Use `helpers.<Method>` (instance call). UnconstrainedStep and ConstrainedStep each take `stepsLeft` and return (next, stepsLeft'); assign stepsLeft := stepsLeft' after each call.
+- Do NOT redeclare `generated`, `stepsLeft`, `helpers`, or `delim`. Do NOT assign to `remainingSteps`.
+- You MUST use the `helpers` instance (type `CSDHelpers`) which is already instantiated with lm, parser, and delimiter.
+- Use `helpers.<Method>` (instance call). UnconstrainedStep and ConstrainedStep each take `(prompt, generated, stepsLeft)` — do NOT pass lm or parser, they are captured by the helpers instance. Each returns (next, stepsLeft'); assign stepsLeft := stepsLeft' after each call.
 - Be constraint-driven: choose the strategy based on the parser and contract.
 
 CRITICAL TYPE CONSTRAINTS:
@@ -66,7 +66,7 @@ The `parser` (type Parser) has exactly these members. Do NOT call any other meth
 
 - **Token is a type synonym for string.** It has NO static members. To compare with delimiter tokens use the module constants `LeftDelimiter` and `RightDelimiter` (e.g. `next == LeftDelimiter` or `next == RightDelimiter`). Do NOT use Token.LeftDelimiter or Token.RightDelimiter — they do not exist.
 
-To decide when to use ConstrainedStep: use the condition !parser.IsCompletePrefix(generated). When that holds and the prefix is valid, you may call ConstrainedStep. Do NOT use parser.CanConstrain() or parser.CanConstrain(generated) — they do not exist.
+To decide when to use ConstrainedStep: guard with `helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated))`. Only call ConstrainedStep when both conditions are true. Do NOT use parser.CanConstrain() or parser.CanConstrain(generated) — they do not exist.
 Do NOT use .Exists, .Any, .Where, or lambda syntax on sequences — Dafny sequences have no such methods. To test "some token in seq satisfies P", use: exists token :: token in seq && parser.ValidNextToken(generated, token).
 
 ## Dafny syntax (follow exactly to avoid verification failures)
@@ -101,30 +101,34 @@ After this, output the Dafny statements for the strategy body.
 
 CSDHelpers has exactly three methods. You must build your strategy by calling them in a loop.
 
-1) UnconstrainedStep(lm, prompt, generated, stepsLeft) returns (next: Token, stepsLeft': nat)
+1) helpers.UnconstrainedStep(prompt, generated, stepsLeft) returns (next: Token, stepsLeft': nat)
    - One unconstrained step; consumes one step (stepsLeft' == stepsLeft - 1). Requires stepsLeft >= 1.
-   - Use: var next, newSteps := helpers.UnconstrainedStep(lm, prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps;
+   - Use: var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps;
 
-2) ConstrainedStep(lm, parser, prompt, generated, stepsLeft) returns (next: Token, stepsLeft': nat)
-   - One constrained step; consumes one step. Requires !parser.IsCompletePrefix(generated) and stepsLeft >= 1.
-   - Use: var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps;
+2) helpers.ConstrainedStep(prompt, generated, stepsLeft) returns (next: Token, stepsLeft': nat)
+   - One constrained step; consumes one step. Requires: InsideDelimitedWindow(generated), !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)), stepsLeft >= 1.
+   - InsideDelimitedWindow(generated) means generated already contains LeftDelimiter ("<<") with no matching ">>" yet. YOU CANNOT call ConstrainedStep when generated == [] or before "<<" has been emitted — it will fail verification. Always use UnconstrainedStep first until LeftDelimiter appears in generated, then switch to ConstrainedStep.
+   - Use: var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps;
 
-3) RollbackToValidPrefix(parser, generated) returns (repaired: Prefix)
-   - helpers.RollbackToValidPrefix(parser, generated) — trims invalid tokens from the end. Does not consume steps.
+3) helpers.RollbackToValidPrefix(generated) returns (repaired: Prefix)
+   - Trims invalid tokens from the end of generated. Does not consume steps.
+   - Use: generated := helpers.RollbackToValidPrefix(generated);
+
+IMPORTANT: Do NOT pass `lm` or `parser` to any helpers method — they are captured by the helpers instance.
 
 You MUST implement the strategy body as a loop that:
 - Uses generated := []; (stepsLeft is already maxSteps). Loop while stepsLeft > 0 && !parser.IsCompletePrefix(generated).
-- In the loop, choose UnconstrainedStep vs ConstrainedStep to match the task. When the task requires "plain text then << constrained >>", use an if/else: call UnconstrainedStep when you are not yet in the constrained segment (e.g. parser.IsCompletePrefix(generated) or not yet past the left delimiter); call ConstrainedStep when you are inside the constrained segment. Before ConstrainedStep, call CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated); so the precondition is satisfied. Assign the returned (next, newSteps) back, append next to generated, set stepsLeft := newSteps.
+- In the loop, choose UnconstrainedStep vs ConstrainedStep to match the task. ALWAYS use an if/else: call UnconstrainedStep when not yet inside the constrained window (i.e. when !helpers.InsideDelimitedWindow(generated)); call ConstrainedStep only when helpers.InsideDelimitedWindow(generated) is true. Assign the returned (next, newSteps) back, append next to generated, set stepsLeft := newSteps.
 - If you use if/else with both step types, declare var next: Token; var newSteps: nat; before the if/else, then in each branch assign next, newSteps := helpers.UnconstrainedStep(...) or next, newSteps := helpers.ConstrainedStep(...).
 - Optionally use RollbackToValidPrefix if you need to repair. At the end the template assigns remainingSteps := stepsLeft.
-- For tasks that are purely constrained (no plain-text prefix), a single ConstrainedStep loop is fine. For tasks that mix plain text and delimited content, you must branch and use UnconstrainedStep for the plain part.
+- YOU CANNOT use ConstrainedStep alone from the start — generated starts as [] which is never InsideDelimitedWindow. Always start with UnconstrainedStep and switch to ConstrainedStep after "<<" appears.
 
 **Loop invariants (required for verification):** Use at minimum:
   invariant lm.ValidTokensIdsLogits()
-  invariant parser.IsValidPrefix(generated)
   invariant 0 <= stepsLeft <= maxSteps
   invariant |generated| + stepsLeft == maxSteps
   decreases stepsLeft
+NOTE: Do NOT include `invariant parser.IsValidPrefix(generated)` when using UnconstrainedStep — unconstrained generation does not guarantee a valid prefix.
 
 Output format:
 - Return ONLY the method body (no signature, no outer braces).
@@ -150,14 +154,18 @@ Example format (required rationale + loop with stepsLeft and invariants):
   // <your reasoning here>
   // CSD_RATIONALE_END
   generated := [];
+  var next: Token; var newSteps: nat;
   while stepsLeft > 0 && !parser.IsCompletePrefix(generated)
     invariant lm.ValidTokensIdsLogits()
-    invariant parser.IsValidPrefix(generated)
     invariant 0 <= stepsLeft <= maxSteps
     invariant |generated| + stepsLeft == maxSteps
     decreases stepsLeft
   {{
-    var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);
+    if helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)) {{
+      next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);
+    }} else {{
+      next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);
+    }}
     generated := generated + [next];
     stepsLeft := newSteps;
   }}
@@ -187,7 +195,7 @@ Rules:
 - Ensure the body is valid Dafny. Statements must end with ';' where required.
 
 **CRITICAL: If the error says "member X does not exist in class 'CSDHelpers'":**
-- That method DOES NOT EXIST. The ONLY methods on `helpers` are: UnconstrainedStep, ConstrainedStep, RollbackToValidPrefix (static).
+- That method DOES NOT EXIST. The ONLY methods on `helpers` are: UnconstrainedStep, ConstrainedStep, RollbackToValidPrefix.
 - You MUST implement the strategy with a loop that calls helpers.UnconstrainedStep and/or helpers.ConstrainedStep and appends the returned token to generated. There are no one-call "strategy" methods.
 
 **CRITICAL: If the error says a member does not exist on Parser (e.g. CanConstrain, CanConstrain(generated), or any other parser.X):**
@@ -212,8 +220,8 @@ Rules:
 **CRITICAL: If the error says "member 'LeftDelimiter' does not exist in type synonym 'Token'" or "member 'RightDelimiter' does not exist":**
 - Token is a type synonym for string; it has no members. Use the module constants LeftDelimiter and RightDelimiter instead. Replace every `Token.LeftDelimiter` with `LeftDelimiter` and every `Token.RightDelimiter` with `RightDelimiter` (no Token. prefix).
 
-**CRITICAL: If the error says "the method returns 0 value but is assigned to 1 variable" and points at RollbackPreservesTokenInvariant:**
-- RollbackPreservesTokenInvariant is a lemma; it returns nothing. Do NOT assign its result to generated. Use a standalone statement: `CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);` (no `generated :=`).
+**CRITICAL: If the error says "the method returns 0 value but is assigned to 1 variable":**
+- RollbackToValidPrefix returns a Prefix — assign it: `generated := helpers.RollbackToValidPrefix(generated);`. Do NOT call it as a statement without assignment.
 
 **CRITICAL: If the error says "Ambiguous use of && and ||" or "Use parentheses to disambiguate":**
 - When mixing `||` and `&&` in one condition, add parentheses so Dafny knows the grouping. Example: use `parser.IsCompletePrefix(generated) || (|generated| > 0 && generated[|generated|-1] != LeftDelimiter)` not `... || |generated| > 0 && generated[...] != LeftDelimiter`.
@@ -226,6 +234,26 @@ Rules:
 
 **CRITICAL: If the error says "index out of range" at generated[|generated|-1]:**
 - When generated is empty, |generated|-1 is invalid. Guard the condition: use (|generated| > 0 && generated[|generated|-1] != LeftDelimiter) instead of just generated[|generated|-1] != LeftDelimiter.
+
+**CRITICAL: If the error says "precondition for this call could not be proved" and mentions "InsideDelimitedWindow" for a ConstrainedStep call:**
+- ConstrainedStep requires InsideDelimitedWindow(generated), meaning "<<" must already be in generated with no matching ">>" yet. generated starts as [] which is never inside the window.
+- You CANNOT call ConstrainedStep at the start or in a bare loop — you must first use UnconstrainedStep until LeftDelimiter appears. Fix: use an if/else in the loop: call ConstrainedStep only when helpers.InsideDelimitedWindow(generated) is true and !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)); otherwise call UnconstrainedStep.
+- Pattern to use:
+    var next: Token; var newSteps: nat;
+    while stepsLeft > 0 && !parser.IsCompletePrefix(generated)
+      invariant lm.ValidTokensIdsLogits()
+      invariant 0 <= stepsLeft <= maxSteps
+      invariant |generated| + stepsLeft == maxSteps
+      decreases stepsLeft
+    {
+      if helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)) {
+        next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);
+      } else {
+        next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);
+      }
+      generated := generated + [next];
+      stepsLeft := newSteps;
+    }
 
 **CRITICAL: If the error says "precondition for this call could not be proved" for UnconstrainedPreservesValidWhenPermissive or mentions IsPermissive:**
 - That lemma requires parser.IsPermissive(generated). Many parsers (e.g. FOLIO) are not permissive outside << >>. Remove the line CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next); from your strategy.
@@ -241,7 +269,7 @@ Common fixes:
 - ConstrainedStep requires !parser.IsCompletePrefix(generated). Guard your loop or use a valid loop invariant.
 - **If the error mentions precondition, invariant, or "assertion might not hold" for a while loop:** Add explicit loop invariants and a decreases clause. For a loop that only calls ConstrainedStep, use: `invariant parser.IsValidPrefix(generated);` `invariant |generated| <= maxSteps;` `decreases maxSteps - |generated|;` (semicolons between clauses, or newline-separated).
 - Use `x := x + 1` not `x++`. Pass stepsLeft into UnconstrainedStep/ConstrainedStep and assign the returned (next, stepsLeft) back.
-- RollbackToValidPrefix: call as helpers.RollbackToValidPrefix(parser, generated).
+- RollbackToValidPrefix: call as generated := helpers.RollbackToValidPrefix(generated);.
 
 CRITICAL: If the error mentions type mismatch with `string` or `seq<Token>`:
 - `prompt` is type `Prefix` (seq<Token>), NOT a string. You CANNOT use `+` with strings.
@@ -252,7 +280,7 @@ CRITICAL: If the error mentions `invalid UnaryExpression` and your code uses `++
 - Replace `++` with `+` for sequence concatenation (e.g., `a + b`, not `a ++ b`).
 
 **CRITICAL: If the task requires "plain text" or "unconstrained" first and then a constrained segment (e.g. << formula >>), but your strategy uses only ConstrainedStep:**
-- You must use BOTH UnconstrainedStep and ConstrainedStep. Use UnconstrainedStep when the prefix is complete (parser.IsCompletePrefix(generated)) or when you are not yet in the constrained region; use ConstrainedStep (after RollbackPreservesTokenInvariant) when inside the constrained segment. Declare var next: Token; var newSteps: nat; before the if/else.
+- You must use BOTH UnconstrainedStep and ConstrainedStep. Use UnconstrainedStep when the prefix is complete (parser.IsCompletePrefix(generated)) or when you are not yet in the constrained region; use ConstrainedStep when inside the constrained segment. Declare var next: Token; var newSteps: nat; before the if/else.
 
 If the same strategy keeps failing, switch to a COMPLETELY DIFFERENT verified strategy helper. Do not keep trying the same approach with minor tweaks.
 """
