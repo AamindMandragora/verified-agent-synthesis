@@ -1,0 +1,42 @@
+// SyGuS SLIA grammar: string manipulation S-expressions
+// Used in CSD constrained generation; the LM outputs a closed S-expression.
+
+csd_start: str_expr ">>"
+start: str_expr
+
+// String expressions
+?str_expr: STR_LIT
+         | VAR
+         | concat
+         | at
+         | substr
+         | replace
+         | upper
+         | lower
+
+concat:  "(" "str.++" str_expr str_expr ")"
+at:      "(" "str.at"     str_expr int_expr ")"
+substr:  "(" "str.substr" str_expr int_expr int_expr ")"
+replace: "(" "str.replace" str_expr str_expr str_expr ")"
+upper:   "(" "str.upper" str_expr ")"
+lower:   "(" "str.lower" str_expr ")"
+
+// Integer expressions (used as arguments to string ops)
+?int_expr: INT_LIT
+          | strlen
+          | indexof
+          | int_add
+          | int_sub
+
+strlen:  "(" "str.len"     str_expr ")"
+indexof: "(" "str.indexof" str_expr str_expr int_expr ")"
+int_add: "(" "+"           int_expr int_expr ")"
+int_sub: "(" "-"           int_expr int_expr ")"
+
+// Terminals
+STR_LIT: "\"" /[^"]*/ "\""
+VAR:     /[a-z][a-z0-9_]*/
+INT_LIT: /-?[0-9]+/
+
+%import common.WS
+%ignore WS

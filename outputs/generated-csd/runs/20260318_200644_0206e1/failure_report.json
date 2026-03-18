@@ -1,0 +1,258 @@
+{
+  "task_description": "Generate short symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces a strict arithmetic expression grammar with VARIABLES and numeric constants. CRITICAL RULES: 1. Every expression MUST contain at least one variable - pure numeric expressions like '2 * 2' are INVALID.     Variables may appear as letter+digits (n1, x2), split letter/digit tokens (n 1, x 2), or letter-only (n, x, foo). 2. Variables represent problem values; numeric constants (12, 100) are for unit conversions and percentages. 3. The constrained windows are SHORT (typically 5-20 tokens for expressions like 'n1 + n2 * 12'). 4. The grammar is RECURSIVE but depth is BOUNDED in runtime; prefer balanced parentheses and compact expressions. 5. The grammar includes the closing delimiter '>>' - expressions must be complete and compact. 6. Avoid trivial outputs (e.g., just a single variable) unless the problem truly requires it; include necessary operators.",
+  "total_attempts": 10,
+  "timestamp": "2026-03-18T20:09:14.433660",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delimiter \" << \" is encountered.\n// The constrained decoding is only performed within the delimiter window,\n// and it ensures that the generated text remains valid under the grammar.\n// CSD_RATIONALE_END\n\nvar delim := new Delimiter(LeftDelimiter, RightDelimiter);\n  var helpers := new CSDHelpers(lm, parser, delim);\n  helpers.DelimitersInLMAlways();\n  var stepsLeft := maxSteps;\n  var generated := [];\n  var stepCounter := 0;\n  var hasValid := false;\n\n  invariant lm.ValidTokensIdsLogits();\n  invariant 0 <= stepsLeft <= maxSteps;\n  invariant |generated| <= maxSteps;\n  invariant helpers.ConstrainedWindowValid(generated);\n  decreases stepsLeft;\n\n  while (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  {\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      // Inside constrained window, use constrained decoding\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n      hasValid := true;\n    }\n    else\n    {\n      // Outside constrained window, use unconstrained decoding\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n\n    stepCounter := stepCounter + 1;\n  }\n\n  remainingSteps := stepsLeft;",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delimiter \" << \" is encountered.\n// The constrained decoding is only performed within the delimiter window,\n// and it ensures that the generated text remains valid under the grammar.\n// CSD_RATIONALE_END\n\nvar delim := new Delimiter(LeftDelimiter, RightDelimiter);\n  var helpers := new CSDHelpers(lm, parser, delim);\n  helpers.DelimitersInLMAlways();\n  var stepsLeft := maxSteps;\n  var generated := [];\n  var stepCounter := 0;\n  var hasValid := false;\n\n  invariant lm.ValidTokensIdsLogits();\n  invariant 0 <= stepsLeft <= maxSteps;\n  invariant |generated| <= maxSteps;\n  invariant helpers.ConstrainedWindowValid(generated);\n  decreases stepsLeft;\n\n  while (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  {\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      // Inside constrained window, use constrained decoding\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n      hasValid := true;\n    }\n    else\n    {\n      // Outside constrained window, use unconstrained decoding\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n\n    stepCounter := stepCounter + 1;\n  }\n\n  remainingSteps := stepsLeft;"
+      },
+      "timestamp": "2026-03-18T20:07:22.036476",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 37, Column 2): Error: rbrace expected\n\nFull Dafny output:\nGeneratedCSD.dfy(37,2): Error: rbrace expected\n   |\n37 |   invariant lm.ValidTokensIdsLogits();\n   |   ^\n\n1 parse errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 2,
+      "strategy_code": "generated := [];\n// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delim \" << \" is encountered.\n// The constrained decoding is only performed within the delim window,\n// and it ensures that the generated text remains valid under the grammar.\n// CSD_RATIONALE_END\nvar helpers := new CSDHelpers(lm, parser, delim);\nvar stepsLeft := maxSteps;\nvar stepCounter := 0;\n  var hasValid := false;\n\n  while (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant helpers.ConstrainedWindowValid(generated)\n  decreases stepsLeft\n  {\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      // Inside constrained window, use constrained decoding\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n      hasValid := true;\n    }\n    else\n    {\n      // Outside constrained window, use unconstrained decoding\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n\n    stepCounter := stepCounter + 1;\n  }\n",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "generated := [];\n// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delim \" << \" is encountered.\n// The constrained decoding is only performed within the delim window,\n// and it ensures that the generated text remains valid under the grammar.\n// CSD_RATIONALE_END\nvar helpers := new CSDHelpers(lm, parser, delim);\nvar stepsLeft := maxSteps;\nvar stepCounter := 0;\n  var hasValid := false;\n\n  while (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant helpers.ConstrainedWindowValid(generated)\n  decreases stepsLeft\n  {\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      // Inside constrained window, use constrained decoding\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n      hasValid := true;\n    }\n    else\n    {\n      // Outside constrained window, use unconstrained decoding\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n\n    stepCounter := stepCounter + 1;\n  }\n"
+      },
+      "timestamp": "2026-03-18T20:07:22.561217",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 29, Column 4): Error: Duplicate local-variable name: helpers\n  (Line 30, Column 4): Error: Duplicate local-variable name: stepsLeft\n\nFull Dafny output:\nGeneratedCSD.dfy(29,4): Error: Duplicate local-variable name: helpers\n   |\n29 | var helpers := new CSDHelpers(lm, parser, delim);\n   |     ^^^^^^^\n\nGeneratedCSD.dfy(30,4): Error: Duplicate local-variable name: stepsLeft\n   |\n30 | var stepsLeft := maxSteps;\n   |     ^^^^^^^^^\n\n2 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 3,
+      "strategy_code": "generated := [];\n// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delim \" << \" is encountered.\n// The constrained decoding is only performed within the delim window,\n// and it ensures that the generated text remains valid under the grammar.\n// CSD_RATIONALE_END\n\nvar stepCounter := 0;\n  var hasValid := false;\n\n  while (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant helpers.ConstrainedWindowValid(generated)\n  decreases stepsLeft\n  {\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      // Inside constrained window, use constrained decoding\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n      hasValid := true;\n    }\n    else\n    {\n      // Outside constrained window, use unconstrained decoding\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n\n    stepCounter := stepCounter + 1;\n  }\n",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "generated := [];\n// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delim \" << \" is encountered.\n// The constrained decoding is only performed within the delim window,\n// and it ensures that the generated text remains valid under the grammar.\n// CSD_RATIONALE_END\n\nvar stepCounter := 0;\n  var hasValid := false;\n\n  while (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant helpers.ConstrainedWindowValid(generated)\n  decreases stepsLeft\n  {\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      // Inside constrained window, use constrained decoding\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n      hasValid := true;\n    }\n    else\n    {\n      // Outside constrained window, use unconstrained decoding\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n\n    stepCounter := stepCounter + 1;\n  }\n"
+      },
+      "timestamp": "2026-03-18T20:07:23.548022",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 36, Column 24): Error: this invariant could not be proved to be maintained by the loop\n  (Line 37, Column 42): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(36,24): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n36 |   invariant |generated| <= maxSteps\n   |                         ^^\n\nGeneratedCSD.dfy(37,42): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n37 |   invariant helpers.ConstrainedWindowValid(generated)\n   |                                           ^\n\nVerifiedAgentSynthesis.dfy(488,52): Related location: this proposition could not be proved\n    |\n488 |       !this.delimiter.InsideDelimitedWindow(prefix) || this.parser.IsValidPrefix(this.delimiter.GetDelimitedContent(prefix))\n    |                                                     ^^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 4,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delim \" << \" is encountered.\n// The constrained decoding is only performed within the delim window,\n// and it ensures that the generated text remains valid under the grammar.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nvar hasValid := false;\nvar isInsideDelimitedWindow := false;\n\nwhile (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant isInsideDelimitedWindow ==> helpers.InsideDelimitedWindow(generated)\n  invariant isInsideDelimitedWindow ==> !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated))\n  invariant isInsideDelimitedWindow ==> helpers.ConstrainedWindowValid(generated)\n  decreases stepsLeft\n{\n  if (isInsideDelimitedWindow)\n  {\n    // Inside constrained window, use constrained decoding\n    var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := true;\n  }\n  else if (generated.Contains(delim.LeftDelimiter))\n  {\n    // Encountered \" << \", enter constrained window\n    isInsideDelimitedWindow := true;\n    // Use unconstrained step to generate initial content\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := true;\n  }\n  else\n  {\n    // Outside constrained window, use unconstrained decoding\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delim \" << \" is encountered.\n// The constrained decoding is only performed within the delim window,\n// and it ensures that the generated text remains valid under the grammar.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nvar hasValid := false;\nvar isInsideDelimitedWindow := false;\n\nwhile (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant isInsideDelimitedWindow ==> helpers.InsideDelimitedWindow(generated)\n  invariant isInsideDelimitedWindow ==> !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated))\n  invariant isInsideDelimitedWindow ==> helpers.ConstrainedWindowValid(generated)\n  decreases stepsLeft\n{\n  if (isInsideDelimitedWindow)\n  {\n    // Inside constrained window, use constrained decoding\n    var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := true;\n  }\n  else if (generated.Contains(delim.LeftDelimiter))\n  {\n    // Encountered \" << \", enter constrained window\n    isInsideDelimitedWindow := true;\n    // Use unconstrained step to generate initial content\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n    hasValid := true;\n  }\n  else\n  {\n    // Outside constrained window, use unconstrained decoding\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}"
+      },
+      "timestamp": "2026-03-18T20:07:44.369695",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 52, Column 21): Error: type seq<Token> does not have a member Contains\n  (Line 52, Column 36): Error: member 'LeftDelimiter' does not exist in class 'Delimiter'\n\nFull Dafny output:\nGeneratedCSD.dfy(52,21): Error: type seq<Token> does not have a member Contains\n   |\n52 |   else if (generated.Contains(delim.LeftDelimiter))\n   |                      ^^^^^^^^\n\nGeneratedCSD.dfy(52,36): Error: member 'LeftDelimiter' does not exist in class 'Delimiter'\n   |\n52 |   else if (generated.Contains(delim.LeftDelimiter))\n   |                                     ^^^^^^^^^^^^^\n\n2 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 5,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delim \" << \" is encountered.\n// The constrained decoding is only performed within the delim window,\n// and it ensures that the generated text remains valid under the grammar.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nvar isInsideDelimitedWindow := false;\n\nwhile (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant isInsideDelimitedWindow ==> helpers.InsideDelimitedWindow(generated)\n  invariant isInsideDelimitedWindow ==> !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated))\n  invariant isInsideDelimitedWindow ==> helpers.ConstrainedWindowValid(generated)\n  decreases stepsLeft\n{\n  if (isInsideDelimitedWindow)\n  {\n    // Inside constrained window, use constrained decoding\n    var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else if (generated.Contains(delim.LeftDelimiter))\n  {\n    // Encountered \" << \", enter constrained window\n    isInsideDelimitedWindow := true;\n    // Use unconstrained step to generate initial content\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Outside constrained window, use unconstrained decoding\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delim \" << \" is encountered.\n// The constrained decoding is only performed within the delim window,\n// and it ensures that the generated text remains valid under the grammar.\n// CSD_RATIONALE_END\n\ngenerated := [];\n\nvar stepCounter := 0;\nvar isInsideDelimitedWindow := false;\n\nwhile (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant isInsideDelimitedWindow ==> helpers.InsideDelimitedWindow(generated)\n  invariant isInsideDelimitedWindow ==> !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated))\n  invariant isInsideDelimitedWindow ==> helpers.ConstrainedWindowValid(generated)\n  decreases stepsLeft\n{\n  if (isInsideDelimitedWindow)\n  {\n    // Inside constrained window, use constrained decoding\n    var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else if (generated.Contains(delim.LeftDelimiter))\n  {\n    // Encountered \" << \", enter constrained window\n    isInsideDelimitedWindow := true;\n    // Use unconstrained step to generate initial content\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Outside constrained window, use unconstrained decoding\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n\n  stepCounter := stepCounter + 1;\n}"
+      },
+      "timestamp": "2026-03-18T20:08:03.304244",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 50, Column 21): Error: type seq<Token> does not have a member Contains\n  (Line 50, Column 36): Error: member 'LeftDelimiter' does not exist in class 'Delimiter'\n\nFull Dafny output:\nGeneratedCSD.dfy(50,21): Error: type seq<Token> does not have a member Contains\n   |\n50 |   else if (generated.Contains(delim.LeftDelimiter))\n   |                      ^^^^^^^^\n\nGeneratedCSD.dfy(50,36): Error: member 'LeftDelimiter' does not exist in class 'Delimiter'\n   |\n50 |   else if (generated.Contains(delim.LeftDelimiter))\n   |                                     ^^^^^^^^^^^^^\n\n2 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 6,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delim \" << \" is encountered.\n// The constrained decoding is only performed within the delim window,\n// and it ensures that the generated text remains valid under the grammar.\n// The strategy alternates between unconstrained and constrained steps,\n// ensuring that the final result is both grammatically correct and constrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\n\nwhile (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant stepCounter <= maxSteps\n  decreases stepsLeft\n{\n  var next, newSteps: Token;\n\n  if (stepCounter % 2 == 0)\n  {\n    // Alternating unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Alternating constrained step\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n    else\n    {\n      // If not in constrained window, use unconstrained step\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  }\n\n  stepCounter := stepCounter + 1;\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delim \" << \" is encountered.\n// The constrained decoding is only performed within the delim window,\n// and it ensures that the generated text remains valid under the grammar.\n// The strategy alternates between unconstrained and constrained steps,\n// ensuring that the final result is both grammatically correct and constrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\n\nwhile (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant stepCounter <= maxSteps\n  decreases stepsLeft\n{\n  var next, newSteps: Token;\n\n  if (stepCounter % 2 == 0)\n  {\n    // Alternating unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Alternating constrained step\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n    else\n    {\n      // If not in constrained window, use unconstrained step\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  }\n\n  stepCounter := stepCounter + 1;\n}"
+      },
+      "timestamp": "2026-03-18T20:08:18.802405",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 41, Column 6): Error: the type of this local variable is underspecified\n\nFull Dafny output:\nGeneratedCSD.dfy(41,6): Error: the type of this local variable is underspecified\n   |\n41 |   var next, newSteps: Token;\n   |       ^^^^\n\n1 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 7,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delim \" << \" is encountered.\n// The constrained decoding is only performed within the delim window,\n// and it ensures that the generated text remains valid under the grammar.\n// The strategy alternates between unconstrained and constrained steps,\n// ensuring that the final result is both grammatically correct and constrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\n\nwhile (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant stepCounter <= maxSteps\n  decreases stepsLeft\n{\n  var next: Token;\n  var newSteps: nat;\n\n  if (stepCounter % 2 == 0)\n  {\n    // Alternating unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Alternating constrained step\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n    else\n    {\n      // If not in constrained window, use unconstrained step\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  }\n\n  stepCounter := stepCounter + 1;\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delim \" << \" is encountered.\n// The constrained decoding is only performed within the delim window,\n// and it ensures that the generated text remains valid under the grammar.\n// The strategy alternates between unconstrained and constrained steps,\n// ensuring that the final result is both grammatically correct and constrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\n\nwhile (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant stepCounter <= maxSteps\n  decreases stepsLeft\n{\n  var next: Token;\n  var newSteps: nat;\n\n  if (stepCounter % 2 == 0)\n  {\n    // Alternating unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Alternating constrained step\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n    else\n    {\n      // If not in constrained window, use unconstrained step\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  }\n\n  stepCounter := stepCounter + 1;\n}"
+      },
+      "timestamp": "2026-03-18T20:08:19.849019",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 37, Column 24): Error: this invariant could not be proved to be maintained by the loop\n  (Line 38, Column 24): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(37,24): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n37 |   invariant |generated| <= maxSteps\n   |                         ^^\n\nGeneratedCSD.dfy(38,24): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n38 |   invariant stepCounter <= maxSteps\n   |                         ^^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 8,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delim \" << \" is encountered.\n// The constrained decoding is only performed within the delim window,\n// and it ensures that the generated text remains valid under the grammar.\n// The strategy alternates between unconstrained and constrained steps,\n// ensuring that the final result is both grammatically correct and constrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\n\nwhile (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  decreases stepsLeft\n{\n  var next: Token;\n  var newSteps: nat;\n\n  if (stepCounter % 2 == 0)\n  {\n    // Alternating unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Alternating constrained step\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n    else\n    {\n      // If not in constrained window, use unconstrained step\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  }\n\n  stepCounter := stepCounter + 1;\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses unconstrained decoding for the initial plain text generation\n// and switches to constrained decoding once the delim \" << \" is encountered.\n// The constrained decoding is only performed within the delim window,\n// and it ensures that the generated text remains valid under the grammar.\n// The strategy alternates between unconstrained and constrained steps,\n// ensuring that the final result is both grammatically correct and constrained.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\n\nwhile (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  decreases stepsLeft\n{\n  var next: Token;\n  var newSteps: nat;\n\n  if (stepCounter % 2 == 0)\n  {\n    // Alternating unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Alternating constrained step\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n    else\n    {\n      // If not in constrained window, use unconstrained step\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  }\n\n  stepCounter := stepCounter + 1;\n}"
+      },
+      "timestamp": "2026-03-18T20:08:22.185580",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 37, Column 24): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(37,24): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n37 |   invariant |generated| <= maxSteps\n   |                         ^^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 9,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a simple alternating pattern: UnconstrainedStep for plain text\n// and ConstrainedStep within the delimited << ... >> segment. The strategy ensures\n// that the generated text is valid under the grammar by always maintaining a valid\n// prefix. It alternates between unconstrained and constrained steps to avoid\n// premature completion of the constrained segment.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\n\nwhile (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant helpers.ConstrainedWindowValid(generated)\n  decreases stepsLeft\n{\n  var next: Token;\n  var newSteps: nat;\n\n  if (stepCounter % 2 == 0)\n  {\n    // Alternating unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Alternating constrained step\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n    else\n    {\n      // If not in constrained window, use unconstrained step\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  }\n\n  stepCounter := stepCounter + 1;\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a simple alternating pattern: UnconstrainedStep for plain text\n// and ConstrainedStep within the delimited << ... >> segment. The strategy ensures\n// that the generated text is valid under the grammar by always maintaining a valid\n// prefix. It alternates between unconstrained and constrained steps to avoid\n// premature completion of the constrained segment.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\n\nwhile (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant helpers.ConstrainedWindowValid(generated)\n  decreases stepsLeft\n{\n  var next: Token;\n  var newSteps: nat;\n\n  if (stepCounter % 2 == 0)\n  {\n    // Alternating unconstrained step\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Alternating constrained step\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n    else\n    {\n      // If not in constrained window, use unconstrained step\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  }\n\n  stepCounter := stepCounter + 1;\n}"
+      },
+      "timestamp": "2026-03-18T20:08:38.195251",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 36, Column 24): Error: this invariant could not be proved to be maintained by the loop\n  (Line 37, Column 42): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(36,24): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n36 |   invariant |generated| <= maxSteps\n   |                         ^^\n\nGeneratedCSD.dfy(37,42): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n37 |   invariant helpers.ConstrainedWindowValid(generated)\n   |                                           ^\n\nVerifiedAgentSynthesis.dfy(488,52): Related location: this proposition could not be proved\n    |\n488 |       !this.delimiter.InsideDelimitedWindow(prefix) || this.parser.IsValidPrefix(this.delimiter.GetDelimitedContent(prefix))\n    |                                                     ^^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 10,
+      "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a mixed unconstrained and constrained approach. It starts\n// with an unconstrained step to generate initial text. Once the delimited segment\n// begins, it switches to a constrained step to ensure the generated text remains\n// valid under the grammar. The strategy alternates between these steps based on\n// whether the current prefix is complete or within the constrained region.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\nvar hasValid := false;\n\nwhile (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant hasValid ==> parser.IsValidPrefix(generated)\n  decreases stepsLeft\n{\n  var next: Token;\n  var newSteps: nat;\n\n  if (!hasValid)\n  {\n    // Unconstrained step for initial text generation\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Check if we are inside the constrained window\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      // Constrained step within the delimited segment\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n    else\n    {\n      // If not in constrained window, use unconstrained step\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  }\n\n  // Track if we have generated valid text\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n\n  stepCounter := stepCounter + 1;\n}",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a mixed unconstrained and constrained approach. It starts\n// with an unconstrained step to generate initial text. Once the delimited segment\n// begins, it switches to a constrained step to ensure the generated text remains\n// valid under the grammar. The strategy alternates between these steps based on\n// whether the current prefix is complete or within the constrained region.\n// CSD_RATIONALE_END\n\ngenerated := [];\nvar stepCounter := 0;\nvar hasValid := false;\n\nwhile (stepsLeft > 0 && !parser.IsCompletePrefix(generated))\n  invariant lm.ValidTokensIdsLogits()\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| <= maxSteps\n  invariant hasValid ==> parser.IsValidPrefix(generated)\n  decreases stepsLeft\n{\n  var next: Token;\n  var newSteps: nat;\n\n  if (!hasValid)\n  {\n    // Unconstrained step for initial text generation\n    var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n    generated := generated + [next];\n    stepsLeft := newSteps;\n  }\n  else\n  {\n    // Check if we are inside the constrained window\n    if (helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)))\n    {\n      // Constrained step within the delimited segment\n      var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n    else\n    {\n      // If not in constrained window, use unconstrained step\n      var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);\n      generated := generated + [next];\n      stepsLeft := newSteps;\n    }\n  }\n\n  // Track if we have generated valid text\n  if (parser.IsValidPrefix(generated))\n  {\n    hasValid := true;\n  }\n\n  stepCounter := stepCounter + 1;\n}"
+      },
+      "timestamp": "2026-03-18T20:08:56.192525",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 37, Column 24): Error: this invariant could not be proved to be maintained by the loop\n  (Line 38, Column 45): Error: this invariant could not be proved to be maintained by the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(37,24): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n37 |   invariant |generated| <= maxSteps\n   |                         ^^\n\nGeneratedCSD.dfy(38,45): Error: this invariant could not be proved to be maintained by the loop\n Related message: loop invariant violation\n   |\n38 |   invariant hasValid ==> parser.IsValidPrefix(generated)\n   |                                              ^\n\n\nDafny program verifier finished with 1 verified, 2 errors",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    }
+  ],
+  "failure_patterns": {
+    "verification_failures": 10,
+    "compilation_failures": 0,
+    "runtime_failures": 0,
+    "common_errors": [
+      {
+        "error": "Type error",
+        "count": 4
+      }
+    ]
+  }
+}

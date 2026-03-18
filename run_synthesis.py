@@ -35,6 +35,14 @@ Examples:
   python run_synthesis.py --task "Generate FOL reasoning strategy" \\
       --dataset folio --min-accuracy 0.5 --min-format-rate 0.8 --min-syntax-rate 0.7
 
+  # SyGuS SLIA (string manipulation synthesis)
+  python run_synthesis.py --task "Generate string manipulation strategy" \\
+      --dataset sygus_slia --min-accuracy 0.3 --min-format-rate 0.5 --min-syntax-rate 0.5
+
+  # PDDL Blocks World (sequential planning)
+  python run_synthesis.py --task "Generate a PDDL planning strategy" \\
+      --dataset pddl --min-accuracy 0.3 --min-format-rate 0.5 --min-syntax-rate 0.5
+
   # With more iterations and custom eval sample size
   python run_synthesis.py --task "..." --dataset gsm_symbolic \\
       --min-accuracy 0.3 --min-format-rate 0.5 --min-syntax-rate 0.5 \\
@@ -121,7 +129,7 @@ Examples:
     parser.add_argument(
         "--dataset", "-d",
         type=str,
-        choices=["gsm_symbolic", "folio"],
+        choices=["gsm_symbolic", "folio", "sygus_slia", "pddl"],
         required=True,
         help="Dataset to use for evaluation feedback (required)"
     )

@@ -1,0 +1,20 @@
+// PDDL Blocks World grammar
+// The LM outputs a plan as a sequence of PDDL-style action applications.
+
+csd_start: action+ ">>"
+start: action+
+
+action: pickup
+      | putdown
+      | stack
+      | unstack
+
+pickup:  "(" "pick-up"  BLOCK ")"
+putdown: "(" "put-down" BLOCK ")"
+stack:   "(" "stack"    BLOCK BLOCK ")"
+unstack: "(" "unstack"  BLOCK BLOCK ")"
+
+BLOCK: /[a-z]/
+
+%import common.WS
+%ignore WS

@@ -21,10 +21,12 @@ The generator expects these entrypoints:
 #   var delim := new Delimiter(LeftDelimiter, RightDelimiter);
 #   var helpers := new CSDHelpers(lm, parser, delim);
 #   helpers.DelimitersInLMAlways();   <-- satisfies DelimitersInLM() for ConstrainedStep
+#   lm.ValidTokensIdsLogitsAlways();  <-- establishes lm.ValidTokensIdsLogits() for loop invariant
+#   generated := [];                  <-- out-parameter initialized to empty
 #   var stepsLeft := maxSteps;
 #   [YOUR BODY]
 #   remainingSteps := stepsLeft;
-# Your body must assign to `generated` and update `stepsLeft` in the loop (each step consumes one).
+# Your body must only update `generated` (via generated := generated + [next]) and `stepsLeft`.
 # Helpers: UnconstrainedStep, ConstrainedStep, RollbackToValidPrefix (see VerifiedAgentSynthesis.dfy).
 
 
@@ -42,12 +44,12 @@ You must output ONLY the Dafny method body for:
     ...
     ensures remainingSteps >= 0 && remainingSteps <= maxSteps
 
-The template already provides: var delim := new Delimiter(LeftDelimiter, RightDelimiter); var helpers := new CSDHelpers(lm, parser, delim); helpers.DelimitersInLMAlways(); var stepsLeft := maxSteps; [YOUR BODY]; remainingSteps := stepsLeft;
-So you must only assign to `generated` and update `stepsLeft` in your loop. Do NOT assign to remainingSteps (the template does that). Do NOT redeclare `delim`, `helpers`, or call `helpers.DelimitersInLMAlways()` yourself — the template already does this.
+The template already provides: var delim := new Delimiter(LeftDelimiter, RightDelimiter); var helpers := new CSDHelpers(lm, parser, delim); helpers.DelimitersInLMAlways(); lm.ValidTokensIdsLogitsAlways(); generated := []; var stepsLeft := maxSteps; [YOUR BODY]; remainingSteps := stepsLeft;
+So you must only update `generated` and `stepsLeft` in your loop — do NOT reinitialize them. Do NOT assign to remainingSteps (the template does that). Do NOT redeclare `delim`, `helpers`, `generated`, or call `helpers.DelimitersInLMAlways()` yourself — the template already does this.
 
 Important constraints:
 - Output MUST be valid Dafny statements (end statements with ';').
-- Initialize/assign the out-parameter `generated` (e.g. generated := []).
+- `generated` is ALREADY INITIALIZED to `[]` by the template. Do NOT write `generated := [];` or `var generated := [];` (it would be redundant). Just append to it in the loop.
 - **stepsLeft is ALREADY DECLARED by the template.** Do NOT write \"var stepsLeft := maxSteps;\" or \"var stepsLeft :=\"; that causes \"Duplicate local-variable name: stepsLeft\". Just use stepsLeft in your loop and assign stepsLeft := newSteps after each step call.
 - Do NOT redeclare `generated`, `stepsLeft`, `helpers`, or `delim`. Do NOT call `helpers.DelimitersInLMAlways()`. Do NOT assign to `remainingSteps`.
 - You MUST use the `helpers` instance (type `CSDHelpers`) which is already instantiated with lm, parser, and delimiter.
@@ -85,7 +87,8 @@ Do NOT use .Exists, .Any, .Where, or lambda syntax on sequences — Dafny sequen
 - **Sequence membership / "exists"**: Do NOT use seq.Exists(...) or lambdas. Use Dafny quantifier: exists x :: x in seq && predicate(x). Example: hasValid := exists token :: token in validTokens && parser.ValidNextToken(generated, token);
 - **Parser**: The predicate is ValidNextToken(prefix, token), not IsValidNextToken. There is no IsValidNextToken.
 - **Variables**: Declare with `var name := value;` or `var name: Type := value;`. No `int x = 0` style.
-- **Loop invariant placement**: `invariant` and `decreases` clauses go BETWEEN the `while` condition and the opening `{`, not inside the body. The order is: `while condition` (newline) → indented `invariant` / `decreases` clauses → then `{` (on its own line or inline) → body → `}`. Writing them after statements inside the body is a parse error.
+- **Loop invariant placement**: `invariant` and `decreases` clauses go BETWEEN the `while` condition and the opening `{`, not inside the body. The order is: `while condition` (newline) → indented `invariant` / `decreases` clauses → then `{` (on its own line or inline) → body → `}`. Writing them after statements inside the body is a parse error. Use the keyword `invariant` (singular) on EACH line — one line per invariant, e.g. `invariant 0 <= stepsLeft <= maxSteps` then next line `invariant |generated| <= maxSteps`. There is NO keyword `invariants` (plural) in Dafny.
+- **stepsLeft must only decrease**: The loop uses `decreases stepsLeft`. Do NOT assign `stepsLeft := maxSteps` or `stepsLeft := maxSteps - |generated|` inside the loop — that can increase stepsLeft and breaks verification. Each iteration must call UnconstrainedStep or ConstrainedStep and set `stepsLeft := newSteps` (which decreases). Do NOT use RollbackToValidPrefix in a branch and then reset stepsLeft; use a step call in every branch instead.
 - **Loop condition**: Use `while condition {{ ... }}`. Condition must be a boolean expression (e.g. `|generated| < maxSteps && !parser.IsCompletePrefix(generated)`).
 - **For-loops (if needed)**: Use Dafny syntax `for i := 0 to |seq| - 1 {{ ... }}`. Use `{{` after the range, not `do`. Do NOT use Python/Rust-style `for i in 0 .. |seq| - 1` or `for ... do`.
 - **Statements**: Every statement ends with `;`. No semicolon after `}` of blocks.
@@ -138,10 +141,12 @@ You MUST implement the strategy body as a loop that:
 **Loop invariants (required for verification):** Place these BETWEEN the `while` condition and `{` (never inside the body):
   invariant lm.ValidTokensIdsLogits()
   invariant 0 <= stepsLeft <= maxSteps
-  invariant |generated| + stepsLeft == maxSteps
+  invariant |generated| + stepsLeft <= maxSteps
   invariant helpers.ConstrainedWindowValid(generated)
   decreases stepsLeft
-NOTE: `helpers.ConstrainedWindowValid(generated)` holds trivially before any LeftDelimiter is emitted (not inside the window), and ConstrainedStep's postconditions maintain it when next != RightDelimiter(). Include it whenever you use ConstrainedStep so Dafny can prove the precondition.
+NOTE: `invariant lm.ValidTokensIdsLogits()` is required — helper methods (UnconstrainedStep, ConstrainedStep, GetDelimitedContent) all require it as a precondition. It is provable: the template establishes it before the loop and each step method's postcondition ensures it is maintained.
+NOTE: `invariant |generated| + stepsLeft <= maxSteps` is rollback-compatible and provable: initially 0 + maxSteps == maxSteps; each step adds 1 token and subtracts 1 step so the sum is unchanged; rollback only removes tokens without consuming steps so the sum decreases. Do NOT use `|generated| == maxSteps` (equality breaks rollback) or `|generated| <= maxSteps` alone (Dafny cannot prove |generated| < maxSteps to allow the next append).
+NOTE: `helpers.ConstrainedWindowValid(generated)` is maintained by both UnconstrainedStep and ConstrainedStep postconditions. Include it so Dafny can prove preconditions for ConstrainedStep calls.
 NOTE: Do NOT include `invariant parser.IsValidPrefix(generated)` when using UnconstrainedStep — unconstrained generation does not guarantee a valid prefix.
 NOTE: Write invariants and decreases as REAL Dafny keywords, NOT as comments. Do NOT write `// Invariant: X` — that is just a comment and Dafny ignores it. Write `invariant X` directly.
 
@@ -164,7 +169,7 @@ Output MUST start with the required rationale block (see system prompt), then ou
 Output ONLY the method body (no signature, no outer braces). Do NOT wrap output in markdown code fences (no ```dafny).
 Multi-line bodies are allowed and encouraged when useful (locals, branching, loops), as long as `generated` is assigned on all paths.
 
-Your output must start with the rationale block, then Dafny statements. Include a while loop with the standard invariants (lm.ValidTokensIdsLogits(), 0 <= stepsLeft <= maxSteps, |generated| + stepsLeft == maxSteps, decreases stepsLeft). Assign generated on all paths. The template handles remainingSteps.
+Your output must start with the rationale block, then Dafny statements. Include a while loop with the standard invariants (lm.ValidTokensIdsLogits(), 0 <= stepsLeft <= maxSteps, |generated| + stepsLeft <= maxSteps, helpers.ConstrainedWindowValid(generated), decreases stepsLeft). Assign generated on all paths. The template handles remainingSteps.
 """
 
 
@@ -191,6 +196,9 @@ Rules:
 
 **CRITICAL: If the error says "incorrect return type at index 1 ... expected nat, got Token":**
 - You wrote `var next, newSteps: Token;` which declares both as `Token`. Fix: replace with two separate declarations — `var next: Token;` on one line and `var newSteps: nat;` on the next. Then assign without `var` in each branch: `next, newSteps := helpers.ConstrainedStep(...);`.
+
+**CRITICAL: If the error says "missing semicolon at end of statement" and points to a line like `invariants`:**
+- Dafny has NO keyword `invariants` (plural). Each loop invariant must be on its own line with the keyword `invariant` (singular). Replace `invariants` followed by a block of expressions with one line per expression: `invariant lm.ValidTokensIdsLogits()`, then `invariant 0 <= stepsLeft <= maxSteps`, etc. The `decreases` clause stays as `decreases stepsLeft` (no `invariant` prefix).
 
 **CRITICAL: If the error says "invalid UnaryExpression" and points to `invariant decreases ...`:**
 - `decreases` is not an `invariant`. Write `decreases stepsLeft` as its own separate clause, never as `invariant decreases stepsLeft`. Both clauses go between the `while` condition and the `{`.
@@ -252,8 +260,17 @@ Rules:
 - ConstrainedStep requires InsideDelimitedWindow(generated), meaning " <<" must already be in generated with no matching " >>" yet. generated starts as [] which is never inside the window.
 - You CANNOT call ConstrainedStep unconditionally in a loop. It must only be called when helpers.InsideDelimitedWindow(generated) is true AND !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)) is true. Use a different primitive (e.g. UnconstrainedStep) for all other cases. Redesign your strategy logic accordingly — the specific approach (how you structure the branches, what you track with extra variables, etc.) is up to you.
 
+**CRITICAL: If the error says "precondition for this call could not be proved" and mentions "ConstrainedWindowValid" for an UnconstrainedStep call:**
+- UnconstrainedStep now requires `ConstrainedWindowValid(generated)` as a precondition. Add `invariant helpers.ConstrainedWindowValid(generated)` to your while loop. This invariant holds initially (generated is []) and is maintained by both UnconstrainedStep and ConstrainedStep postconditions.
+
 **CRITICAL: If the error says "precondition for this call could not be proved" for UnconstrainedPreservesValidWhenPermissive or mentions IsPermissive:**
 - That lemma requires parser.IsPermissive(generated). Many parsers (e.g. FOLIO) are not permissive outside << >>. Remove the line CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next); from your strategy.
+
+**CRITICAL: If the error says "seq<Token> does not have a member Contains" or points to generated.Contains(X):**
+- Dafny seq has no Contains method. Replace `generated.Contains(X)` with `X in generated`. For example: `generated.Contains(LeftDelimiter)` → `LeftDelimiter in generated`.
+
+**CRITICAL: If the error says "member 'LeftDelimiter' does not exist in class 'Delimiter'" or points to delim.LeftDelimiter / delim.RightDelimiter:**
+- The `Delimiter` class has no `LeftDelimiter` or `RightDelimiter` fields. Use the module-level constants `LeftDelimiter` and `RightDelimiter` directly (no object prefix). Replace `delim.LeftDelimiter` → `LeftDelimiter`, `delim.RightDelimiter` → `RightDelimiter`.
 
 **CRITICAL: If the error mentions "invariant could not be proved" for stepCounter <= maxSteps:**
 - Remove the invariant stepCounter <= maxSteps (and stepCounter >= 0 && stepCounter <= maxSteps if present). stepCounter is not bounded by stepsLeft in all branches.
@@ -269,8 +286,7 @@ Rules:
 
 **CRITICAL: If the error says "a postcondition could not be proved on this return path":**
 - You are missing loop invariants or they are wrong. The strategy MUST include these invariants between the while condition and `{` (as real Dafny invariant keywords, NOT as comments):
-  invariant lm.ValidTokensIdsLogits()
-  invariant |generated| + stepsLeft == maxSteps
+  invariant |generated| + stepsLeft <= maxSteps
   decreases stepsLeft
 
 Common fixes:

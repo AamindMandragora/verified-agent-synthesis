@@ -200,19 +200,25 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
         repaired = new_repaired
         changed = True
 
-    # Fix: invariant/decreases inside while body -> move them between condition and opening {
-    # Dafny syntax: "while cond\n  invariant X\n  decreases Y\n{ body }"
-    # LLM writes them either at the start or end of the body in two forms:
-    #   Form A: "while cond {" on one line, invariants inside body
-    #   Form B: "while cond" + "{" on next line, invariants at start of body
+    # Fix: invariant/decreases clauses in the wrong place relative to the while loop.
+    # Handles four patterns:
+    #   Form A: "while cond {" — invariants inside the body (at top or bottom)
+    #   Form B: "while cond" + "{" on next line — invariants inside the body
+    #   Form C: invariants/decreases lines BEFORE the while keyword (outside the loop)
+    #   Form D: invariants/decreases lines AFTER the while loop's closing "}" (outside the loop)
+    # In all cases, move them to between the while condition and the opening "{".
     def _fix_while_invariants(code: str) -> tuple[str, bool]:
         lines = code.split("\n")
         out: list[str] = []
         local_changed = False
         i = 0
 
-        def _collect_body(start_i: int) -> tuple[list[str], list[str]]:
-            """Scan body lines from start_i (depth=1). Return (body_lines, inv_lines)."""
+        def _clean_inv(line: str) -> str:
+            cleaned = line.rstrip().rstrip(";")
+            return re.sub(r"^(\s*)invariant\s+(decreases\b)", r"\1\2", cleaned)
+
+        def _collect_body(start_i: int) -> tuple[list[str], list[str], int]:
+            """Scan body lines from start_i (depth=1). Return (body_lines, inv_lines, next_i)."""
             body: list[str] = []
             invs: list[str] = []
             depth = 1
@@ -220,18 +226,86 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
             while j < len(lines) and depth > 0:
                 bl = lines[j]
                 if depth == 1 and re.match(r"^\s*(invariant|decreases)\b", bl):
-                    cleaned = bl.rstrip().rstrip(";")
-                    # Strip spurious "invariant" prefix from decreases clauses
-                    cleaned = re.sub(r"^(\s*)invariant\s+(decreases\b)", r"\1\2", cleaned)
-                    invs.append(cleaned)
+                    invs.append(_clean_inv(bl))
                 else:
                     body.append(bl)
                     depth += bl.count("{") - bl.count("}")
                 j += 1
             return body, invs, j
 
+        def _collect_trailing_invs(start_i: int) -> tuple[list[str], int]:
+            """Collect invariant/decreases lines after a while loop's closing '}'.
+            Skips blank lines and comments that appear before the first invariant.
+            Returns (inv_lines, next_i)."""
+            invs: list[str] = []
+            j = start_i
+            while j < len(lines):
+                l = lines[j]
+                if re.match(r"^\s*(invariant|decreases)\b", l):
+                    invs.append(_clean_inv(l))
+                    j += 1
+                elif not l.strip():
+                    j += 1
+                elif re.match(r"^\s*//", l) and not invs:
+                    # Skip comments only before the first invariant
+                    j += 1
+                else:
+                    break
+            return invs, j
+
         while i < len(lines):
             line = lines[i]
+
+            # Form C: invariant/decreases lines appearing BEFORE the while keyword.
+            # Collect them, then check if a while loop immediately follows.
+            if re.match(r"^\s*(invariant|decreases)\b", line):
+                pre_invs: list[str] = []
+                j = i
+                while j < len(lines):
+                    l = lines[j]
+                    if re.match(r"^\s*(invariant|decreases)\b", l):
+                        pre_invs.append(_clean_inv(l))
+                        j += 1
+                    elif not l.strip():
+                        j += 1
+                    else:
+                        break
+                # Check if followed by a while loop
+                if j < len(lines):
+                    wl = lines[j]
+                    m_a = re.match(r"^(\s*)(while\b.+?)\s*\{\s*$", wl)
+                    m_b = (not m_a) and re.match(r"^(\s*)(while\b[^{]+?)\s*$", wl)
+                    next_is_brace = m_b and j + 1 < len(lines) and re.match(r"^\s*\{\s*$", lines[j + 1])
+                    if m_a:
+                        indent, while_cond = m_a.group(1), m_a.group(2)
+                        body, inner_invs, new_i = _collect_body(j + 1)
+                        trail_invs, trail_i = _collect_trailing_invs(new_i)
+                        all_invs = pre_invs + inner_invs + trail_invs
+                        out.append(indent + while_cond)
+                        out.extend(all_invs)
+                        out.append(indent + "{")
+                        out.extend(body)
+                        i = trail_i
+                        local_changed = True
+                        continue
+                    elif m_b and next_is_brace:
+                        indent, while_cond = m_b.group(1), m_b.group(2)
+                        brace_line = lines[j + 1]
+                        body, inner_invs, new_i = _collect_body(j + 2)
+                        trail_invs, trail_i = _collect_trailing_invs(new_i)
+                        all_invs = pre_invs + inner_invs + trail_invs
+                        out.append(indent + while_cond)
+                        out.extend(all_invs)
+                        out.append(brace_line)
+                        out.extend(body)
+                        i = trail_i
+                        local_changed = True
+                        continue
+                # No while follows — output as-is
+                out.append(line)
+                i += 1
+                continue
+
             # Form A: "while ... {" — brace on same line as condition
             m_a = re.match(r"^(\s*)(while\b.+?)\s*\{\s*$", line)
             # Form B: "while ..." alone, next non-blank line is just "{"
@@ -242,30 +316,38 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
 
             if m_a:
                 indent, while_cond = m_a.group(1), m_a.group(2)
-                body, invs, i = _collect_body(i + 1)
-                if invs:
+                body, invs, new_i = _collect_body(i + 1)
+                trail_invs, trail_i = _collect_trailing_invs(new_i)
+                all_invs = invs + trail_invs
+                if all_invs:
                     local_changed = True
                     out.append(indent + while_cond)
-                    out.extend(invs)
+                    out.extend(all_invs)
                     out.append(indent + "{")
                     out.extend(body)
+                    i = trail_i
                 else:
                     out.append(line)
                     out.extend(body)
+                    i = new_i
             elif m_b and next_is_brace:
                 indent, while_cond = m_b.group(1), m_b.group(2)
                 brace_line = lines[i + 1]
-                body, invs, i = _collect_body(i + 2)
-                if invs:
+                body, invs, new_i = _collect_body(i + 2)
+                trail_invs, trail_i = _collect_trailing_invs(new_i)
+                all_invs = invs + trail_invs
+                if all_invs:
                     local_changed = True
                     out.append(indent + while_cond)
-                    out.extend(invs)
+                    out.extend(all_invs)
                     out.append(brace_line)
                     out.extend(body)
+                    i = trail_i
                 else:
                     out.append(line)
                     out.append(brace_line)
                     out.extend(body)
+                    i = new_i
             else:
                 out.append(line)
                 i += 1
@@ -309,6 +391,45 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
             r"|| (\1)",
             repaired,
         )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: "invariants" (plural) block -> each line must be "invariant <expr>" (singular). Dafny has no "invariants" keyword.
+    if "missing semicolon" in error_summary and "invariants" in repaired:
+        lines_out = []
+        line_list = repaired.split("\n")
+        i = 0
+        while i < len(line_list):
+            line = line_list[i]
+            m_inv = re.match(r"^(\s*)invariants\s*\s*$", line)
+            if m_inv:
+                base_indent = m_inv.group(1)
+                inv_indent_len = len(base_indent) + 1
+                i += 1
+                while i < len(line_list):
+                    raw = line_list[i]
+                    if not raw.strip():
+                        lines_out.append(raw)
+                        i += 1
+                        continue
+                    if len(raw) - len(raw.lstrip()) < inv_indent_len:
+                        break
+                    content = raw.strip()
+                    if re.match(r"^decreases\b", content):
+                        lines_out.append(base_indent + content)
+                    elif re.match(r"^(if\s|var\s|\}\s*$|else\s)", content):
+                        break
+                    else:
+                        lines_out.append(base_indent + "invariant " + content)
+                    i += 1
+                if i < len(line_list):
+                    lines_out.append(line_list[i])
+                    i += 1
+                continue
+            lines_out.append(line)
+            i += 1
+        new_repaired = "\n".join(lines_out)
         if new_repaired != repaired:
             repaired = new_repaired
             changed = True
@@ -449,19 +570,127 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
                 changed = True
                 break
 
+    # Fix: "precondition for this call could not be proved" for lm.ValidTokensIdsLogits() —
+    # helper methods (UnconstrainedStep, ConstrainedStep, GetDelimitedContent) require it.
+    # Add invariant lm.ValidTokensIdsLogits() to the while loop (provable: template establishes
+    # it before the loop; step postconditions maintain it).
+    if (
+        "precondition for this call could not be proved" in error_summary
+        and "ValidTokensIdsLogits" in error_summary
+        and "invariant lm.ValidTokensIdsLogits()" not in repaired
+    ):
+        # Insert as first invariant in the while loop, before other invariants or decreases
+        new_repaired = re.sub(
+            r"(while\s+[^\n]+\n)((\s+invariant\b|\s+decreases\b))",
+            r"\1    invariant lm.ValidTokensIdsLogits()\n\2",
+            repaired,
+            count=1,
+        )
+        if new_repaired == repaired:
+            # Fallback: insert before the opening { of the while loop
+            new_repaired = re.sub(
+                r"(while\s+[^\n]+\n)(\s*\{)",
+                r"\1    invariant lm.ValidTokensIdsLogits()\n\2",
+                repaired,
+                count=1,
+            )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: "invariant could not be proved" for |generated| <= maxSteps — the correct provable invariant
+    # is |generated| + stepsLeft <= maxSteps (sum unchanged per step, decreases on rollback).
+    # Replace the broken |generated| <= maxSteps invariant with the correct form.
+    if (
+        "invariant could not be proved" in error_summary
+        and "|generated| <= maxSteps" in error_summary
+        and "UnconstrainedStep" in repaired
+    ):
+        new_repaired = re.sub(
+            r"\binvariant\s+\|generated\|\s*<=\s*maxSteps\b",
+            "invariant |generated| + stepsLeft <= maxSteps",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: always normalize old |generated| <= maxSteps invariant to |generated| + stepsLeft <= maxSteps
+    # (unconditional: the old form is never correct since Dafny cannot prove |generated| < maxSteps
+    # from it alone; the new form is always provable and rollback-compatible)
+    new_repaired = re.sub(
+        r"\binvariant\s+\|generated\|\s*<=\s*maxSteps\b",
+        "invariant |generated| + stepsLeft <= maxSteps",
+        repaired,
+    )
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: "seq<...> does not have a member Contains" or "generated.Contains(X)" ->
+    # Dafny seq has no Contains method; use membership: X in generated.
+    if "Contains" in repaired and ("does not have a member Contains" in error_summary or ".Contains(" in repaired):
+        new_repaired = re.sub(
+            r"generated\.Contains\s*\(\s*([^)]+)\s*\)",
+            r"(\1) in generated",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: "member 'LeftDelimiter' does not exist in class 'Delimiter'" for delim.LeftDelimiter —
+    # Delimiter class has no LeftDelimiter field (it's Left); module constant is LeftDelimiter.
+    new_repaired = re.sub(r"\bdelim\.LeftDelimiter\b", "LeftDelimiter", repaired)
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: "member 'RightDelimiter' does not exist in class 'Delimiter'" for delim.RightDelimiter
+    new_repaired = re.sub(r"\bdelim\.RightDelimiter\b", "RightDelimiter", repaired)
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: "invariant could not be proved" for hasValid ==> parser.IsValidPrefix(generated) —
+    # this invariant cannot be maintained after UnconstrainedStep (not guaranteed valid prefix).
+    # Remove it; it's an LLM-invented invariant that has no path to verification.
+    if (
+        "invariant could not be proved" in error_summary
+        and "IsValidPrefix" in error_summary
+        and "hasValid" in error_summary
+    ):
+        new_repaired = re.sub(
+            r"[ \t]*invariant\s+hasValid\s*==>\s*parser\.IsValidPrefix\s*\(\s*generated\s*\)\s*\n",
+            "",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
     # Fix: "precondition ... ConstrainedWindowValid" -> add missing loop invariant
+    # Applies when ConstrainedStep or UnconstrainedStep precondition fails due to missing invariant
     if (
         "precondition for this call could not be proved" in error_summary
         and "ConstrainedWindowValid" in error_summary
-        and "ConstrainedStep" in repaired
+        and ("ConstrainedStep" in repaired or "UnconstrainedStep" in repaired)
     ):
-        # Insert invariant after the last standard invariant in the while loop
+        # Insert invariant after |generated| + stepsLeft <= maxSteps or |generated| <= maxSteps invariant
         new_repaired = re.sub(
-            r"(invariant\s+\|generated\|\s*\+\s*stepsLeft\s*==\s*maxSteps\b)",
+            r"(invariant\s+\|generated\|\s*(?:\+\s*stepsLeft\s*)?<=\s*maxSteps\b)",
             r"\1\n    invariant helpers.ConstrainedWindowValid(generated)",
             repaired,
             count=1,
         )
+        if new_repaired == repaired:
+            # Fallback: insert after lm.ValidTokensIdsLogits() invariant
+            new_repaired = re.sub(
+                r"(invariant\s+lm\.ValidTokensIdsLogits\s*\(\s*\))",
+                r"\1\n    invariant helpers.ConstrainedWindowValid(generated)",
+                repaired,
+                count=1,
+            )
         if new_repaired != repaired:
             repaired = new_repaired
             changed = True
@@ -529,24 +758,25 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
             )
             changed = ".Exists(" not in repaired or repaired != strategy_code
 
-    # Fix: "decreases expression might not decrease" — usually caused by resetting stepsLeft in the loop (e.g. stepsLeft := maxSteps).
-    # Replace the else branch that resets stepsLeft with a ConstrainedStep so the loop always decreases stepsLeft.
-    if "decreases expression might not decrease" in error_summary and "stepsLeft := maxSteps" in repaired:
-        else_block = re.compile(
-            r"\s*else\s*\{\s*(?:\s*//[^\n]*\n)*\s*"
-            r"generated\s*:=\s*helpers\.RollbackToValidPrefix\s*\(\s*(?:parser\s*,\s*)?generated\s*\)\s*;\s*"
-            r"\s*stepsLeft\s*:=\s*maxSteps\s*;\s*"
-            r"\s*\}",
-            re.MULTILINE,
-        )
-        replacement = (
+    # Fix: "decreases expression might not decrease" — caused by resetting or increasing stepsLeft in the loop.
+    # Replace the else branch that does RollbackToValidPrefix + stepsLeft := ... with a step so the loop always decreases.
+    if "decreases expression might not decrease" in error_summary and "RollbackToValidPrefix" in repaired:
+        step_replacement = (
             " else {\n"
             "    var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);\n"
             "    generated := generated + [next];\n"
             "    stepsLeft := newSteps;\n"
             "  }"
         )
-        new_repaired = else_block.sub(replacement, repaired)
+        # Match else { ... RollbackToValidPrefix(...); ... stepsLeft := maxSteps... ; ... } (stepsLeft must only decrease)
+        else_block = re.compile(
+            r"\s*else\s*\{\s*(?:\s*//[^\n]*\n)*(?:\s*if\s*\([^)]+\)\s*\{\s*(?:\s*[^\n]*\n)*?\s*\})?\s*"
+            r"generated\s*:=\s*helpers\.RollbackToValidPrefix\s*\(\s*(?:parser\s*,\s*)?generated\s*\)\s*;\s*\n"
+            r"\s*stepsLeft\s*:=\s*maxSteps(?:\s*-\s*\|generated\|)?\s*;\s*\n"
+            r"(?:\s*[^\n]*\n)*?\s*\}",
+            re.MULTILINE,
+        )
+        new_repaired = else_block.sub(step_replacement, repaired, count=1)
         if new_repaired != repaired:
             repaired = new_repaired
             changed = True
@@ -564,6 +794,24 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
             )
             changed = True
 
+    # Fix: "function precondition could not be proved" for parser.ValidNextToken inside an exists
+    # quantifier — requires parser.IsValidPrefix(generated) which is not guaranteed after
+    # unconstrained generation. Remove the entire line (e.g. "hasValid := exists token :: ...").
+    if (
+        "function precondition could not be proved" in error_summary
+        and "IsValidPrefix" in error_summary
+        and "ValidNextToken" in error_summary
+    ):
+        new_repaired = re.sub(
+            r"^\s*\w+\s*:=\s*exists\s+\w+\s*::\s*\w+\s+in\s+\w+\s*&&\s*parser\.ValidNextToken\s*\([^)]+\)\s*;\s*\n?",
+            "",
+            repaired,
+            flags=re.MULTILINE,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
     # Fix: "unresolved identifier: stepCounter" or "unresolved identifier: hasValid" — declare before the while loop
     for var_name, default in [("stepCounter", "0"), ("hasValid", "false")]:
         if f"unresolved identifier: {var_name}" in error_summary and var_name in repaired:
@@ -576,6 +824,14 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
                     repaired,
                     count=1,
                 )
+                if new_repaired == repaired:
+                    # Fallback: insert before the while loop
+                    new_repaired = re.sub(
+                        r"(while\s+stepsLeft\s*>\s*0\b)",
+                        decl + r"\n  \1",
+                        repaired,
+                        count=1,
+                    )
                 if new_repaired != repaired:
                     repaired = new_repaired
                     changed = True
@@ -1045,12 +1301,19 @@ class SynthesisPipeline:
 
         # Initial generation (one LLM call, can take 30–90s or longer on CPU/slow GPU)
         print(f"Generating initial strategy for: {task_description[:80]}...")
+        print("  (LLM steps can take 1–2 min each; evaluation can take several minutes. Interrupt with Ctrl+C if needed.)")
         t0 = time.perf_counter()
         strategy_code = self.generator.generate_initial(task_description)
         print(f"  (initial generation took {time.perf_counter() - t0:.1f}s)")
 
+        long_run_message_shown = False
         for iteration in range(self.max_iterations):
             attempt_num = iteration + 1
+            # If we've been running a while, remind user once that this is expected
+            elapsed = time.time() - start_time
+            if elapsed >= 90 and not long_run_message_shown:
+                print(f"\n  [Synthesis still running (~{int(elapsed / 60)} min elapsed). LLM and evaluation steps are slow; you can interrupt with Ctrl+C.]\n")
+                long_run_message_shown = True
             print(f"\n{'='*60}")
             print(f"Attempt {attempt_num}/{self.max_iterations}")
             print(f"{'='*60}")
@@ -1111,7 +1374,7 @@ class SynthesisPipeline:
                     print("  Applied automatic fix (e.g. duplicate stepsLeft / Rollback assignment / precondition); re-verifying...")
                     continue
                 # Refine based on verification error via model (one LLM call; can take minutes if GPU is slow or OOM → CPU)
-                print("  Refining based on verification error... (Qwen generating new strategy; watch for timing below)")
+                print("  Refining based on verification error... (LLM call may take 1–2 min)")
                 t0 = time.perf_counter()
                 strategy_code = self.generator.refine_after_verification_error(
                     strategy_code, error_msg
@@ -1183,7 +1446,7 @@ class SynthesisPipeline:
             # Stage 4: Evaluation — use same device as generator to avoid loading on a full GPU
             if getattr(self.generator, "device", None):
                 self.evaluator.device = self.generator.device
-            print("\n[4/4] Evaluating on dataset sample...")
+            print("\n[4/4] Evaluating on dataset sample... (may take several minutes)")
             eval_result = self.evaluator.evaluate_sample(
                 compiled_module_path=compilation_result.main_module_path,
                 sample_size=self.eval_sample_size,

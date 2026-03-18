@@ -240,6 +240,10 @@ class Evaluator:
                 self._grammar_file = grammars_dir / "gsm.lark"
             elif self.dataset_name == "folio":
                 self._grammar_file = grammars_dir / "folio.lark"
+            elif self.dataset_name == "sygus_slia":
+                self._grammar_file = grammars_dir / "sygus_slia.lark"
+            elif self.dataset_name == "pddl":
+                self._grammar_file = grammars_dir / "pddl.lark"
             else:
                 raise ValueError(f"Unknown dataset: {self.dataset_name}")
         return self._grammar_file
@@ -266,6 +270,18 @@ class Evaluator:
                 seed=42,
             )
             self._dataset = ds
+        elif self.dataset_name == "sygus_slia":
+            from evaluations.sygus_slia.dataset import load_sygus_slia
+            self._dataset = load_sygus_slia(
+                limit=self.sample_size,
+                random_sample=True,
+            )
+        elif self.dataset_name == "pddl":
+            from evaluations.pddl.dataset import load_pddl
+            self._dataset = load_pddl(
+                limit=self.sample_size,
+                random_sample=True,
+            )
         else:
             raise ValueError(f"Unknown dataset: {self.dataset_name}")
 
@@ -297,6 +313,16 @@ class Evaluator:
                 start_rule="csd_start",
                 load_in_4bit=self.load_in_4bit,
             )
+        elif self.dataset_name in ("sygus_slia", "pddl"):
+            return setup_dafny_environment(
+                run_dir=run_dir,
+                model_name=self.model_name,
+                device=self.device,
+                vocab_size=self.vocab_size,
+                grammar_file=self._get_grammar_file(),
+                start_rule="csd_start",
+                load_in_4bit=self.load_in_4bit,
+            )
         else:
             return setup_dafny_environment(
                 run_dir=run_dir,
@@ -310,10 +336,10 @@ class Evaluator:
             )
 
     def _extract_constrained_content(self, output: str) -> List[str]:
-        """Extract content within delimiters. FOLIO uses $ ... %; GSM uses << ... >>."""
+        """Extract content within delimiters. FOLIO uses $ ... %; all others use << ... >>."""
         if self.dataset_name == "folio":
             return re.findall(r"\$\s*([^$%]+?)\s*%", output)
-        return re.findall(r"<<\s*([^<>]+?)\s*>>", output)
+        return re.findall(r"<<\s*([\s\S]+?)\s*>>", output)
 
     def _extract_answer_gsm(self, output: str) -> Optional[str]:
         """Extract numeric answer from GSM-Symbolic output within << >> delimiters."""
@@ -446,6 +472,7 @@ class Evaluator:
         expected: str,
         conclusion_sent: Optional[str] = None,
         gold_conclusion: Optional[str] = None,
+        example: Any = None,
     ) -> bool:
         """Check if actual and expected answers match, normalizing Uncertain/Unknown.
         Prover9 returns Unknown when neither goal nor negation is provable; FOLIO labels that Uncertain.
@@ -453,6 +480,18 @@ class Evaluator:
         sent to Prover9 matches the gold conclusion (avoids crediting garbage output)."""
         if actual is None:
             return False
+
+        # SyGuS SLIA: compare generated result against eval_expected
+        if self.dataset_name == "sygus_slia":
+            eval_expected = self._example_field(example, "eval_expected", None) if example is not None else None
+            if eval_expected is not None:
+                return str(actual).strip() == str(eval_expected).strip()
+            return str(actual).strip() == str(expected).strip()
+
+        # PDDL: simulation returns "CORRECT" on success
+        if self.dataset_name == "pddl":
+            return str(actual).strip() == "CORRECT"
+
         a = str(actual).strip().lower()
         e = str(expected).strip().lower()
         if a in ("uncertain", "unknown"):
@@ -483,11 +522,107 @@ class Evaluator:
             if match:
                 return match.group(1)
             return str(answer_str)
+        elif self.dataset_name in ("sygus_slia", "pddl"):
+            return str(self._example_field(example, "answer", "CORRECT"))
         else:
             return str(self._example_field(example, "label", "Unknown"))
 
+    def _extract_answer_sygus_slia(self, output: str, example: Any) -> Optional[str]:
+        """Parse and evaluate a SyGuS SLIA S-expression from << >> output."""
+        from lark import Lark
+        from lark.exceptions import LarkError
+        from evaluations.sygus_slia.dataset import eval_slia
+
+        matches = self._extract_constrained_content(output)
+        if not matches:
+            return None
+
+        grammar_text = self._get_grammar_file().read_text()
+        try:
+            parser = Lark(grammar_text, start="start", parser="lalr")
+        except Exception:
+            return None
+
+        # Try each match (last one wins if multiple)
+        result = None
+        bindings = self._example_field(example, "eval_input", {}) or {}
+        for seg in matches:
+            try:
+                tree = parser.parse(seg.strip())
+                result = eval_slia(tree, bindings)
+            except Exception:
+                continue
+        return result
+
+    def _extract_answer_pddl(self, output: str, example: Any) -> Optional[str]:
+        """Parse and simulate a PDDL plan from << >> output."""
+        from lark import Lark, Tree, Token
+        from lark.exceptions import LarkError
+        from evaluations.pddl.dataset import simulate_plan
+
+        matches = self._extract_constrained_content(output)
+        if not matches:
+            return None
+
+        grammar_text = self._get_grammar_file().read_text()
+        try:
+            parser = Lark(grammar_text, start="start", parser="lalr")
+        except Exception:
+            return None
+
+        initial_state = self._example_field(example, "initial_state", None)
+        goal_on = self._example_field(example, "goal_on", []) or []
+        goal_on_table = self._example_field(example, "goal_on_table", []) or []
+        if initial_state is None:
+            return None
+
+        # Use last << >> segment
+        seg = matches[-1].strip()
+        try:
+            tree = parser.parse(seg)
+        except LarkError:
+            return None
+
+        # Extract plan steps from the parse tree
+        plan: List[Tuple[str, ...]] = []
+        for action_node in tree.children:
+            if not isinstance(action_node, Tree):
+                continue
+            # action_node.data is "action"; its child is pickup/putdown/stack/unstack
+            inner = action_node.children[0] if action_node.children else action_node
+            if not isinstance(inner, Tree):
+                continue
+            action_name = inner.data  # "pickup", "putdown", "stack", "unstack"
+            blocks = [str(t) for t in inner.children if isinstance(t, Token)]
+            # Map grammar rule names to PDDL action names
+            name_map = {"pickup": "pick-up", "putdown": "put-down",
+                        "stack": "stack", "unstack": "unstack"}
+            pddl_name = name_map.get(action_name, action_name)
+            plan.append((pddl_name, *blocks))
+
+        if not plan:
+            return None
+
+        success, reason = simulate_plan(initial_state, plan, goal_on, goal_on_table)
+        return "CORRECT" if success else f"WRONG: {reason}"
+
     def _format_prompt(self, example: Any) -> str:
         """Format a dataset example as a prompt."""
+        if self.dataset_name == "sygus_slia":
+            return (
+                "You are a program synthesizer. Write an S-expression using the string operations "
+                "str.++, str.substr, str.indexof, str.len, str.at, str.replace, str.upper, str.lower "
+                "that solves the following task.\n\n"
+                + self._example_field(example, "question", "")
+                + "\n\nOutput ONLY the S-expression inside << >> delimiters. Example: << (str.upper name) >>\n\nAnswer:"
+            )
+        elif self.dataset_name == "pddl":
+            return (
+                "You are a PDDL planner for the Blocks World domain.\n\n"
+                + self._example_field(example, "question", "")
+                + "\n\nOutput ONLY the plan as a sequence of PDDL actions inside << >> delimiters.\n"
+                "Example: << (pick-up a) (stack a b) >>\n\nPlan:"
+            )
         if self.dataset_name == "gsm_symbolic":
             question = self._example_field(example, "question", "") or ""
             return (
@@ -551,6 +686,7 @@ class Evaluator:
         """Check if the output has valid format with the dataset's delimiters."""
         if self.dataset_name == "folio":
             return "$" in output and "%" in output
+        # gsm_symbolic, sygus_slia, pddl all use << >>
         return "<<" in output and ">>" in output
 
     @staticmethod
@@ -674,6 +810,10 @@ class Evaluator:
                     t0 = time.time()
                     if self.dataset_name == "gsm_symbolic":
                         actual = self._extract_answer_gsm(output_text)
+                    elif self.dataset_name == "sygus_slia":
+                        actual = self._extract_answer_sygus_slia(output_text, example)
+                    elif self.dataset_name == "pddl":
+                        actual = self._extract_answer_pddl(output_text, example)
                     else:
                         actual = self._extract_answer_folio(output_text, example=example)
                     extract_time = time.time() - t0
@@ -690,6 +830,7 @@ class Evaluator:
                         actual, expected,
                         conclusion_sent=conclusion_sent,
                         gold_conclusion=gold_conclusion,
+                        example=example,
                     )
                     if is_correct:
                         num_correct += 1

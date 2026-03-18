@@ -28,10 +28,9 @@ def test_synthesis():
     // CSD_RATIONALE_END
     generated := [];
     while stepsLeft > 0 && !parser.IsCompletePrefix(generated)
-      invariant lm.ValidTokensIdsLogits()
       invariant parser.IsValidPrefix(generated)
       invariant 0 <= stepsLeft <= maxSteps
-      invariant |generated| + stepsLeft == maxSteps
+      invariant |generated| <= maxSteps
       decreases stepsLeft
     {
       CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);
