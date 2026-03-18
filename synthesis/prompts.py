@@ -118,10 +118,9 @@ IMPORTANT: Do NOT pass `lm` or `parser` to any helpers method — they are captu
 
 You MUST implement the strategy body as a loop that:
 - Uses generated := []; (stepsLeft is already maxSteps). Loop while stepsLeft > 0 && !parser.IsCompletePrefix(generated).
-- In the loop, choose UnconstrainedStep vs ConstrainedStep to match the task. ALWAYS use an if/else: call UnconstrainedStep when not yet inside the constrained window (i.e. when !helpers.InsideDelimitedWindow(generated)); call ConstrainedStep only when helpers.InsideDelimitedWindow(generated) is true. Assign the returned (next, newSteps) back, append next to generated, set stepsLeft := newSteps.
-- If you use if/else with both step types, declare var next: Token; var newSteps: nat; before the if/else, then in each branch assign next, newSteps := helpers.UnconstrainedStep(...) or next, newSteps := helpers.ConstrainedStep(...).
-- Optionally use RollbackToValidPrefix if you need to repair. At the end the template assigns remainingSteps := stepsLeft.
-- YOU CANNOT use ConstrainedStep alone from the start — generated starts as [] which is never InsideDelimitedWindow. Always start with UnconstrainedStep and switch to ConstrainedStep after "<<" appears.
+- In the loop, call the appropriate primitive based on your strategy logic. ConstrainedStep may ONLY be called when helpers.InsideDelimitedWindow(generated) is true AND !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)) is true — both are verifiable preconditions. For all other states use UnconstrainedStep (or RollbackToValidPrefix to repair). How you track state, structure branches, or count steps is your design choice.
+- If you use if/else with both step types and share next/newSteps across branches, declare var next: Token; var newSteps: nat; before the if/else and assign (without var) in each branch.
+- YOU CANNOT call ConstrainedStep when generated == [] — InsideDelimitedWindow([]) is always false. You must use UnconstrainedStep until "<<" has been emitted.
 
 **Loop invariants (required for verification):** Use at minimum:
   invariant lm.ValidTokensIdsLogits()
@@ -149,27 +148,7 @@ Output MUST start with the required rationale block (see system prompt), then ou
 Output ONLY the method body (no signature, no outer braces). Do NOT wrap output in markdown code fences (no ```dafny).
 Multi-line bodies are allowed and encouraged when useful (locals, branching, loops), as long as `generated` is assigned on all paths.
 
-Example format (required rationale + loop with stepsLeft and invariants):
-  // CSD_RATIONALE_BEGIN
-  // <your reasoning here>
-  // CSD_RATIONALE_END
-  generated := [];
-  var next: Token; var newSteps: nat;
-  while stepsLeft > 0 && !parser.IsCompletePrefix(generated)
-    invariant lm.ValidTokensIdsLogits()
-    invariant 0 <= stepsLeft <= maxSteps
-    invariant |generated| + stepsLeft == maxSteps
-    decreases stepsLeft
-  {{
-    if helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)) {{
-      next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);
-    }} else {{
-      next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);
-    }}
-    generated := generated + [next];
-    stepsLeft := newSteps;
-  }}
-  // template then assigns remainingSteps := stepsLeft
+Your output must start with the rationale block, then Dafny statements. Include a while loop with the standard invariants (lm.ValidTokensIdsLogits(), 0 <= stepsLeft <= maxSteps, |generated| + stepsLeft == maxSteps, decreases stepsLeft). Assign generated on all paths. The template handles remainingSteps.
 """
 
 
@@ -237,23 +216,7 @@ Rules:
 
 **CRITICAL: If the error says "precondition for this call could not be proved" and mentions "InsideDelimitedWindow" for a ConstrainedStep call:**
 - ConstrainedStep requires InsideDelimitedWindow(generated), meaning "<<" must already be in generated with no matching ">>" yet. generated starts as [] which is never inside the window.
-- You CANNOT call ConstrainedStep at the start or in a bare loop — you must first use UnconstrainedStep until LeftDelimiter appears. Fix: use an if/else in the loop: call ConstrainedStep only when helpers.InsideDelimitedWindow(generated) is true and !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)); otherwise call UnconstrainedStep.
-- Pattern to use:
-    var next: Token; var newSteps: nat;
-    while stepsLeft > 0 && !parser.IsCompletePrefix(generated)
-      invariant lm.ValidTokensIdsLogits()
-      invariant 0 <= stepsLeft <= maxSteps
-      invariant |generated| + stepsLeft == maxSteps
-      decreases stepsLeft
-    {
-      if helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)) {
-        next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);
-      } else {
-        next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);
-      }
-      generated := generated + [next];
-      stepsLeft := newSteps;
-    }
+- You CANNOT call ConstrainedStep unconditionally in a loop. It must only be called when helpers.InsideDelimitedWindow(generated) is true AND !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)) is true. Use a different primitive (e.g. UnconstrainedStep) for all other cases. Redesign your strategy logic accordingly — the specific approach (how you structure the branches, what you track with extra variables, etc.) is up to you.
 
 **CRITICAL: If the error says "precondition for this call could not be proved" for UnconstrainedPreservesValidWhenPermissive or mentions IsPermissive:**
 - That lemma requires parser.IsPermissive(generated). Many parsers (e.g. FOLIO) are not permissive outside << >>. Remove the line CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next); from your strategy.
