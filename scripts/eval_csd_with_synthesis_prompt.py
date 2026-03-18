@@ -102,7 +102,7 @@ def main():
         dataset_name=args.dataset,
         model_name=args.model,
         device=args.device,
-        vocab_size=2000,
+        vocab_size=3000,
         sample_size=args.sample_size,
         max_steps=args.max_steps,
         load_in_4bit=args.load_in_4bit,

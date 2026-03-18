@@ -99,6 +99,7 @@ def setup_dafny_environment(
     load_in_4bit: bool = False,
     load_in_8bit: bool = False,
     add_fol_keyword_tokens: bool = False,
+    add_gsm_delimiter_tokens: bool = False,
 ) -> Dict[str, Any]:
     """
     Load model and setup Dafny environment once.
@@ -133,6 +134,7 @@ def setup_dafny_environment(
             load_in_4bit=load_in_4bit,
             load_in_8bit=load_in_8bit,
             add_fol_keyword_tokens=add_fol_keyword_tokens,
+            add_gsm_delimiter_tokens=add_gsm_delimiter_tokens,
         )
     except RuntimeError as e:
         if "out of memory" not in str(e).lower():
@@ -150,6 +152,7 @@ def setup_dafny_environment(
             load_in_4bit=load_in_4bit,
             load_in_8bit=load_in_8bit,
             add_fol_keyword_tokens=add_fol_keyword_tokens,
+            add_gsm_delimiter_tokens=add_gsm_delimiter_tokens,
         )
         used_cpu_fallback = True
 

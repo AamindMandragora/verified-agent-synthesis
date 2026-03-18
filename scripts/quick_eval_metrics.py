@@ -25,7 +25,7 @@ def main():
         dataset_name=dataset,
         model_name="Qwen/Qwen2.5-Coder-3B-Instruct",
         device="cuda",
-        vocab_size=2000,
+        vocab_size=3000,
         sample_size=3,
         max_steps=256,
         load_in_4bit=True,

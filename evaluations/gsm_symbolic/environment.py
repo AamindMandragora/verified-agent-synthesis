@@ -36,6 +36,7 @@ def setup_dafny_environment(
         start_rule="csd_start",
         load_in_4bit=load_in_4bit,
         load_in_8bit=load_in_8bit,
+        add_gsm_delimiter_tokens=True,
     )
 
 

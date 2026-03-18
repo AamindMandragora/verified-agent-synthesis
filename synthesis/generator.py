@@ -45,7 +45,7 @@ class StrategyGenerator:
         model_name: Optional[str] = None,
         device: Optional[str] = None,
         torch_dtype: Optional[torch.dtype] = None,
-        max_new_tokens: int = 512,
+        max_new_tokens: int = 800,
         temperature: float = 0.7,
         top_p: float = 0.9,
         generation_timeout: Optional[int] = None,
@@ -276,11 +276,20 @@ class StrategyGenerator:
         
         # If it looks like a full function/method definition, extract just the body.
         # We match the *final* '}' so nested braces inside the body are preserved.
+        # Also handles truncated output (no closing '}') by stripping the signature line.
         lowered = strategy.lower()
         if ("function" in lowered or "method" in lowered) and "{" in strategy:
             brace_match = re.search(r"\{([\s\S]*)\}\s*$", strategy)
             if brace_match:
                 strategy = brace_match.group(1).strip()
+            else:
+                # Truncated: strip everything up to and including the first opening brace
+                # (the method signature + '{') and keep the partial body
+                trunc_match = re.search(
+                    r"(?:method|function)\s+\w+[^{]*\{([\s\S]*)$", strategy
+                )
+                if trunc_match:
+                    strategy = trunc_match.group(1).strip()
 
         # Ensure the body ends in a reasonable terminator.
         # - Single statements should end with ';'

@@ -193,7 +193,7 @@ def main():
             print(f"    {repr(keyword):25} -> {len(ids)} token(s): {dec}  {'OK' if single else 'MISMATCH'}")
 
         # Valid next with vocab: mirror production (first vocab_size tokens + FOL keyword tokens)
-        vocab_size = min(2000, tok.vocab_size if hasattr(tok, "vocab_size") else len(tok))
+        vocab_size = min(3000, tok.vocab_size if hasattr(tok, "vocab_size") else len(tok))
         token_list = [tok.decode([i]) for i in range(vocab_size)]
         for t in FOL_KEYWORD_TOKENS:
             tid = tok.convert_tokens_to_ids(t)

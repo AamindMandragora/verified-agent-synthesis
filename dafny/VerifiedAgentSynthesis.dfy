@@ -284,8 +284,8 @@ module VerifiedDecoderAgent {
   // checks for delimiters (e.g. evaluator, model_utils), keep those in sync.
   // =============================================================================
 
-  const LeftDelimiter: Token := "<<"
-  const RightDelimiter: Token := ">>"
+  const LeftDelimiter: Token := " <<"
+  const RightDelimiter: Token := " >>"
 
   class Delimiter {
     const Left: Token

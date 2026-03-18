@@ -119,7 +119,7 @@ CSDHelpers has exactly three methods. You must build your strategy by calling th
 
 2) helpers.ConstrainedStep(prompt, generated, stepsLeft) returns (next: Token, stepsLeft': nat)
    - One constrained step; consumes one step. Requires: InsideDelimitedWindow(generated), ConstrainedWindowValid(generated), !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)), stepsLeft >= 1. (DelimitersInLM() is satisfied automatically by the template's helpers.DelimitersInLMAlways() call.)
-   - InsideDelimitedWindow(generated) means generated already contains LeftDelimiter ("<<") with no matching ">>" yet. YOU CANNOT call ConstrainedStep when generated == [] or before "<<" has been emitted — it will fail verification. Always use UnconstrainedStep first until LeftDelimiter appears in generated, then switch to ConstrainedStep.
+   - InsideDelimitedWindow(generated) means generated already contains LeftDelimiter (" <<") with no matching " >>" yet. YOU CANNOT call ConstrainedStep when generated == [] or before " <<" has been emitted — it will fail verification. Always use UnconstrainedStep first until LeftDelimiter appears in generated, then switch to ConstrainedStep.
    - Guarantees: next != LeftDelimiter(), next != RightDelimiter() ==> ConstrainedWindowValid(generated + [next]) and InsideDelimitedWindow(generated + [next]).
    - Use: var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps;
 
@@ -133,7 +133,7 @@ You MUST implement the strategy body as a loop that:
 - Uses generated := []; (stepsLeft is already maxSteps). Loop while stepsLeft > 0 && !parser.IsCompletePrefix(generated).
 - In the loop, call the appropriate primitive based on your strategy logic. ConstrainedStep may ONLY be called when helpers.InsideDelimitedWindow(generated) is true AND !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)) is true — both are verifiable preconditions. For all other states use UnconstrainedStep (or RollbackToValidPrefix to repair). How you track state, structure branches, or count steps is your design choice.
 - If you use if/else with both step types and share next/newSteps across branches, declare var next: Token; var newSteps: nat; before the if/else and assign (without var) in each branch.
-- YOU CANNOT call ConstrainedStep when generated == [] — InsideDelimitedWindow([]) is always false. You must use UnconstrainedStep until "<<" has been emitted.
+- YOU CANNOT call ConstrainedStep when generated == [] — InsideDelimitedWindow([]) is always false. You must use UnconstrainedStep until " <<" has been emitted.
 
 **Loop invariants (required for verification):** Place these BETWEEN the `while` condition and `{` (never inside the body):
   invariant lm.ValidTokensIdsLogits()
@@ -143,6 +143,7 @@ You MUST implement the strategy body as a loop that:
   decreases stepsLeft
 NOTE: `helpers.ConstrainedWindowValid(generated)` holds trivially before any LeftDelimiter is emitted (not inside the window), and ConstrainedStep's postconditions maintain it when next != RightDelimiter(). Include it whenever you use ConstrainedStep so Dafny can prove the precondition.
 NOTE: Do NOT include `invariant parser.IsValidPrefix(generated)` when using UnconstrainedStep — unconstrained generation does not guarantee a valid prefix.
+NOTE: Write invariants and decreases as REAL Dafny keywords, NOT as comments. Do NOT write `// Invariant: X` — that is just a comment and Dafny ignores it. Write `invariant X` directly.
 
 Output format:
 - Return ONLY the method body (no signature, no outer braces).
@@ -238,8 +239,8 @@ Rules:
 **CRITICAL: If the error says "missing semicolon at end of statement" or "lbrace expected" at a for-loop:**
 - Dafny for-loops use braces, not \"do\". Write `for i := 0 to |prompt| - 1 {{` (with `{{`), not `for i := 0 to |prompt| - 1 do`. The body of an `if` must be in braces when it has multiple statements: `if condition {{ stmt1; stmt2; }}`.
 
-**CRITICAL: If the error says "rbrace expected" or you wrote \"remainingSteps := stepsLeft;\":**
-- The template already assigns remainingSteps. Do NOT write `remainingSteps := stepsLeft;` in your body.
+**CRITICAL: If the error says "rbrace expected" and/or you wrote \"remainingSteps := stepsLeft;\":**
+- The template already assigns remainingSteps. Do NOT write `remainingSteps := stepsLeft;` in your body. If instead it's pointing to an invariant or decreases clause, then you have placed it in the wrong place and must move it to be between the while loop start and the body.
 
 **CRITICAL: If the error says "index out of range" at generated[|generated|-1]:**
 - When generated is empty, |generated|-1 is invalid. Guard the condition: use (|generated| > 0 && generated[|generated|-1] != LeftDelimiter) instead of just generated[|generated|-1] != LeftDelimiter.
@@ -248,7 +249,7 @@ Rules:
 - Add `invariant helpers.ConstrainedWindowValid(generated)` to your while loop. This holds trivially when not inside the delimited window, and ConstrainedStep's own postconditions maintain it (for next != RightDelimiter()). Add it alongside the other standard invariants.
 
 **CRITICAL: If the error says "precondition for this call could not be proved" and mentions "InsideDelimitedWindow" for a ConstrainedStep call:**
-- ConstrainedStep requires InsideDelimitedWindow(generated), meaning "<<" must already be in generated with no matching ">>" yet. generated starts as [] which is never inside the window.
+- ConstrainedStep requires InsideDelimitedWindow(generated), meaning " <<" must already be in generated with no matching " >>" yet. generated starts as [] which is never inside the window.
 - You CANNOT call ConstrainedStep unconditionally in a loop. It must only be called when helpers.InsideDelimitedWindow(generated) is true AND !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)) is true. Use a different primitive (e.g. UnconstrainedStep) for all other cases. Redesign your strategy logic accordingly — the specific approach (how you structure the branches, what you track with extra variables, etc.) is up to you.
 
 **CRITICAL: If the error says "precondition for this call could not be proved" for UnconstrainedPreservesValidWhenPermissive or mentions IsPermissive:**
@@ -259,6 +260,18 @@ Rules:
 
 **CRITICAL: If the error mentions invalid syntax for a for-loop or "for i in 0 ..":**
 - Dafny does not use `for i in 0 .. |prompt| - 1`. Use `for i := 0 to |prompt| - 1 {{ ... }}` instead (assign with `:=`, use `to`, not `in` or `..`).
+
+**CRITICAL: If the error says "variable 'generated' ... might be uninitialized" or "definite-assignment" for generated:**
+- The out-parameter `generated` is NOT automatically initialized. You MUST write `generated := [];` as the first statement in the body BEFORE the while loop. The template does NOT initialize it for you.
+
+**CRITICAL: If the error says "variable 'next' ... might be uninitialized" or "definite-assignment" for next/newSteps:**
+- When you declare `var next: Token; var newSteps: nat;` BEFORE an if/else and then use `var next, newSteps :=` INSIDE each branch, the inner declarations shadow the outer ones. The outer `next`/`newSteps` are never assigned. Fix: inside each branch, assign WITHOUT `var` — write `next, newSteps :=` not `var next, newSteps :=`.
+
+**CRITICAL: If the error says "a postcondition could not be proved on this return path":**
+- You are missing loop invariants or they are wrong. The strategy MUST include these invariants between the while condition and `{` (as real Dafny invariant keywords, NOT as comments):
+  invariant lm.ValidTokensIdsLogits()
+  invariant |generated| + stepsLeft == maxSteps
+  decreases stepsLeft
 
 Common fixes:
 - Do NOT write `var generated: Prefix;` or `var stepsLeft := maxSteps;` (duplicate/shadowing). The template already provides stepsLeft. Assign to the existing out-parameter `generated` only.

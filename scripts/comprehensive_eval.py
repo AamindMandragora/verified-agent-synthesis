@@ -357,7 +357,7 @@ def run_gsm_evaluation(
         "--device", "cuda",
         "--limit", str(limit),
         "--max-steps", "1024",
-        "--vocab-size", "2000",
+        "--vocab-size", "3000",
     ]
     if random_sample:
         cmd.append("--random-sample")
@@ -474,7 +474,7 @@ def run_folio_evaluation(
         "--device", "cuda",
         "--limit", str(limit),
         "--max-steps", "1500",
-        "--vocab-size", "2000",
+        "--vocab-size", "3000",
     ]
     if unconstrained:
         cmd.append("--unconstrained")

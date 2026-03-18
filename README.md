@@ -484,7 +484,7 @@ python -m evaluations.gsm_symbolic.cli \
   --device cuda \
   --limit 10 \
   --max-steps 1024 \
-  --vocab-size 2000 \
+  --vocab-size 3000 \
   --grammar grammars/gsm.lark \
   --debug-delimiters
 ```

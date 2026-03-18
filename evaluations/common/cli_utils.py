@@ -59,7 +59,7 @@ def add_common_eval_args(
     parser.add_argument(
         "--vocab-size",
         type=int,
-        default=2000,
+        default=3000,
         help="Token vocabulary size limit",
     )
     parser.add_argument(

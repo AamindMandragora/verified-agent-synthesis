@@ -9,5 +9,5 @@ CUDA_VISIBLE_DEVICES=2 python -m evaluations.gsm_symbolic.cli \
     --device cuda \
     --limit 3 \
     --max-steps 1024 \
-    --vocab-size 2000 \
+    --vocab-size 3000 \
     --debug-delimiters

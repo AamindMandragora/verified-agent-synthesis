@@ -164,8 +164,8 @@ Examples:
     parser.add_argument(
         "--eval-vocab-size",
         type=int,
-        default=2000,
-        help="Vocabulary size for evaluation (default: 2000)"
+        default=3000,
+        help="Vocabulary size for evaluation (default: 3000)"
     )
 
     parser.add_argument(

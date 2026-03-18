@@ -202,7 +202,7 @@ class Evaluator:
         dataset_name: str = "gsm_symbolic",
         model_name: str = "Qwen/Qwen2.5-0.5B-Instruct",
         device: str = "cuda",
-        vocab_size: int = 2000,
+        vocab_size: int = 3000,
         sample_size: int = 1,
         max_steps: int = 150,
         load_in_4bit: bool = False,

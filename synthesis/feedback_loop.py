@@ -179,6 +179,27 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
         repaired = new_repaired
         changed = True
 
+    # Fix: invariants/decreases written as "// Invariant: X" or "// Decreases: X" comments
+    # inside the loop body — convert to real Dafny keywords so _fix_while_invariants can move them.
+    new_repaired = re.sub(
+        r"^(\s*)//\s*[Ii]nvariant:\s*(.+)$",
+        r"\1invariant \2",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+    new_repaired = re.sub(
+        r"^(\s*)//\s*[Dd]ecreases:\s*(.+)$",
+        r"\1decreases \2",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
     # Fix: invariant/decreases inside while body -> move them between condition and opening {
     # Dafny syntax: "while cond\n  invariant X\n  decreases Y\n{ body }"
     # LLM writes them either at the start or end of the body in two forms:
@@ -560,11 +581,33 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
                     changed = True
                     break
 
+    # Fix: "variable 'generated' ... might be uninitialized" — LLM uses generated in the while
+    # condition without initializing it first. Insert generated := []; before the loop.
+    if (
+        ("might be uninitialized" in error_summary or "definite-assignment" in error_summary)
+        and "generated" in error_summary
+        and "generated := [" not in repaired
+        and "generated := []" not in repaired
+    ):
+        # Insert generated := []; immediately before the while loop
+        new_repaired = re.sub(
+            r"(while\s+stepsLeft\s*>\s*0\b)",
+            r"generated := [];\n  \1",
+            repaired,
+            count=1,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
     # Fix: "unresolved identifier: next" / "unresolved identifier: newSteps" — LLM declares var next, newSteps inside if/else or at loop top so they're out of scope. Declare at start of while body and assign in each branch.
+    # Also triggered by definite-assignment errors for 'next' or 'newSteps' (shadowing in if/else branches).
     has_next_scope_error = (
         "unresolved identifier: next" in error_summary
         or "unresolved identifier: newSteps" in error_summary
         or ("unresolved identifier" in error_summary and " next" in error_summary and " newSteps" in error_summary)
+        or ("might be uninitialized" in error_summary and ("'next'" in error_summary or "'newSteps'" in error_summary))
+        or ("definite-assignment" in error_summary and ("next" in error_summary or "newSteps" in error_summary) and "generated" not in error_summary)
     )
     has_next_assignments = "next, newSteps :=" in repaired or "var next, newSteps := helpers." in repaired
     if has_next_scope_error and has_next_assignments:

@@ -35,10 +35,10 @@ class default__:
 
     @_dafny.classproperty
     def LeftDelimiter(instance):
-        return _dafny.SeqWithoutIsStrInference(map(_dafny.CodePoint, "<<"))
+        return _dafny.SeqWithoutIsStrInference(map(_dafny.CodePoint, " <<"))
     @_dafny.classproperty
     def RightDelimiter(instance):
-        return _dafny.SeqWithoutIsStrInference(map(_dafny.CodePoint, ">>"))
+        return _dafny.SeqWithoutIsStrInference(map(_dafny.CodePoint, " >>"))
 
 class LM:
     def  __init__(self):

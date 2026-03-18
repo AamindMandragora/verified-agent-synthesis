@@ -19,6 +19,12 @@ FOL_KEYWORD_TOKENS = [
     "{forall}", "{exists}", "{and}", "{or}", "{not}", "{implies}", "{iff}", "{xor}",
 ]
 
+# GSM delimiter strings to add explicitly to the vocabulary.
+# The Qwen tokenizer produces ' <<' (id 1115, with leading space) for << in context,
+# and '>>' (id 2452) for >>. We ensure both ' <<' and ' >>' are in vocab, plus '>>'
+# as a fallback in case ' >>' is not a single BPE token.
+GSM_DELIMITER_STRINGS = [" <<", " >>", ">>"]
+
 
 def get_model_input_device(model) -> torch.device:
     """
@@ -77,6 +83,7 @@ def create_huggingface_lm(
     load_in_4bit: bool = False,
     load_in_8bit: bool = False,
     add_fol_keyword_tokens: bool = False,
+    add_gsm_delimiter_tokens: bool = False,
 ):
     """
     Create a HuggingFace LM wrapped with a Dafny-compatible interface.
@@ -155,6 +162,18 @@ def create_huggingface_lm(
                 tid = tokenizer.convert_tokens_to_ids(t)
                 if tid != tokenizer.unk_token_id and tid not in token_ids:
                     token_ids.append(tid)
+        if add_gsm_delimiter_tokens:
+            # Add GSM delimiter tokens: ' <<' (id≈1115) is likely already in default 2000-token vocab,
+            # but ' >>' and '>>' (id≈2452) are typically outside. Add whichever encode as single tokens.
+            existing_ids = set(token_ids)
+            for s in GSM_DELIMITER_STRINGS:
+                ids = tokenizer.encode(s, add_special_tokens=False)
+                if len(ids) == 1:
+                    tid = ids[0]
+                    if tid not in existing_ids:
+                        token_ids.append(tid)
+                        existing_ids.add(tid)
+                        print(f"  Added GSM delimiter token {repr(s)} (id={tid}) to vocabulary.")
 
     tokens_dafny = _dafny.SeqWithoutIsStrInference(
         [_dafny.Seq(tokenizer.decode([tid])) for tid in token_ids]
@@ -164,7 +183,7 @@ def create_huggingface_lm(
         """Wrapper that bridges HuggingFace models to the Dafny LM interface."""
         
         # Token IDs that must not be chosen as the first output token (so we get plain text before the delimiter)
-        _FORBID_FIRST_STRINGS = frozenset({"<<", "<", " <<", " << ", "$"})
+        _FORBID_FIRST_STRINGS = frozenset({"<<", "<", " <<", " << ", " >>", ">>", "$"})
 
         def __init__(self, hf_model, hf_tokenizer, tokens, tids, dev):
             super().__init__()
