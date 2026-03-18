@@ -230,10 +230,6 @@ module VerifiedDecoderAgent {
       ensures token in Tokens
       ensures !IsMasked(token)
       ensures ValidTokensIdsLogits()
-
-    // Extern method choosing the next token from the FULL vocabulary.
-    method {:extern} {:axiom} ChooseNextTokenUnconstrained() returns (token: Token)
-      ensures ValidTokensIdsLogits()
   }
 
   class Parser {
@@ -241,7 +237,7 @@ module VerifiedDecoderAgent {
 
     // Extern function checking if the given prefix is valid under the grammar.
     predicate {:extern} {:axiom} IsValidPrefix(prefix: Prefix)
-      ensures forall k: nat :: 0 <= k < |prefix| - 1 ==> IsValidPrefix(prefix[k..])
+      ensures forall k :: 0 <= k < |prefix| ==> IsValidPrefix(prefix[..k])
 
     // Lemma that proves that the empty prefix is valid.
     lemma {:axiom} EmptyPrefixIsValid()
@@ -271,9 +267,14 @@ module VerifiedDecoderAgent {
       ensures (IsCompletePrefix(prefix) || |ValidNextTokens(prefix)| > 0)
   }
 
-  function Contains(s: string, sub: string): bool
+  predicate Contains(s: string, sub: string)
   {
     exists i, j :: 0 <= i <= j <= |s| && s[i..j] == sub
+  }
+
+  predicate PrefixContains(p: Prefix, t: Token)
+  {
+    exists i :: 0 <= i < |p| && p[i] == t
   }
 
   // =============================================================================
@@ -291,7 +292,9 @@ module VerifiedDecoderAgent {
     const Right: Token
 
     constructor(left: Token, right: Token)
+      requires left != right
       ensures this.Left == left && this.Right == right
+      ensures this.Left != this.Right
     {
       this.Left := left;
       this.Right := right;
@@ -300,13 +303,14 @@ module VerifiedDecoderAgent {
     /// Returns the index of the last occurrence of Left in prefix, or |prefix| if none.
     function LastLeftDelimiterIndex(prefix: Prefix): (result: nat)
       ensures result <= |prefix|
-      ensures result < |prefix| ==> prefix[result] == Left
-      ensures result == |prefix| ==> forall i :: 0 <= i < |prefix| ==> prefix[i] != Left
+      ensures result < |prefix| ==> prefix[result] == this.Left
+      ensures result == |prefix| ==> forall i :: 0 <= i < |prefix| ==> prefix[i] != this.Left
+      ensures result < |prefix| ==> forall i :: result < i < |prefix| ==> prefix[i] != this.Left
       decreases |prefix|
     {
       if |prefix| == 0 then 0
       else
-        if prefix[|prefix|-1] == Left then |prefix|-1
+        if prefix[|prefix|-1] == this.Left then |prefix|-1
         else
           var lastInRest := LastLeftDelimiterIndex(prefix[..|prefix|-1]);
           if lastInRest < |prefix|-1 then lastInRest else |prefix|
@@ -315,12 +319,23 @@ module VerifiedDecoderAgent {
     /// Returns the index of the first occurrence of Right in content, or |content| if none.
     function FirstRightDelimiterIndex(content: Prefix): (result: nat)
       ensures result <= |content|
-      ensures result < |content| ==> content[result] == Right
+      ensures result < |content| ==> content[result] == this.Right
+      ensures forall i :: 0 <= i < result ==> content[i] != this.Right
       decreases |content|
     {
       if |content| == 0 then 0
-      else if content[0] == Right then 0
+      else if content[0] == this.Right then 0
       else 1 + FirstRightDelimiterIndex(content[1..])
+    }
+
+    lemma NoFirstRightDelimiterIndexMeansNoRight(content: Prefix)
+      requires FirstRightDelimiterIndex(content) == |content|
+      ensures !PrefixContains(content, this.Right)
+    {
+      if |content| == 0 {
+      } else {
+        NoFirstRightDelimiterIndexMeansNoRight(content[1..]);
+      }
     }
 
     /// Returns the token sequence strictly between the last left delimiter and the next right delimiter (or end).
@@ -344,12 +359,68 @@ module VerifiedDecoderAgent {
       start <= |prefix| && FirstRightDelimiterIndex(prefix[start..|prefix|]) == |prefix[start..|prefix|]|
     }
 
+    lemma InsideDelimitedWindowNoRight(prefix: Prefix)
+      requires InsideDelimitedWindow(prefix)
+      ensures !PrefixContains(GetDelimitedContent(prefix), this.Right)
+    {
+      var start := LastLeftDelimiterIndex(prefix) + 1;
+      var afterLeft := prefix[start..|prefix|];
+      NoFirstRightDelimiterIndexMeansNoRight(afterLeft);
+    }
+
     /// When inside the window and the new token is not the right delimiter, appending it extends the delimited content by one token and we remain inside the window. Used to maintain ConstrainedWindowValid after ConstrainedStep.
     lemma {:axiom} GetDelimitedContentAppend(prefix: Prefix, next: Token)
       requires InsideDelimitedWindow(prefix)
       requires next != Right
+      requires next != Left
       ensures GetDelimitedContent(prefix + [next]) == GetDelimitedContent(prefix) + [next]
       ensures next != Right ==> InsideDelimitedWindow(prefix + [next])
+
+    lemma AppendLeftEntersWindow(prefix: Prefix)
+      ensures InsideDelimitedWindow(prefix + [this.Left])
+      ensures GetDelimitedContent(prefix + [this.Left]) == []
+    {}
+
+    lemma FirstRightDelimiterAppendRight(content: Prefix)
+      requires FirstRightDelimiterIndex(content) == |content|
+      ensures FirstRightDelimiterIndex(content + [this.Right]) == |content|
+    {
+      if |content| == 0 {
+      } else {
+        FirstRightDelimiterAppendRight(content[1..]);
+        assert (content + [this.Right])[1..] == content[1..] + [this.Right];
+      }
+    }
+
+    lemma LastLeftDelimiterAppendNonLeft(prefix: Prefix, tok: Token)
+      requires tok != this.Left
+      ensures var oldIdx := LastLeftDelimiterIndex(prefix);
+              var newIdx := LastLeftDelimiterIndex(prefix + [tok]);
+              if oldIdx < |prefix| then newIdx == oldIdx
+              else newIdx == |prefix + [tok]|
+    {
+      var extended := prefix + [tok];
+      assert extended[..|extended| - 1] == prefix;
+    }
+
+    lemma AppendRightExitsWindow(prefix: Prefix)
+      requires InsideDelimitedWindow(prefix)
+      requires this.Left != this.Right
+      ensures !InsideDelimitedWindow(prefix + [this.Right])
+    {
+      var start := LastLeftDelimiterIndex(prefix) + 1;
+      var afterLeft := prefix[start..|prefix|];
+      assert FirstRightDelimiterIndex(afterLeft) == |afterLeft|;
+      FirstRightDelimiterAppendRight(afterLeft);
+      LastLeftDelimiterAppendNonLeft(prefix, this.Right);
+      var newPrefix := prefix + [this.Right];
+      var newStart := LastLeftDelimiterIndex(newPrefix) + 1;
+      assert newStart == start;
+      var newAfterLeft := newPrefix[newStart..|newPrefix|];
+      assert newAfterLeft == afterLeft + [this.Right];
+      assert FirstRightDelimiterIndex(newAfterLeft) == |afterLeft|;
+      assert |afterLeft| != |newAfterLeft|;
+    }
   }
 
   class CSDHelpers {
@@ -360,12 +431,25 @@ module VerifiedDecoderAgent {
     const delimiter: Delimiter
 
     constructor(lm: LM, parser: Parser, delimiter: Delimiter)
+      requires delimiter.Left != delimiter.Right
       ensures this.lm == lm && this.parser == parser && this.delimiter == delimiter
+      ensures this.delimiter.Left != this.delimiter.Right
     {
       this.lm := lm;
       this.parser := parser;
       this.delimiter := delimiter;
     }
+
+    predicate DelimitersInLM()
+      reads this, this.delimiter, this.lm, this.lm.Logits
+    {
+      lm.ValidTokensIdsLogits() &&
+      delimiter.Left in lm.Tokens &&
+      delimiter.Right in lm.Tokens
+    }
+
+    lemma {:axiom} DelimitersInLMAlways()
+      ensures DelimitersInLM()
 
     // --- Delimiter conveniences (delegate to this.delimiter) ---
     function LeftDelimiter(): (result: Token)
@@ -414,11 +498,31 @@ module VerifiedDecoderAgent {
       requires ConstrainedWindowValid(prefix)
       requires parser.ValidNextToken(GetDelimitedContent(prefix), next)
       requires next != RightDelimiter()
+      requires next != LeftDelimiter()
       ensures GetDelimitedContent(prefix + [next]) == GetDelimitedContent(prefix) + [next]
       ensures ConstrainedWindowValid(prefix + [next])
+      ensures InsideDelimitedWindow(prefix + [next])
     {
       delimiter.GetDelimitedContentAppend(prefix, next);
       // Parser.ValidNextTokens ensures extending by valid next gives valid prefix; so ConstrainedWindowValid(prefix + [next]) follows.
+    }
+
+    lemma EnterDelimitedWindow(prefix: Prefix)
+      ensures InsideDelimitedWindow(prefix + [delimiter.Left])
+      ensures GetDelimitedContent(prefix + [delimiter.Left]) == []
+      ensures parser.IsValidPrefix([])
+    {
+      delimiter.AppendLeftEntersWindow(prefix);
+      parser.EmptyPrefixIsValid();
+    }
+
+    lemma ExitDelimitedWindow(prefix: Prefix)
+      requires InsideDelimitedWindow(prefix)
+      requires this.delimiter.Left != this.delimiter.Right
+      ensures !InsideDelimitedWindow(prefix + [delimiter.Right])
+      ensures ConstrainedWindowValid(prefix + [delimiter.Right])
+    {
+      delimiter.AppendRightExitsWindow(prefix);
     }
 
     // Performs a single unconstrained decoding step; consumes one step. Returns next token and remaining steps.
@@ -430,7 +534,7 @@ module VerifiedDecoderAgent {
     {
       lm.ValidTokensIdsLogitsAlways();
       lm.GenerateLogits(prompt + generated);
-      next := lm.ChooseNextTokenUnconstrained();
+      next := lm.ChooseNextToken();
       stepsLeft' := stepsLeft - 1;
     }
 
@@ -438,26 +542,34 @@ module VerifiedDecoderAgent {
     method ConstrainedStep(prompt: Prefix, generated: Prefix, stepsLeft: nat) returns (next: Token, stepsLeft': nat)
       modifies this.lm.Logits
       requires InsideDelimitedWindow(generated)
+      requires ConstrainedWindowValid(generated)
       requires !parser.IsCompletePrefix(GetDelimitedContent(generated))
       requires stepsLeft >= 1
+      requires DelimitersInLM()
       ensures next in lm.Tokens
+      ensures next != LeftDelimiter()
       ensures this.lm.ValidTokensIdsLogits()
-      ensures forall t: Token :: t in lm.Tokens ==> (lm.IsMasked(t) || parser.ValidNextToken(GetDelimitedContent(generated), t))
       ensures parser.ValidNextToken(GetDelimitedContent(generated), next)
       ensures !this.lm.IsMasked(next)
       ensures stepsLeft' == stepsLeft - 1
       ensures forall t: Token :: t in parser.ValidNextTokens(GetDelimitedContent(generated) + [next]) ==> t in this.lm.Tokens
       ensures parser.IsValidPrefix(GetDelimitedContent(generated) + [next])
+      ensures next != RightDelimiter() ==> GetDelimitedContent(generated + [next]) == GetDelimitedContent(generated) + [next]
+      ensures next != RightDelimiter() ==> ConstrainedWindowValid(generated + [next])
+      ensures next != RightDelimiter() ==> InsideDelimitedWindow(generated + [next])
     {
       ContentIsValidInWindow(generated);
-      lm.ValidTokensIdsLogitsAlways();
       var content := GetDelimitedContent(generated);
       ValidNextTokensInLM(content);
       lm.GenerateLogits(prompt + generated);
       lm.MaskTokensExcept(parser.ValidNextTokens(content));
+      lm.MaskToken(LeftDelimiter());
       next := lm.ChooseNextToken();
       ConstrainedStepNextValid(content, next);
       stepsLeft' := stepsLeft - 1;
+      if next != RightDelimiter() {
+        delimiter.GetDelimitedContentAppend(generated, next);
+      }
     }
 
     lemma {:axiom} ConstrainedStepNextValid(content: Prefix, next: Token)
@@ -471,9 +583,13 @@ module VerifiedDecoderAgent {
     // Axiom: when inside the delimited window, the content is a valid parser prefix.
     // True by construction: ConstrainedStep is only ever called inside the window, maintaining
     // IsValidPrefix via its own postconditions starting from the empty prefix (EmptyPrefixIsValid).
-    lemma {:axiom} ContentIsValidInWindow(generated: Prefix)
+    lemma ContentIsValidInWindow(generated: Prefix)
       requires InsideDelimitedWindow(generated)
+      requires ConstrainedWindowValid(generated)
       ensures parser.IsValidPrefix(GetDelimitedContent(generated))
+    {
+      InDelimitedWindowThenContentValid(generated);
+    }
 
     // Axiom: all grammar-valid next tokens are in the LM vocabulary.
     // True by construction: the LM's tokenizer is built to cover the grammar's token set.

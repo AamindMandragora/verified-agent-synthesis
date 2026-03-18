@@ -17,7 +17,13 @@ The generator expects these entrypoints:
 # The synthesized output is injected into `dafny/GeneratedCSD.dfy` as the BODY
 # of method `MyCSDStrategy(...) returns (generated: Prefix, remainingSteps: nat)`.
 #
-# The template already has `var stepsLeft := maxSteps;` and `remainingSteps := stepsLeft;` at the end.
+# The template already has:
+#   var delim := new Delimiter(LeftDelimiter, RightDelimiter);
+#   var helpers := new CSDHelpers(lm, parser, delim);
+#   helpers.DelimitersInLMAlways();   <-- satisfies DelimitersInLM() for ConstrainedStep
+#   var stepsLeft := maxSteps;
+#   [YOUR BODY]
+#   remainingSteps := stepsLeft;
 # Your body must assign to `generated` and update `stepsLeft` in the loop (each step consumes one).
 # Helpers: UnconstrainedStep, ConstrainedStep, RollbackToValidPrefix (see VerifiedAgentSynthesis.dfy).
 
@@ -36,14 +42,14 @@ You must output ONLY the Dafny method body for:
     ...
     ensures remainingSteps >= 0 && remainingSteps <= maxSteps
 
-The template already provides: var delim := new Delimiter(LeftDelimiter, RightDelimiter); var helpers := new CSDHelpers(lm, parser, delim); var stepsLeft := maxSteps; [YOUR BODY]; remainingSteps := stepsLeft;
-So you must only assign to `generated` and update `stepsLeft` in your loop. Do NOT assign to remainingSteps (the template does that).
+The template already provides: var delim := new Delimiter(LeftDelimiter, RightDelimiter); var helpers := new CSDHelpers(lm, parser, delim); helpers.DelimitersInLMAlways(); var stepsLeft := maxSteps; [YOUR BODY]; remainingSteps := stepsLeft;
+So you must only assign to `generated` and update `stepsLeft` in your loop. Do NOT assign to remainingSteps (the template does that). Do NOT redeclare `delim`, `helpers`, or call `helpers.DelimitersInLMAlways()` yourself — the template already does this.
 
 Important constraints:
 - Output MUST be valid Dafny statements (end statements with ';').
 - Initialize/assign the out-parameter `generated` (e.g. generated := []).
 - **stepsLeft is ALREADY DECLARED by the template.** Do NOT write \"var stepsLeft := maxSteps;\" or \"var stepsLeft :=\"; that causes \"Duplicate local-variable name: stepsLeft\". Just use stepsLeft in your loop and assign stepsLeft := newSteps after each step call.
-- Do NOT redeclare `generated`, `stepsLeft`, `helpers`, or `delim`. Do NOT assign to `remainingSteps`.
+- Do NOT redeclare `generated`, `stepsLeft`, `helpers`, or `delim`. Do NOT call `helpers.DelimitersInLMAlways()`. Do NOT assign to `remainingSteps`.
 - You MUST use the `helpers` instance (type `CSDHelpers`) which is already instantiated with lm, parser, and delimiter.
 - Use `helpers.<Method>` (instance call). UnconstrainedStep and ConstrainedStep each take `(prompt, generated, stepsLeft)` — do NOT pass lm or parser, they are captured by the helpers instance. Each returns (next, stepsLeft'); assign stepsLeft := stepsLeft' after each call.
 - Be constraint-driven: choose the strategy based on the parser and contract.
@@ -79,11 +85,17 @@ Do NOT use .Exists, .Any, .Where, or lambda syntax on sequences — Dafny sequen
 - **Sequence membership / "exists"**: Do NOT use seq.Exists(...) or lambdas. Use Dafny quantifier: exists x :: x in seq && predicate(x). Example: hasValid := exists token :: token in validTokens && parser.ValidNextToken(generated, token);
 - **Parser**: The predicate is ValidNextToken(prefix, token), not IsValidNextToken. There is no IsValidNextToken.
 - **Variables**: Declare with `var name := value;` or `var name: Type := value;`. No `int x = 0` style.
+- **Loop invariant placement**: `invariant` and `decreases` clauses go BETWEEN the `while` condition and the opening `{`, not inside the body. The order is: `while condition` (newline) → indented `invariant` / `decreases` clauses → then `{` (on its own line or inline) → body → `}`. Writing them after statements inside the body is a parse error.
 - **Loop condition**: Use `while condition {{ ... }}`. Condition must be a boolean expression (e.g. `|generated| < maxSteps && !parser.IsCompletePrefix(generated)`).
 - **For-loops (if needed)**: Use Dafny syntax `for i := 0 to |seq| - 1 {{ ... }}`. Use `{{` after the range, not `do`. Do NOT use Python/Rust-style `for i in 0 .. |seq| - 1` or `for ... do`.
 - **Statements**: Every statement ends with `;`. No semicolon after `}` of blocks.
 - **Equality**: Use `==` for equality, `!=` for disequality. Use `:=` for assignment only.
 - **Mixed && and ||**: Use parentheses to disambiguate (e.g. `A || (B && C)` not `A || B && C`).
+- **No return statement**: This is a Dafny *method*, not a function. Out-parameters (`generated`, `remainingSteps`) are assigned in place — do NOT write `generated, stepsLeft;` or `return generated, stepsLeft;` at the end. The template assigns `remainingSteps := stepsLeft;` for you.
+- **No bogus asserts**: Do NOT write `assert parser.IsValidPrefix(generated);` or `assert |generated| > 0;` after unconstrained generation — these cannot be proved and will cause verification to fail.
+- **Variable declarations with multi-return**: When declaring `next` and `newSteps` before an if/else, write them as TWO separate declarations with correct types: `var next: Token;` and `var newSteps: nat;` on separate lines. Do NOT write `var next, newSteps: Token;` — that declares both as `Token`, but `newSteps` must be `nat`, causing a type error on every step call.
+- **`decreases` is not `invariant`**: Write `decreases stepsLeft` as its own clause, NOT `invariant decreases stepsLeft`. The `invariant` keyword and `decreases` keyword are separate spec clauses. Both go between the `while` condition and `{`, but never prefixed with each other.
+- **Multi-return assignment**: Do NOT put parentheses around the left-hand side. Use `var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);` NOT `(next, newSteps) := helpers.ConstrainedStep(...)` — the parenthesized form is a parse error ("invalid Suffix") in Dafny.
 - **Steps**: Each UnconstrainedStep/ConstrainedStep returns (next, stepsLeft'); assign both and do stepsLeft := stepsLeft' so the next iteration has the updated remaining steps.
 - **If/else with Step calls**: If you use if/else to choose between ConstrainedStep and UnconstrainedStep, you MUST declare `var next: Token; var newSteps: nat;` BEFORE the if/else, then in each branch assign `next, newSteps := helpers....;`. Do NOT declare `var next, newSteps` inside each branch — they would be out of scope after the closing brace and "generated := generated + [next]; stepsLeft := newSteps;" would fail with "unresolved identifier: next".
 - **Variables in invariants**: Any variable used in the loop invariants (e.g. stepCounter, hasValid) MUST be declared before the while loop (e.g. var stepCounter := 0; var hasValid := false; before the while).
@@ -106,8 +118,9 @@ CSDHelpers has exactly three methods. You must build your strategy by calling th
    - Use: var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps;
 
 2) helpers.ConstrainedStep(prompt, generated, stepsLeft) returns (next: Token, stepsLeft': nat)
-   - One constrained step; consumes one step. Requires: InsideDelimitedWindow(generated), !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)), stepsLeft >= 1.
+   - One constrained step; consumes one step. Requires: InsideDelimitedWindow(generated), ConstrainedWindowValid(generated), !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)), stepsLeft >= 1. (DelimitersInLM() is satisfied automatically by the template's helpers.DelimitersInLMAlways() call.)
    - InsideDelimitedWindow(generated) means generated already contains LeftDelimiter ("<<") with no matching ">>" yet. YOU CANNOT call ConstrainedStep when generated == [] or before "<<" has been emitted — it will fail verification. Always use UnconstrainedStep first until LeftDelimiter appears in generated, then switch to ConstrainedStep.
+   - Guarantees: next != LeftDelimiter(), next != RightDelimiter() ==> ConstrainedWindowValid(generated + [next]) and InsideDelimitedWindow(generated + [next]).
    - Use: var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps;
 
 3) helpers.RollbackToValidPrefix(generated) returns (repaired: Prefix)
@@ -122,11 +135,13 @@ You MUST implement the strategy body as a loop that:
 - If you use if/else with both step types and share next/newSteps across branches, declare var next: Token; var newSteps: nat; before the if/else and assign (without var) in each branch.
 - YOU CANNOT call ConstrainedStep when generated == [] — InsideDelimitedWindow([]) is always false. You must use UnconstrainedStep until "<<" has been emitted.
 
-**Loop invariants (required for verification):** Use at minimum:
+**Loop invariants (required for verification):** Place these BETWEEN the `while` condition and `{` (never inside the body):
   invariant lm.ValidTokensIdsLogits()
   invariant 0 <= stepsLeft <= maxSteps
   invariant |generated| + stepsLeft == maxSteps
+  invariant helpers.ConstrainedWindowValid(generated)
   decreases stepsLeft
+NOTE: `helpers.ConstrainedWindowValid(generated)` holds trivially before any LeftDelimiter is emitted (not inside the window), and ConstrainedStep's postconditions maintain it when next != RightDelimiter(). Include it whenever you use ConstrainedStep so Dafny can prove the precondition.
 NOTE: Do NOT include `invariant parser.IsValidPrefix(generated)` when using UnconstrainedStep — unconstrained generation does not guarantee a valid prefix.
 
 Output format:
@@ -173,6 +188,18 @@ Rules:
 - Preserve non-triviality when possible: keep a meaningful loop with UnconstrainedStep/ConstrainedStep. Do not remove necessary loop invariants.
 - Ensure the body is valid Dafny. Statements must end with ';' where required.
 
+**CRITICAL: If the error says "incorrect return type at index 1 ... expected nat, got Token":**
+- You wrote `var next, newSteps: Token;` which declares both as `Token`. Fix: replace with two separate declarations — `var next: Token;` on one line and `var newSteps: nat;` on the next. Then assign without `var` in each branch: `next, newSteps := helpers.ConstrainedStep(...);`.
+
+**CRITICAL: If the error says "invalid UnaryExpression" and points to `invariant decreases ...`:**
+- `decreases` is not an `invariant`. Write `decreases stepsLeft` as its own separate clause, never as `invariant decreases stepsLeft`. Both clauses go between the `while` condition and the `{`.
+
+**CRITICAL: If the error says "invalid AssignStatement" and points to a line like `generated, stepsLeft;`:**
+- This is a Dafny *method*, not a function. There is no return statement. Remove the line entirely. Out-parameters are already assigned by your loop (`generated := generated + [next]; stepsLeft := newSteps;`) and the template handles `remainingSteps := stepsLeft;`.
+
+**CRITICAL: If the error says "invalid Suffix" and points to `:=` after a tuple like `(next, newSteps)`:**
+- Dafny does NOT allow parentheses around the left-hand side of a multi-return assignment. Remove the parentheses: write `next, newSteps := helpers.ConstrainedStep(...);` or `var next, newSteps := helpers.ConstrainedStep(...);` — never `(next, newSteps) := ...`.
+
 **CRITICAL: If the error says "member X does not exist in class 'CSDHelpers'":**
 - That method DOES NOT EXIST. The ONLY methods on `helpers` are: UnconstrainedStep, ConstrainedStep, RollbackToValidPrefix.
 - You MUST implement the strategy with a loop that calls helpers.UnconstrainedStep and/or helpers.ConstrainedStep and appends the returned token to generated. There are no one-call "strategy" methods.
@@ -180,6 +207,9 @@ Rules:
 **CRITICAL: If the error says a member does not exist on Parser (e.g. CanConstrain, CanConstrain(generated), or any other parser.X):**
 - Parser has ONLY: IsValidPrefix(prefix), IsCompletePrefix(prefix), ValidNextTokens(prefix), ValidNextToken(prefix, token), IsDeadPrefix(prefix). There is NO parser.CanConstrain().
 - To decide when to use ConstrainedStep, use the condition !parser.IsCompletePrefix(generated). Remove any call to parser.CanConstrain() or parser.CanConstrain(generated).
+
+**CRITICAL: If the error says "Duplicate local-variable name: helpers" or "Duplicate local-variable name: delim":**
+- The template already declares `helpers` and `delim`. Remove any `var helpers := ...` or `var delim := ...` lines from your body. Do NOT call `helpers.DelimitersInLMAlways()` — the template does this for you.
 
 **CRITICAL: If the error says "Duplicate local-variable name: stepsLeft":**
 - The template already declares stepsLeft. Remove every line that declares stepsLeft (e.g. \"var stepsLeft := maxSteps;\") from your strategy body. Just use stepsLeft and assign to it (stepsLeft := newSteps).
@@ -213,6 +243,9 @@ Rules:
 
 **CRITICAL: If the error says "index out of range" at generated[|generated|-1]:**
 - When generated is empty, |generated|-1 is invalid. Guard the condition: use (|generated| > 0 && generated[|generated|-1] != LeftDelimiter) instead of just generated[|generated|-1] != LeftDelimiter.
+
+**CRITICAL: If the error says "precondition for this call could not be proved" and mentions "ConstrainedWindowValid" for a ConstrainedStep call:**
+- Add `invariant helpers.ConstrainedWindowValid(generated)` to your while loop. This holds trivially when not inside the delimited window, and ConstrainedStep's own postconditions maintain it (for next != RightDelimiter()). Add it alongside the other standard invariants.
 
 **CRITICAL: If the error says "precondition for this call could not be proved" and mentions "InsideDelimitedWindow" for a ConstrainedStep call:**
 - ConstrainedStep requires InsideDelimitedWindow(generated), meaning "<<" must already be in generated with no matching ">>" yet. generated starts as [] which is never inside the window.

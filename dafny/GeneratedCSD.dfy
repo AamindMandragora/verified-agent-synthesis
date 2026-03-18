@@ -15,6 +15,7 @@ module GeneratedCSD {
   {
     var delim := new Delimiter(LeftDelimiter, RightDelimiter);
     var helpers := new CSDHelpers(lm, parser, delim);
+    helpers.DelimitersInLMAlways();
     var stepsLeft := maxSteps;
     // QWEN_INSERT_STRATEGY_HERE
     remainingSteps := stepsLeft;

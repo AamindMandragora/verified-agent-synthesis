@@ -40,6 +40,76 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
     repaired = strategy_code
     changed = False
 
+    # Fix: "Duplicate local-variable name: generated" -> template out-parameter; remove "var generated := [];" lines
+    new_repaired = re.sub(
+        r"^\s*var\s+generated\s*:=\s*\[\s*\]\s*;\s*\n?",
+        "",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if new_repaired != repaired:
+        # Re-insert bare "generated := [];" if no assignment to generated exists
+        if "generated := []" not in new_repaired and "generated := [" not in new_repaired:
+            new_repaired = "generated := [];\n" + new_repaired
+        repaired = new_repaired
+        changed = True
+
+    # Fix: "var next, newSteps: Token;" — second variable gets wrong type Token instead of nat.
+    # Split into two properly typed declarations. Capture leading whitespace for correct indentation.
+    new_repaired = re.sub(
+        r"^(\s*)var\s+(\w+)\s*,\s*(\w+)\s*:\s*Token\s*;",
+        r"\1var \2: Token;\n\1var \3: nat;",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: "invariant decreases X" — decreases is not an invariant keyword; strip the spurious "invariant" prefix.
+    new_repaired = re.sub(
+        r"^(\s*)invariant\s+(decreases\b.*)",
+        r"\1\2",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: "(next, newSteps) := helpers.Step(...)" — invalid Dafny; parentheses on LHS of multi-return are not allowed.
+    # Always apply: "( a , b ) :=" -> "a, b :="
+    new_repaired = re.sub(
+        r"\(\s*(\w+)\s*,\s*(\w+)\s*\)\s*:=",
+        r"\1, \2 :=",
+        repaired,
+    )
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: model re-declares "var delim := new Delimiter(...)"; template already provides "delim"
+    new_repaired = re.sub(
+        r"^\s*var\s+delim\s*:=\s*new\s+Delimiter\s*\([^)]*\)\s*;\s*\n?",
+        "",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: model calls "helpers.DelimitersInLMAlways()"; template already calls this — remove duplicate
+    new_repaired = re.sub(
+        r"^\s*helpers\.DelimitersInLMAlways\s*\(\s*\)\s*;\s*\n?",
+        "",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
     # Fix: model re-declares "var delimiter := new Delimiter(...)"; template already provides "delim"
     new_repaired = re.sub(
         r"^\s*var\s+delimiter\s*:=\s*new\s+Delimiter\s*\([^)]*\)\s*;\s*\n?",
@@ -109,11 +179,104 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
         repaired = new_repaired
         changed = True
 
+    # Fix: invariant/decreases inside while body -> move them between condition and opening {
+    # Dafny syntax: "while cond\n  invariant X\n  decreases Y\n{ body }"
+    # LLM writes them either at the start or end of the body in two forms:
+    #   Form A: "while cond {" on one line, invariants inside body
+    #   Form B: "while cond" + "{" on next line, invariants at start of body
+    def _fix_while_invariants(code: str) -> tuple[str, bool]:
+        lines = code.split("\n")
+        out: list[str] = []
+        local_changed = False
+        i = 0
+
+        def _collect_body(start_i: int) -> tuple[list[str], list[str]]:
+            """Scan body lines from start_i (depth=1). Return (body_lines, inv_lines)."""
+            body: list[str] = []
+            invs: list[str] = []
+            depth = 1
+            j = start_i
+            while j < len(lines) and depth > 0:
+                bl = lines[j]
+                if depth == 1 and re.match(r"^\s*(invariant|decreases)\b", bl):
+                    cleaned = bl.rstrip().rstrip(";")
+                    # Strip spurious "invariant" prefix from decreases clauses
+                    cleaned = re.sub(r"^(\s*)invariant\s+(decreases\b)", r"\1\2", cleaned)
+                    invs.append(cleaned)
+                else:
+                    body.append(bl)
+                    depth += bl.count("{") - bl.count("}")
+                j += 1
+            return body, invs, j
+
+        while i < len(lines):
+            line = lines[i]
+            # Form A: "while ... {" — brace on same line as condition
+            m_a = re.match(r"^(\s*)(while\b.+?)\s*\{\s*$", line)
+            # Form B: "while ..." alone, next non-blank line is just "{"
+            m_b = (not m_a) and re.match(r"^(\s*)(while\b[^{]+?)\s*$", line)
+            next_is_brace = (
+                m_b and i + 1 < len(lines) and re.match(r"^\s*\{\s*$", lines[i + 1])
+            )
+
+            if m_a:
+                indent, while_cond = m_a.group(1), m_a.group(2)
+                body, invs, i = _collect_body(i + 1)
+                if invs:
+                    local_changed = True
+                    out.append(indent + while_cond)
+                    out.extend(invs)
+                    out.append(indent + "{")
+                    out.extend(body)
+                else:
+                    out.append(line)
+                    out.extend(body)
+            elif m_b and next_is_brace:
+                indent, while_cond = m_b.group(1), m_b.group(2)
+                brace_line = lines[i + 1]
+                body, invs, i = _collect_body(i + 2)
+                if invs:
+                    local_changed = True
+                    out.append(indent + while_cond)
+                    out.extend(invs)
+                    out.append(brace_line)
+                    out.extend(body)
+                else:
+                    out.append(line)
+                    out.append(brace_line)
+                    out.extend(body)
+            else:
+                out.append(line)
+                i += 1
+        return "\n".join(out), local_changed
+
+    new_repaired, inv_changed = _fix_while_invariants(repaired)
+    if inv_changed:
+        repaired = new_repaired
+        changed = True
+
     # Fix: malformed for-loop "for i in 0 .. |prompt| - 1" (Python/Rust-style) -> Dafny "for i := 0 to |prompt| - 1"
     for_loop_pattern = re.compile(
         r"for\s+(\w+)\s+in\s+0\s*\.\.\s*\|(\w+)\|\s*-\s*1\b"
     )
     new_repaired = for_loop_pattern.sub(r"for \1 := 0 to |\2| - 1", repaired)
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: C-style for-loop "for (var i := 0; i < upper; i++)" -> Dafny "for i := 0 to upper"
+    # Also handles mangled variants like "i + )" or "i++" inside the parens.
+    def _c_for_to_dafny(m: re.Match) -> str:
+        var, start, upper = m.group(1), m.group(2), m.group(3).strip()
+        # Convert seq.Length -> |seq|
+        upper = re.sub(r"\b(\w+)\.Length\b", r"|\1|", upper)
+        return f"for {var} := {start} to {upper}"
+
+    new_repaired = re.sub(
+        r"for\s*\(\s*var\s+(\w+)\s*:=\s*(\d+)\s*;\s*\1\s*<\s*([^;]+?)\s*;[^)]*\)",
+        _c_for_to_dafny,
+        repaired,
+    )
     if new_repaired != repaired:
         repaired = new_repaired
         changed = True
@@ -148,6 +311,29 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
             r"if \1 {\n\2\3\2\4\n\2}",
             repaired,
         )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: "generated, stepsLeft;" — LLM wrote a function-style return for a method; out-params need no return.
+    # Remove any bare "generated, stepsLeft;" or "return generated, stepsLeft;" lines.
+    new_repaired = re.sub(
+        r"^\s*(?:return\s+)?generated\s*,\s*stepsLeft\s*;\s*\n?",
+        "",
+        repaired,
+        flags=re.MULTILINE,
+    )
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: bogus asserts that can't hold after unconstrained generation (e.g. assert parser.IsValidPrefix(generated); assert |generated| > 0;)
+    # These are always wrong here — remove them so verification doesn't fail on the assert itself.
+    for assert_pat in [
+        r"^\s*assert\s+parser\.IsValidPrefix\s*\(\s*generated\s*\)\s*;\s*\n?",
+        r"^\s*assert\s+\|generated\|\s*>\s*0\s*;\s*\n?",
+    ]:
+        new_repaired = re.sub(assert_pat, "", repaired, flags=re.MULTILINE)
         if new_repaired != repaired:
             repaired = new_repaired
             changed = True
@@ -241,6 +427,34 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
                 repaired = new_repaired
                 changed = True
                 break
+
+    # Fix: "precondition ... ConstrainedWindowValid" -> add missing loop invariant
+    if (
+        "precondition for this call could not be proved" in error_summary
+        and "ConstrainedWindowValid" in error_summary
+        and "ConstrainedStep" in repaired
+    ):
+        # Insert invariant after the last standard invariant in the while loop
+        new_repaired = re.sub(
+            r"(invariant\s+\|generated\|\s*\+\s*stepsLeft\s*==\s*maxSteps\b)",
+            r"\1\n    invariant helpers.ConstrainedWindowValid(generated)",
+            repaired,
+            count=1,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: model uses lm.ChooseNextTokenUnconstrained() which no longer exists — remove such calls
+    if "ChooseNextTokenUnconstrained" in repaired:
+        new_repaired = re.sub(
+            r"\blm\.ChooseNextTokenUnconstrained\s*\(\s*\)",
+            "lm.ChooseNextToken()",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
 
     # Fix: "Duplicate local-variable name: stepsLeft" -> template already declares it; remove duplicate
     if "Duplicate local-variable name: stepsLeft" in error_summary:
