@@ -12,7 +12,7 @@ def main():
     if (run_dir / "GeneratedCSD.py").exists():
         compiled_path = run_dir
     else:
-        for name in ["folio_csd", "gsm_crane_csd", "fol_csd"]:
+        for name in ["generated_csd", "folio_csd", "gsm_crane_csd", "fol_csd", "pddl_csd", "sygus_slia_csd"]:
             d = run_dir / name
             if d.exists() and (d / "GeneratedCSD.py").exists():
                 compiled_path = d

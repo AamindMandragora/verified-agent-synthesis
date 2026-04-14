@@ -1,183 +1,137 @@
 """
-Prompt templates for Qwen-based CSD strategy generation.
+Prompt templates for Python-first CSD strategy generation.
 
-This project synthesizes *constrained decoding strategies* (CSDs), not the final
-task output itself. The LLM should choose an appropriate verified strategy
-primitive and parameters based on the *use-case* described by the task.
-
-The generator expects these entrypoints:
-- build_initial_prompt(task_description)
-- build_verification_error_prompt(previous_strategy, error_message)
-- build_runtime_error_prompt(previous_strategy, error_traceback)
-- build_compilation_error_prompt(previous_strategy, error_message)
-- build_format_repair_prompt(previous_strategy)
+The model now writes a Python method body for `GeneratedAgentTemplate.py`.
+That Python is later transpiled to Dafny for verification and compilation.
 """
-
-# NOTE:
-# The synthesized output is injected into `dafny/GeneratedCSD.dfy` as the BODY
-# of method `MyCSDStrategy(...) returns (generated: Prefix, remainingSteps: nat)`.
-#
-# The template already has:
-#   var delim := new Delimiter(LeftDelimiter, RightDelimiter);
-#   var helpers := new CSDHelpers(lm, parser, delim);
-#   helpers.DelimitersInLMAlways();   <-- satisfies DelimitersInLM() for ConstrainedStep
-#   lm.ValidTokensIdsLogitsAlways();  <-- establishes lm.ValidTokensIdsLogits() for loop invariant
-#   generated := [];                  <-- out-parameter initialized to empty
-#   var stepsLeft := maxSteps;
-#   [YOUR BODY]
-#   remainingSteps := stepsLeft;
-# Your body must only update `generated` (via generated := generated + [next]) and `stepsLeft`.
-# Helpers: UnconstrainedStep, ConstrainedStep, RollbackToValidPrefix (see VerifiedAgentSynthesis.dfy).
-
 
 SYSTEM_PROMPT = """\
 You are an expert in formal verification and constrained decoding for language models.
-You are generating a *constrained decoding strategy implementation* for a specific use-case.
+You are generating the BODY of a Python function, not a full file.
 
-**Strategy must fit the task.** The goal is to auto-synthesize whatever CSD best fits the task — not always the same pattern. The only hard requirements are: the final output must be grammatically correct under the parser, and when the task uses delimiters, the constrained part must appear in << >> (or whatever delimiters the task specifies; they can be set at the start of the program). Possible strategies include but are not limited to: Crane-style (unconstrained then constrained segments); k unconstrained steps then RollbackToValidPrefix to repair; compare n unconstrained generations and pick the best valid one; mostly constrained; or mostly unconstrained with a single constrained segment. Delimiters are only used when the task requires a constrained segment; some tasks may not use them at all.
+The surrounding template is:
 
-**When the task has both plain text and a delimited constrained part** (e.g. "plain text then << formula >>"): the strategy must handle both phases. (1) Use *unconstrained* decoding (UnconstrainedStep) for the plain-text part so the LM can generate free text. (2) Switch to *constrained* decoding (ConstrainedStep) only when inside the constrained region (e.g. after emitting the left delimiter). Guard access to the last token with |generated| > 0 (e.g. use |generated| > 0 && generated[|generated|-1] != LeftDelimiter) to avoid index-out-of-range when generated is empty. Do NOT use only ConstrainedStep from the start for such tasks — that forces every token to satisfy the grammar and prevents normal plain-text generation. Do NOT call CSDHelpers.UnconstrainedPreservesValidWhenPermissive unless the parser is permissive for the current prefix; many parsers (e.g. FOLIO) are not permissive outside the << >> segment, so omit that lemma to avoid precondition failures.
+  def MyCSDStrategy(lm: LM, parser: Parser, prompt: Prefix, maxSteps: int, eosToken: Token) -> tuple[Prefix, int]:
+      delim = Delimiter(LeftDelimiter, RightDelimiter)
+      helpers = CSDHelpers(lm, parser, delim)
+      helpers.DelimitersInLMAlways()
+      lm.ValidTokensIdsLogitsAlways()
+      generated = []   # free-form text outside the final constrained answer segment
+      answer = []      # constrained answer content only, without delimiters
+      stepsLeft = maxSteps - 2
+      [YOUR BODY]
+      helpers.FinalizeDelimitedAnswer(generated, answer)
+      generated = generated + [LeftDelimiter] + answer + [RightDelimiter]
+      remainingSteps = stepsLeft
+      return generated, remainingSteps
 
-You must output ONLY the Dafny method body for:
+Your output must therefore be ONLY Python statements for [YOUR BODY].
+Do not write the function signature, imports, markdown fences, or a full file.
+Do not redeclare `delim`, `helpers`, `generated`, `answer`, or `stepsLeft`.
+Do not assign to `remainingSteps`; the template already does that.
+Do not output only comments or only invariants. The body must execute real decoding steps.
 
-  method MyCSDStrategy(lm: LM, parser: Parser, prompt: Prefix, maxSteps: nat, eosToken: Token) returns (generated: Prefix, remainingSteps: nat)
-    ...
-    ensures remainingSteps >= 0 && remainingSteps <= maxSteps
+Important semantic facts:
+- `generated` is the expressive free-form prefix outside the final answer segment.
+- `answer` is the constrained answer content only. The template will append `<<` and `>>` around it at the end.
+- `prompt`, `generated`, and `answer` are Python lists of tokens.
+- `Token` is a string-like token value.
+- `helpers.ExpressiveStep(prompt, generated, stepsLeft)` returns `(next_token, new_steps)` for free-form output outside the final answer segment, while masking delimiter tokens.
+- `helpers.ConstrainedAnswerStep(prompt, generated, answer, stepsLeft)` returns `(next_token, new_steps)` and extends the constrained answer channel.
+- The parser governs `answer`, not the full `generated` output.
+- The template requires `parser.IsValidPrefix(answer)` and `len(answer) > 0` by the time the body finishes, and then wraps `answer` as the final `<< ... >>` segment.
+- A simple unconstrained-only loop is invalid because it cannot satisfy the final constrained-answer contract.
+- The final `<< ... >>` segment is the answer-bearing segment used for grading; it should usually converge to a short arithmetic expression or equation whose right-most numeric value is the answer.
+- Use `generated = generated + [next_token]` after each step call.
+- Use `answer = answer + [next_token]` after constrained answer steps.
+- Use `stepsLeft = new_steps` after each step call.
 
-The template already provides: var delim := new Delimiter(LeftDelimiter, RightDelimiter); var helpers := new CSDHelpers(lm, parser, delim); helpers.DelimitersInLMAlways(); lm.ValidTokensIdsLogitsAlways(); generated := []; var stepsLeft := maxSteps; [YOUR BODY]; remainingSteps := stepsLeft;
-So you must only update `generated` and `stepsLeft` in your loop — do NOT reinitialize them. Do NOT assign to remainingSteps (the template does that). Do NOT redeclare `delim`, `helpers`, `generated`, or call `helpers.DelimitersInLMAlways()` yourself — the template already does this.
+Python subset rules:
+- Use normal Python syntax: `while ...:`, `if ...:`, `and`, `or`, `not`, `==`, `!=`.
+- Use Python comments beginning with `#`.
+- If you need loop invariants for the transpiler, put them as comments IMMEDIATELY above the `while`, e.g.:
+    # invariant lm.ValidTokensIdsLogits()
+    # invariant 0 <= stepsLeft <= maxSteps - 2
+    # invariant helpers.ConstrainedWindowValid(generated)
+    # invariant parser.IsValidPrefix(answer)
+    # invariant |generated| + |answer| + stepsLeft <= maxSteps - 2
+    # decreases stepsLeft
+    while stepsLeft > 0 and not parser.IsCompletePrefix(answer):
+        ...
+- Important: the loop-invariant comments are passed directly to Dafny, so those comments must use Dafny syntax (`|generated|`, `==>`, etc.), even though the executable body uses Python syntax.
+- Prefer `len(generated)` in Python; the transpiler will lower it to Dafny length syntax.
+- Do not use Python `for` loops. Use `while` loops only.
+- Do not use list comprehensions, lambdas, helper functions, or nested function definitions.
+- Do not use `break`/`continue` unless truly necessary.
+- Do not use exceptions for control flow.
+- If you branch between different step choices, predeclare branch outputs before the `if`, e.g.:
+    next_token = eosToken
+    new_steps = stepsLeft
+    if ...:
+        next_token, new_steps = helpers.ConstrainedAnswerStep(prompt, generated, answer, stepsLeft)
+    else:
+        next_token, new_steps = helpers.ExpressiveStep(prompt, generated, stepsLeft)
+- Every emitted token should come from a helper step call and should consume budget.
+- The body is invalid unless it contains at least one call to `helpers.ConstrainedAnswerStep(...)`.
 
-Important constraints:
-- Output MUST be valid Dafny statements (end statements with ';').
-- `generated` is ALREADY INITIALIZED to `[]` by the template. Do NOT write `generated := [];` or `var generated := [];` (it would be redundant). Just append to it in the loop.
-- **stepsLeft is ALREADY DECLARED by the template.** Do NOT write \"var stepsLeft := maxSteps;\" or \"var stepsLeft :=\"; that causes \"Duplicate local-variable name: stepsLeft\". Just use stepsLeft in your loop and assign stepsLeft := newSteps after each step call.
-- Do NOT redeclare `generated`, `stepsLeft`, `helpers`, or `delim`. Do NOT call `helpers.DelimitersInLMAlways()`. Do NOT assign to `remainingSteps`.
-- You MUST use the `helpers` instance (type `CSDHelpers`) which is already instantiated with lm, parser, and delimiter.
-- Use `helpers.<Method>` (instance call). UnconstrainedStep and ConstrainedStep each take `(prompt, generated, stepsLeft)` — do NOT pass lm or parser, they are captured by the helpers instance. Each returns (next, stepsLeft'); assign stepsLeft := stepsLeft' after each call.
-- Be constraint-driven: choose the strategy based on the parser and contract.
+Required rationale block:
+Your output MUST begin with:
 
-CRITICAL TYPE CONSTRAINTS:
-- `prompt` and `generated` are type `Prefix` (which is `seq<Token>`), NOT a string. For the last element of a non-empty sequence use generated[|generated|-1]; do NOT use .Last() (that method does not exist on seq in this codebase).
-- Do NOT try to manually construct output by appending text. The CSDHelpers methods handle
-  token generation.
-- The `parser` enforces structural validity automatically during generation.
+# CSD_RATIONALE_BEGIN
+# <short explanation>
+# CSD_RATIONALE_END
 
-## Parser API (use ONLY these — no other parser methods exist)
-
-The `parser` (type Parser) has exactly these members. Do NOT call any other method (e.g. there is NO parser.CanConstrain()).
-
-- parser.IsValidPrefix(prefix: Prefix) — predicate: is this prefix valid under the grammar?
-- parser.IsCompletePrefix(prefix: Prefix) — predicate: is this prefix a complete expression?
-- parser.ValidNextTokens(prefix: Prefix) — function: returns seq<Token> of valid next tokens (requires IsValidPrefix(prefix)).
-- parser.ValidNextToken(prefix, token) — predicate: is this token a valid continuation? Use this exact name: ValidNextToken, NOT IsValidNextToken.
-- parser.IsDeadPrefix(prefix: Prefix) — predicate: prefix is not complete and has no valid continuations.
-
-- **Token is a type synonym for string.** It has NO static members. To compare with delimiter tokens use the module constants `LeftDelimiter` and `RightDelimiter` (e.g. `next == LeftDelimiter` or `next == RightDelimiter`). Do NOT use Token.LeftDelimiter or Token.RightDelimiter — they do not exist.
-
-To decide when to use ConstrainedStep: guard with `helpers.InsideDelimitedWindow(generated) && !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated))`. Only call ConstrainedStep when both conditions are true. Do NOT use parser.CanConstrain() or parser.CanConstrain(generated) — they do not exist.
-Do NOT use .Exists, .Any, .Where, or lambda syntax on sequences — Dafny sequences have no such methods. To test "some token in seq satisfies P", use: exists token :: token in seq && parser.ValidNextToken(generated, token).
-
-## Dafny syntax (follow exactly to avoid verification failures)
-
-- **Assignment only**: There is no `++` or `--`. Use full assignment: `stepsLeft := stepsLeft - 1;`, `i := i + 1;`.
-- **Sequence concatenation**: Use `+` only: `generated := generated + [next];`. Do NOT use `++`.
-- **Sequence length**: Use `|seq|` (e.g. `|generated|`, `|generated| < maxSteps`). No `.Length` on seq.
-- **Sequence index**: Use `s[i]` for element at index i. Last element when non-empty: `s[|s|-1]`. No `.Last()`. When testing the last token (e.g. for delimiter), guard with |generated| > 0: use (|generated| > 0 && generated[|generated|-1] != LeftDelimiter) so empty generated does not cause index out of range.
-- **Sequence slice**: `s[..k]` is prefix up to (not including) k; `s[k..]` is from k to end.
-- **Sequence membership / "exists"**: Do NOT use seq.Exists(...) or lambdas. Use Dafny quantifier: exists x :: x in seq && predicate(x). Example: hasValid := exists token :: token in validTokens && parser.ValidNextToken(generated, token);
-- **Parser**: The predicate is ValidNextToken(prefix, token), not IsValidNextToken. There is no IsValidNextToken.
-- **Variables**: Declare with `var name := value;` or `var name: Type := value;`. No `int x = 0` style.
-- **Loop invariant placement**: `invariant` and `decreases` clauses go BETWEEN the `while` condition and the opening `{`, not inside the body. The order is: `while condition` (newline) → indented `invariant` / `decreases` clauses → then `{` (on its own line or inline) → body → `}`. Writing them after statements inside the body is a parse error. Use the keyword `invariant` (singular) on EACH line — one line per invariant, e.g. `invariant 0 <= stepsLeft <= maxSteps` then next line `invariant |generated| <= maxSteps`. There is NO keyword `invariants` (plural) in Dafny.
-- **stepsLeft must only decrease**: The loop uses `decreases stepsLeft`. Do NOT assign `stepsLeft := maxSteps` or `stepsLeft := maxSteps - |generated|` inside the loop — that can increase stepsLeft and breaks verification. Each iteration must call UnconstrainedStep or ConstrainedStep and set `stepsLeft := newSteps` (which decreases). Do NOT use RollbackToValidPrefix in a branch and then reset stepsLeft; use a step call in every branch instead.
-- **Loop condition**: Use `while condition {{ ... }}`. Condition must be a boolean expression (e.g. `|generated| < maxSteps && !parser.IsCompletePrefix(generated)`).
-- **For-loops (if needed)**: Use Dafny syntax `for i := 0 to |seq| - 1 {{ ... }}`. Use `{{` after the range, not `do`. Do NOT use Python/Rust-style `for i in 0 .. |seq| - 1` or `for ... do`.
-- **Statements**: Every statement ends with `;`. No semicolon after `}` of blocks.
-- **Equality**: Use `==` for equality, `!=` for disequality. Use `:=` for assignment only.
-- **Mixed && and ||**: Use parentheses to disambiguate (e.g. `A || (B && C)` not `A || B && C`).
-- **No return statement**: This is a Dafny *method*, not a function. Out-parameters (`generated`, `remainingSteps`) are assigned in place — do NOT write `generated, stepsLeft;` or `return generated, stepsLeft;` at the end. The template assigns `remainingSteps := stepsLeft;` for you.
-- **No bogus asserts**: Do NOT write `assert parser.IsValidPrefix(generated);` or `assert |generated| > 0;` after unconstrained generation — these cannot be proved and will cause verification to fail.
-- **Variable declarations with multi-return**: When declaring `next` and `newSteps` before an if/else, write them as TWO separate declarations with correct types: `var next: Token;` and `var newSteps: nat;` on separate lines. Do NOT write `var next, newSteps: Token;` — that declares both as `Token`, but `newSteps` must be `nat`, causing a type error on every step call.
-- **`decreases` is not `invariant`**: Write `decreases stepsLeft` as its own clause, NOT `invariant decreases stepsLeft`. The `invariant` keyword and `decreases` keyword are separate spec clauses. Both go between the `while` condition and `{`, but never prefixed with each other.
-- **Multi-return assignment**: Do NOT put parentheses around the left-hand side. Use `var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft);` NOT `(next, newSteps) := helpers.ConstrainedStep(...)` — the parenthesized form is a parse error ("invalid Suffix") in Dafny.
-- **Steps**: Each UnconstrainedStep/ConstrainedStep returns (next, stepsLeft'); assign both and do stepsLeft := stepsLeft' so the next iteration has the updated remaining steps.
-- **If/else with Step calls**: If you use if/else to choose between ConstrainedStep and UnconstrainedStep, you MUST declare `var next: Token; var newSteps: nat;` BEFORE the if/else, then in each branch assign `next, newSteps := helpers....;`. Do NOT declare `var next, newSteps` inside each branch — they would be out of scope after the closing brace and "generated := generated + [next]; stepsLeft := newSteps;" would fail with "unresolved identifier: next".
-- **Variables in invariants**: Any variable used in the loop invariants (e.g. stepCounter, hasValid) MUST be declared before the while loop (e.g. var stepCounter := 0; var hasValid := false; before the while).
-
-## REQUIRED: rationale block (must be included in EVERY output)
-Your output MUST begin with a short, parseable rationale comment block:
-
-// CSD_RATIONALE_BEGIN
-// <explanation of strategy and parameters>
-// CSD_RATIONALE_END
-
-After this, output the Dafny statements for the strategy body.
-
-## Available VERIFIED primitives (use `helpers.<Method>` only)
-
-CSDHelpers has exactly three methods. You must build your strategy by calling them in a loop.
-
-1) helpers.UnconstrainedStep(prompt, generated, stepsLeft) returns (next: Token, stepsLeft': nat)
-   - One unconstrained step; consumes one step (stepsLeft' == stepsLeft - 1). Requires stepsLeft >= 1.
-   - Use: var next, newSteps := helpers.UnconstrainedStep(prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps;
-
-2) helpers.ConstrainedStep(prompt, generated, stepsLeft) returns (next: Token, stepsLeft': nat)
-   - One constrained step; consumes one step. Requires: InsideDelimitedWindow(generated), ConstrainedWindowValid(generated), !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)), stepsLeft >= 1. (DelimitersInLM() is satisfied automatically by the template's helpers.DelimitersInLMAlways() call.)
-   - InsideDelimitedWindow(generated) means generated already contains LeftDelimiter (" <<") with no matching " >>" yet. YOU CANNOT call ConstrainedStep when generated == [] or before " <<" has been emitted — it will fail verification. Always use UnconstrainedStep first until LeftDelimiter appears in generated, then switch to ConstrainedStep.
-   - Guarantees: next != LeftDelimiter(), next != RightDelimiter() ==> ConstrainedWindowValid(generated + [next]) and InsideDelimitedWindow(generated + [next]).
-   - Use: var next, newSteps := helpers.ConstrainedStep(prompt, generated, stepsLeft); generated := generated + [next]; stepsLeft := newSteps;
-
-3) helpers.RollbackToValidPrefix(generated) returns (repaired: Prefix)
-   - Trims invalid tokens from the end of generated. Does not consume steps.
-   - Use: generated := helpers.RollbackToValidPrefix(generated);
-
-IMPORTANT: Do NOT pass `lm` or `parser` to any helpers method — they are captured by the helpers instance.
-
-You MUST implement the strategy body as a loop that:
-- Uses generated := []; (stepsLeft is already maxSteps). Loop while stepsLeft > 0 && !parser.IsCompletePrefix(generated).
-- In the loop, call the appropriate primitive based on your strategy logic. ConstrainedStep may ONLY be called when helpers.InsideDelimitedWindow(generated) is true AND !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)) is true — both are verifiable preconditions. For all other states use UnconstrainedStep (or RollbackToValidPrefix to repair). How you track state, structure branches, or count steps is your design choice.
-- If you use if/else with both step types and share next/newSteps across branches, declare var next: Token; var newSteps: nat; before the if/else and assign (without var) in each branch.
-- YOU CANNOT call ConstrainedStep when generated == [] — InsideDelimitedWindow([]) is always false. You must use UnconstrainedStep until " <<" has been emitted.
-
-**Loop invariants (required for verification):** Place these BETWEEN the `while` condition and `{` (never inside the body):
-  invariant lm.ValidTokensIdsLogits()
-  invariant 0 <= stepsLeft <= maxSteps
-  invariant |generated| + stepsLeft <= maxSteps
-  invariant helpers.ConstrainedWindowValid(generated)
-  decreases stepsLeft
-NOTE: `invariant lm.ValidTokensIdsLogits()` is required — helper methods (UnconstrainedStep, ConstrainedStep, GetDelimitedContent) all require it as a precondition. It is provable: the template establishes it before the loop and each step method's postcondition ensures it is maintained.
-NOTE: `invariant |generated| + stepsLeft <= maxSteps` is rollback-compatible and provable: initially 0 + maxSteps == maxSteps; each step adds 1 token and subtracts 1 step so the sum is unchanged; rollback only removes tokens without consuming steps so the sum decreases. Do NOT use `|generated| == maxSteps` (equality breaks rollback) or `|generated| <= maxSteps` alone (Dafny cannot prove |generated| < maxSteps to allow the next append).
-NOTE: `helpers.ConstrainedWindowValid(generated)` is maintained by both UnconstrainedStep and ConstrainedStep postconditions. Include it so Dafny can prove preconditions for ConstrainedStep calls.
-NOTE: Do NOT include `invariant parser.IsValidPrefix(generated)` when using UnconstrainedStep — unconstrained generation does not guarantee a valid prefix.
-NOTE: Write invariants and decreases as REAL Dafny keywords, NOT as comments. Do NOT write `// Invariant: X` — that is just a comment and Dafny ignores it. Write `invariant X` directly.
-
-Output format:
-- Return ONLY the method body (no signature, no outer braces).
-- Multi-line bodies are allowed and encouraged when useful (e.g., locals, branching, loops).
-- Ensure `generated` is assigned along all paths.
+Then write the Python statements for the body.
 """
 
 
 INITIAL_GENERATION_PROMPT = """\
-Generate a CSD strategy implementation for this use-case:
+Generate a Python strategy body for this use-case:
 
 Use-case description: {task_description}
 
-Choose the strategy to fit the task. Options include: Crane-style (unconstrained then constrained); k unconstrained steps then RollbackToValidPrefix; or other mixes. The only requirements are final output grammatically correct and, when the task uses delimiters, constrained content in << >>. If the use-case requires plain text then a constrained segment (e.g. << formula >>), use UnconstrainedStep for the plain part and ConstrainedStep only for the constrained part; guard last-token checks with |generated| > 0. Do NOT call UnconstrainedPreservesValidWhenPermissive unless the parser is permissive (many task parsers are not).
-
-Output MUST start with the required rationale block (see system prompt), then output ONLY the Dafny code.
-
-Output ONLY the method body (no signature, no outer braces). Do NOT wrap output in markdown code fences (no ```dafny).
-Multi-line bodies are allowed and encouraged when useful (locals, branching, loops), as long as `generated` is assigned on all paths.
-
-Your output must start with the rationale block, then Dafny statements. Include a while loop with the standard invariants (lm.ValidTokensIdsLogits(), 0 <= stepsLeft <= maxSteps, |generated| + stepsLeft <= maxSteps, helpers.ConstrainedWindowValid(generated), decreases stepsLeft). Assign generated on all paths. The template handles remainingSteps.
+Requirements:
+- Output ONLY the Python body inserted into `MyCSDStrategy`.
+- Start with the required rationale block using `#` comments.
+- Use a `while` loop with these exact invariants as preceding comments:
+    # invariant lm.ValidTokensIdsLogits()
+    # invariant 0 <= stepsLeft <= maxSteps - 2
+    # invariant helpers.ConstrainedWindowValid(generated)
+    # invariant parser.IsValidPrefix(answer)
+    # invariant |generated| + |answer| + stepsLeft <= maxSteps - 2
+    # decreases stepsLeft
+- The answer-bearing part is `answer`, not `generated`.
+- You must ensure `parser.IsValidPrefix(answer)` at all times and leave `answer` nonempty before the body exits.
+- The body must contain at least one executable `helpers.ConstrainedAnswerStep(...)` call and must update `answer`.
+- If you emit expressive free-form text in `generated`, use `helpers.ExpressiveStep(...)`, not `helpers.UnconstrainedStep(...)`.
+- If you branch between step types, write Python tuple-unpacking assignments such as:
+    next_token = eosToken
+    new_steps = stepsLeft
+    if ...:
+        next_token, new_steps = helpers.ConstrainedAnswerStep(prompt, generated, answer, stepsLeft)
+- Append tokens with `generated = generated + [next_token]`.
+- Append constrained answer tokens with `answer = answer + [next_token]`.
+- Update remaining budget with `stepsLeft = new_steps`.
+- Do NOT write `remainingSteps = stepsLeft`.
+- Reserve enough budget so the body cannot spend all steps on free-form text before producing a nonempty constrained `answer`.
+- If you keep a free-form budget or exploration budget, include a loop invariant that makes that reservation provable.
+- Novelty requirements:
+  - Do NOT produce unconstrained-only decoding.
+  - Do NOT produce a basic CRANE-like window switch around `helpers.InsideDelimitedWindow(...)`.
+  - Do NOT produce a simple rollback-to-valid-prefix strategy.
+  - Do NOT use `helpers.UnconstrainedStep(...)`; use `helpers.ExpressiveStep(...)` for free-form output so delimiter control stays explicit.
+  - Maintain at least two extra local state variables beyond `generated`, `answer`, `stepsLeft`, `next_token`, and `new_steps`.
+  - Use multiple interacting progress signals to decide what to do next; do not drive the whole strategy from a single inside/outside test.
+  - Favor control policies that evolve over time rather than a one-shot "free-form first, constrained later" shell.
+- Do NOT use `parser.IsCompletePrefix(generated)`; the parser only governs `answer`.
 """
 
 
 VERIFICATION_ERROR_REFINEMENT_PROMPT = """\
-Your previous method body failed Dafny verification.
+Your previous Python strategy body failed verification after being transpiled to Dafny.
 
 Previous attempt:
-```dafny
+```python
 {previous_strategy}
 ```
 
@@ -186,159 +140,54 @@ Verification error:
 {error_message}
 ```
 
-Fix the issue while keeping the strategy non-trivial when appropriate.
+Fix the Python body while preserving the overall strategy when possible.
 
 Rules:
-- Output ONLY a corrected method body (no signature, no braces). Do NOT wrap output in markdown code fences.
-- The corrected body MUST include the required rationale block at the top (see system prompt). Update it if you change helpers/parameters.
-- Preserve non-triviality when possible: keep a meaningful loop with UnconstrainedStep/ConstrainedStep. Do not remove necessary loop invariants.
-- Ensure the body is valid Dafny. Statements must end with ';' where required.
-
-**CRITICAL: If the error says "incorrect return type at index 1 ... expected nat, got Token":**
-- You wrote `var next, newSteps: Token;` which declares both as `Token`. Fix: replace with two separate declarations — `var next: Token;` on one line and `var newSteps: nat;` on the next. Then assign without `var` in each branch: `next, newSteps := helpers.ConstrainedStep(...);`.
-
-**CRITICAL: If the error says "missing semicolon at end of statement" and points to a line like `invariants`:**
-- Dafny has NO keyword `invariants` (plural). Each loop invariant must be on its own line with the keyword `invariant` (singular). Replace `invariants` followed by a block of expressions with one line per expression: `invariant lm.ValidTokensIdsLogits()`, then `invariant 0 <= stepsLeft <= maxSteps`, etc. The `decreases` clause stays as `decreases stepsLeft` (no `invariant` prefix).
-
-**CRITICAL: If the error says "invalid UnaryExpression" and points to `invariant decreases ...`:**
-- `decreases` is not an `invariant`. Write `decreases stepsLeft` as its own separate clause, never as `invariant decreases stepsLeft`. Both clauses go between the `while` condition and the `{`.
-
-**CRITICAL: If the error says "invalid AssignStatement" and points to a line like `generated, stepsLeft;`:**
-- This is a Dafny *method*, not a function. There is no return statement. Remove the line entirely. Out-parameters are already assigned by your loop (`generated := generated + [next]; stepsLeft := newSteps;`) and the template handles `remainingSteps := stepsLeft;`.
-
-**CRITICAL: If the error says "invalid Suffix" and points to `:=` after a tuple like `(next, newSteps)`:**
-- Dafny does NOT allow parentheses around the left-hand side of a multi-return assignment. Remove the parentheses: write `next, newSteps := helpers.ConstrainedStep(...);` or `var next, newSteps := helpers.ConstrainedStep(...);` — never `(next, newSteps) := ...`.
-
-**CRITICAL: If the error says "member X does not exist in class 'CSDHelpers'":**
-- That method DOES NOT EXIST. The ONLY methods on `helpers` are: UnconstrainedStep, ConstrainedStep, RollbackToValidPrefix.
-- You MUST implement the strategy with a loop that calls helpers.UnconstrainedStep and/or helpers.ConstrainedStep and appends the returned token to generated. There are no one-call "strategy" methods.
-
-**CRITICAL: If the error says a member does not exist on Parser (e.g. CanConstrain, CanConstrain(generated), or any other parser.X):**
-- Parser has ONLY: IsValidPrefix(prefix), IsCompletePrefix(prefix), ValidNextTokens(prefix), ValidNextToken(prefix, token), IsDeadPrefix(prefix). There is NO parser.CanConstrain().
-- To decide when to use ConstrainedStep, use the condition !parser.IsCompletePrefix(generated). Remove any call to parser.CanConstrain() or parser.CanConstrain(generated).
-
-**CRITICAL: If the error says "Duplicate local-variable name: helpers" or "Duplicate local-variable name: delim":**
-- The template already declares `helpers` and `delim`. Remove any `var helpers := ...` or `var delim := ...` lines from your body. Do NOT call `helpers.DelimitersInLMAlways()` — the template does this for you.
-
-**CRITICAL: If the error says "Duplicate local-variable name: stepsLeft":**
-- The template already declares stepsLeft. Remove every line that declares stepsLeft (e.g. \"var stepsLeft := maxSteps;\") from your strategy body. Just use stepsLeft and assign to it (stepsLeft := newSteps).
-
-**CRITICAL: If the error says "unresolved identifier: next" or "unresolved identifier: newSteps":**
-- You declared var next, newSteps inside an if or else block, so they are out of scope when you use them after the block. Declare them BEFORE the if/else: add \"var next: Token; var newSteps: nat;\" right before the if, and in each branch use \"next, newSteps := helpers....\" (no \"var\" in the branch).
-
-**CRITICAL: If the error says "unresolved identifier: stepCounter" or "unresolved identifier: hasValid":**
-- Variables used in the loop body or invariants must be declared before the while loop. Add \"var stepCounter := 0;\" and/or \"var hasValid := false;\" before the while (not inside it).
-
-**CRITICAL: If the error says "does not have a member Exists" or "type seq does not have a member Exists":**
-- You used C#/LINQ style. Dafny sequences do NOT have .Exists. Replace e.g. validTokens.Exists(token => parser.IsValidNextToken(generated, token)) with: exists token :: token in validTokens && parser.ValidNextToken(generated, token)
-
-**CRITICAL: If the error says "member 'IsValidNextToken' does not exist":**
-- The correct name is ValidNextToken(prefix, token), not IsValidNextToken. Replace every IsValidNextToken with ValidNextToken.
-
-**CRITICAL: If the error says "member 'LeftDelimiter' does not exist in type synonym 'Token'" or "member 'RightDelimiter' does not exist":**
-- Token is a type synonym for string; it has no members. Use the module constants LeftDelimiter and RightDelimiter instead. Replace every `Token.LeftDelimiter` with `LeftDelimiter` and every `Token.RightDelimiter` with `RightDelimiter` (no Token. prefix).
-
-**CRITICAL: If the error says "the method returns 0 value but is assigned to 1 variable":**
-- RollbackToValidPrefix returns a Prefix — assign it: `generated := helpers.RollbackToValidPrefix(generated);`. Do NOT call it as a statement without assignment.
-
-**CRITICAL: If the error says "Ambiguous use of && and ||" or "Use parentheses to disambiguate":**
-- When mixing `||` and `&&` in one condition, add parentheses so Dafny knows the grouping. Example: use `parser.IsCompletePrefix(generated) || (|generated| > 0 && generated[|generated|-1] != LeftDelimiter)` not `... || |generated| > 0 && generated[...] != LeftDelimiter`.
-
-**CRITICAL: If the error says "missing semicolon at end of statement" or "lbrace expected" at a for-loop:**
-- Dafny for-loops use braces, not \"do\". Write `for i := 0 to |prompt| - 1 {{` (with `{{`), not `for i := 0 to |prompt| - 1 do`. The body of an `if` must be in braces when it has multiple statements: `if condition {{ stmt1; stmt2; }}`.
-
-**CRITICAL: If the error says "rbrace expected" and/or you wrote \"remainingSteps := stepsLeft;\":**
-- The template already assigns remainingSteps. Do NOT write `remainingSteps := stepsLeft;` in your body. If instead it's pointing to an invariant or decreases clause, then you have placed it in the wrong place and must move it to be between the while loop start and the body.
-
-**CRITICAL: If the error says "index out of range" at generated[|generated|-1]:**
-- When generated is empty, |generated|-1 is invalid. Guard the condition: use (|generated| > 0 && generated[|generated|-1] != LeftDelimiter) instead of just generated[|generated|-1] != LeftDelimiter.
-
-**CRITICAL: If the error says "precondition for this call could not be proved" and mentions "ConstrainedWindowValid" for a ConstrainedStep call:**
-- Add `invariant helpers.ConstrainedWindowValid(generated)` to your while loop. This holds trivially when not inside the delimited window, and ConstrainedStep's own postconditions maintain it (for next != RightDelimiter()). Add it alongside the other standard invariants.
-
-**CRITICAL: If the error says "precondition for this call could not be proved" and mentions "InsideDelimitedWindow" for a ConstrainedStep call:**
-- ConstrainedStep requires InsideDelimitedWindow(generated), meaning " <<" must already be in generated with no matching " >>" yet. generated starts as [] which is never inside the window.
-- You CANNOT call ConstrainedStep unconditionally in a loop. It must only be called when helpers.InsideDelimitedWindow(generated) is true AND !parser.IsCompletePrefix(helpers.GetDelimitedContent(generated)) is true. Use a different primitive (e.g. UnconstrainedStep) for all other cases. Redesign your strategy logic accordingly — the specific approach (how you structure the branches, what you track with extra variables, etc.) is up to you.
-
-**CRITICAL: If the error says "precondition for this call could not be proved" and mentions "ConstrainedWindowValid" for an UnconstrainedStep call:**
-- UnconstrainedStep now requires `ConstrainedWindowValid(generated)` as a precondition. Add `invariant helpers.ConstrainedWindowValid(generated)` to your while loop. This invariant holds initially (generated is []) and is maintained by both UnconstrainedStep and ConstrainedStep postconditions.
-
-**CRITICAL: If the error says "precondition for this call could not be proved" for UnconstrainedPreservesValidWhenPermissive or mentions IsPermissive:**
-- That lemma requires parser.IsPermissive(generated). Many parsers (e.g. FOLIO) are not permissive outside << >>. Remove the line CSDHelpers.UnconstrainedPreservesValidWhenPermissive(parser, generated, next); from your strategy.
-
-**CRITICAL: If the error says "seq<Token> does not have a member Contains" or points to generated.Contains(X):**
-- Dafny seq has no Contains method. Replace `generated.Contains(X)` with `X in generated`. For example: `generated.Contains(LeftDelimiter)` → `LeftDelimiter in generated`.
-
-**CRITICAL: If the error says "member 'LeftDelimiter' does not exist in class 'Delimiter'" or points to delim.LeftDelimiter / delim.RightDelimiter:**
-- The `Delimiter` class has no `LeftDelimiter` or `RightDelimiter` fields. Use the module-level constants `LeftDelimiter` and `RightDelimiter` directly (no object prefix). Replace `delim.LeftDelimiter` → `LeftDelimiter`, `delim.RightDelimiter` → `RightDelimiter`.
-
-**CRITICAL: If the error mentions "invariant could not be proved" for stepCounter <= maxSteps:**
-- Remove the invariant stepCounter <= maxSteps (and stepCounter >= 0 && stepCounter <= maxSteps if present). stepCounter is not bounded by stepsLeft in all branches.
-
-**CRITICAL: If the error mentions invalid syntax for a for-loop or "for i in 0 ..":**
-- Dafny does not use `for i in 0 .. |prompt| - 1`. Use `for i := 0 to |prompt| - 1 {{ ... }}` instead (assign with `:=`, use `to`, not `in` or `..`).
-
-**CRITICAL: If the error says "variable 'generated' ... might be uninitialized" or "definite-assignment" for generated:**
-- The out-parameter `generated` is NOT automatically initialized. You MUST write `generated := [];` as the first statement in the body BEFORE the while loop. The template does NOT initialize it for you.
-
-**CRITICAL: If the error says "variable 'next' ... might be uninitialized" or "definite-assignment" for next/newSteps:**
-- When you declare `var next: Token; var newSteps: nat;` BEFORE an if/else and then use `var next, newSteps :=` INSIDE each branch, the inner declarations shadow the outer ones. The outer `next`/`newSteps` are never assigned. Fix: inside each branch, assign WITHOUT `var` — write `next, newSteps :=` not `var next, newSteps :=`.
-
-**CRITICAL: If the error says "a postcondition could not be proved on this return path":**
-- You are missing loop invariants or they are wrong. The strategy MUST include these invariants between the while condition and `{` (as real Dafny invariant keywords, NOT as comments):
-  invariant |generated| + stepsLeft <= maxSteps
-  decreases stepsLeft
+- Output ONLY a corrected Python body, not a full file.
+- Start with the required rationale block using `#` comments.
+- Keep the strategy within the supported Python subset from the system prompt.
+- Use `# invariant ...` and `# decreases ...` comments immediately above `while` loops.
+- Do not redeclare `delim`, `helpers`, `generated`, `answer`, or `stepsLeft`.
+- Do not assign to `remainingSteps`.
 
 Common fixes:
-- Do NOT write `var generated: Prefix;` or `var stepsLeft := maxSteps;` (duplicate/shadowing). The template already provides stepsLeft. Assign to the existing out-parameter `generated` only.
-- ConstrainedStep requires !parser.IsCompletePrefix(generated). Guard your loop or use a valid loop invariant.
-- **If the error mentions precondition, invariant, or "assertion might not hold" for a while loop:** Add explicit loop invariants and a decreases clause. For a loop that only calls ConstrainedStep, use: `invariant parser.IsValidPrefix(generated);` `invariant |generated| <= maxSteps;` `decreases maxSteps - |generated|;` (semicolons between clauses, or newline-separated).
-- Use `x := x + 1` not `x++`. Pass stepsLeft into UnconstrainedStep/ConstrainedStep and assign the returned (next, stepsLeft) back.
-- RollbackToValidPrefix: call as generated := helpers.RollbackToValidPrefix(generated);.
-
-CRITICAL: If the error mentions type mismatch with `string` or `seq<Token>`:
-- `prompt` is type `Prefix` (seq<Token>), NOT a string. You CANNOT use `+` with strings.
-- Do NOT try to manually construct output by appending strings like "\\n" or "[section]".
-- Just call the appropriate CSDHelpers method - the parser handles structure automatically.
-
-CRITICAL: If the error mentions `invalid UnaryExpression` and your code uses `++`:
-- Replace `++` with `+` for sequence concatenation (e.g., `a + b`, not `a ++ b`).
-
-**CRITICAL: If the task requires "plain text" or "unconstrained" first and then a constrained segment (e.g. << formula >>), but your strategy uses only ConstrainedStep:**
-- You must use BOTH UnconstrainedStep and ConstrainedStep. Use UnconstrainedStep when the prefix is complete (parser.IsCompletePrefix(generated)) or when you are not yet in the constrained region; use ConstrainedStep when inside the constrained segment. Declare var next: Token; var newSteps: nat; before the if/else.
-
-If the same strategy keeps failing, switch to a COMPLETELY DIFFERENT verified strategy helper. Do not keep trying the same approach with minor tweaks.
+- If you used Dafny syntax like `:=`, replace it with Python `=`.
+- If you used `&&`, `||`, or `!`, replace them with `and`, `or`, and `not`.
+- If you used `//` comments, replace them with `#` comments.
+- If the verifier complained that branch-local step outputs were undefined, predeclare `next_token` and `new_steps` before the `if`.
+- The repaired body must preserve the final constrained-answer guarantee and remain nontrivial.
+- Keep the answer-bearing segment in `answer`; if you emit free-form text, do it through `helpers.ExpressiveStep(...)`.
 """
 
 
 RUNTIME_ERROR_REFINEMENT_PROMPT = """\
-Your method body passed Dafny verification but failed at runtime.
+Your previous Python strategy body compiled, but the compiled strategy failed at runtime.
 
 Previous attempt:
-```dafny
+```python
 {previous_strategy}
 ```
 
-Runtime error:
+Runtime traceback:
 ```
 {error_traceback}
 ```
 
-Adjust the strategy choice/parameters to avoid runtime pitfalls while staying aligned to the use-case.
-
-Rules:
-- Output ONLY a corrected method body (no signature, no braces).
-- The corrected body MUST include the required rationale block at the top (see system prompt). Update it if you change helpers/parameters.
-- Preserve non-triviality when possible: keep a meaningful multi-statement structure (prefer `if/else` with different branches). Do not collapse to a single helper call unless required to make runtime succeed.
-- If the runtime error suggests the environment is strict, prefer more ConstrainedStep calls and fewer UnconstrainedStep calls in your loop.
+Produce a corrected Python body only.
+Keep the rationale block at the top.
+Stay within the supported Python subset.
+Prefer minimal changes that preserve the strategy idea.
+The fixed body must contain real decoding steps, not only comments or invariants.
+The fixed body must still produce a nonempty, grammar-valid constrained `answer` channel.
+Keep delimiter control explicit: use `helpers.ExpressiveStep(...)` for free-form output rather than `helpers.UnconstrainedStep(...)`.
 """
 
 
 COMPILATION_ERROR_REFINEMENT_PROMPT = """\
-Your method body passed Dafny verification but failed during Dafny-to-Python compilation.
+Your previous Python strategy body verified but failed during Dafny-to-Python compilation.
 
 Previous attempt:
-```dafny
+```python
 {previous_strategy}
 ```
 
@@ -347,60 +196,77 @@ Compilation error:
 {error_message}
 ```
 
-Produce a new method body that is syntactically simple. Multi-line is allowed, but
-avoid clever parsing tricks; prefer straightforward locals + verified helper calls.
-Do NOT introduce new helper functions.
-
-Output ONLY the corrected method body (no signature, no braces).
-- The corrected body MUST include the required rationale block at the top (see system prompt). Update it if you change helpers/parameters.
-- Preserve non-triviality when possible: keep a meaningful multi-statement structure (prefer `if/else` with different branches). Do not collapse to a single helper call unless required to make compilation succeed.
+Produce a corrected Python body only.
+Keep the rationale block at the top.
+Avoid unsupported constructs; use simple assignments, `if`, and `while`.
+The repaired body must still produce a nonempty, grammar-valid constrained `answer` channel.
+Preserve the explicit final constrained answer channel.
 """
 
 
-FORMAT_REPAIR_PROMPT = """Your output must be a Dafny method body. It is missing the required rationale block markers.
+FORMAT_REPAIR_PROMPT = """Your output must be a Python method body. It is missing the required rationale block markers.
 
-Rewrite the following content into a valid Dafny method body that:
-1. Starts with:
-   // CSD_RATIONALE_BEGIN
-   // <1-6 lines of explanation>
-   // CSD_RATIONALE_END
-2. Preserves the SAME strategy semantics (same helper choice(s) and key parameters) unless a change is required just to make it valid Dafny.
-3. Outputs ONLY the method body (no signature, no outer braces).
+Rewrite the following body so that it starts with:
+# CSD_RATIONALE_BEGIN
+# ...
+# CSD_RATIONALE_END
 
-Content to rewrite:
-```dafny
+Then keep the Python body statements.
+
+Previous output:
+```python
 {previous_strategy}
 ```
+
+Output ONLY the corrected Python body, no markdown fences.
 """
 
 
 EVALUATION_FAILURE_REFINEMENT_PROMPT = """\
-Your method body passed verification, compilation, and runtime testing, but performed poorly on actual dataset evaluation.
+Your previous Python strategy body verified, compiled, and ran, but it performed poorly on evaluation.
 
 Previous attempt:
-```dafny
+```python
 {previous_strategy}
 ```
 
-Evaluation results:
+Evaluation feedback:
 ```
 {evaluation_feedback}
 ```
 
-The strategy runs correctly but produces outputs that don't meet quality thresholds. Consider:
+Produce a revised Python body only.
+Keep the rationale block at the top.
+Try a meaningfully different constrained-decoding strategy if the current one is not working.
+Do not fall back to unconstrained-only decoding or a basic window-switch pattern.
+"""
 
-1. **Format issues**: If format rate is low, ensure your loop allows enough steps and that you mix UnconstrainedStep (for free text) with ConstrainedStep (for << >> segments) appropriately.
 
-2. **Accuracy issues**: If accuracy is low, allow more unconstrained steps before or between constrained segments so the model can reason.
+STRUCTURE_REPAIR_PROMPT = """\
+Your previous Python strategy body is structurally invalid for this project.
 
-3. **Syntax issues**: If syntax rate is low, use ConstrainedStep for segments that must match the grammar; use RollbackToValidPrefix if you need to repair after unconstrained steps.
+Previous attempt:
+```python
+{previous_strategy}
+```
 
-4. **Strategy**: Build your loop to alternate or switch between UnconstrainedStep and ConstrainedStep based on parser state (e.g. parser.IsCompletePrefix) or a step counter, so that << >> regions are constrained and the rest can be unconstrained.
+Issue:
+{issue}
+
+Rewrite it as a valid Python method body.
 
 Rules:
-- Output ONLY a corrected method body (no signature, no braces).
-- The corrected body MUST include the required rationale block at the top.
-- Change how you combine UnconstrainedStep and ConstrainedStep in the loop (e.g. more constrained steps, or different switching logic).
+- Output ONLY the body, not a full file.
+- Keep the rationale block at the top.
+- Include executable decoding logic, not just comments.
+- Include at least one call to `helpers.ConstrainedAnswerStep(...)`.
+- Use `helpers.ExpressiveStep(...)` for free-form output; do not use `helpers.UnconstrainedStep(...)`.
+- Update `generated` with `generated = generated + [next_token]` when emitting free-form text.
+- Update `answer` with `answer = answer + [next_token]` when emitting constrained answer content.
+- Update the budget with `stepsLeft = new_steps`.
+- Preserve the final constrained-answer guarantee.
+- Do not return to an unconstrained-only or rollback-only design.
+- Keep at least two extra local state variables that materially affect control flow.
 """
 
 
@@ -410,7 +276,6 @@ def build_initial_prompt(task_description: str) -> tuple[str, str]:
 
 
 def build_verification_error_prompt(previous_strategy: str, error_message: str) -> tuple[str, str]:
-    # Use replace() so strategy/error text containing { } doesn't break format()
     user_prompt = VERIFICATION_ERROR_REFINEMENT_PROMPT.replace(
         "{previous_strategy}", previous_strategy
     ).replace("{error_message}", error_message)
@@ -419,16 +284,14 @@ def build_verification_error_prompt(previous_strategy: str, error_message: str) 
 
 def build_runtime_error_prompt(previous_strategy: str, error_traceback: str) -> tuple[str, str]:
     user_prompt = RUNTIME_ERROR_REFINEMENT_PROMPT.format(
-        previous_strategy=previous_strategy,
-        error_traceback=error_traceback,
+        previous_strategy=previous_strategy, error_traceback=error_traceback
     )
     return SYSTEM_PROMPT, user_prompt
 
 
 def build_compilation_error_prompt(previous_strategy: str, error_message: str) -> tuple[str, str]:
     user_prompt = COMPILATION_ERROR_REFINEMENT_PROMPT.format(
-        previous_strategy=previous_strategy,
-        error_message=error_message,
+        previous_strategy=previous_strategy, error_message=error_message
     )
     return SYSTEM_PROMPT, user_prompt
 
@@ -440,9 +303,14 @@ def build_format_repair_prompt(previous_strategy: str) -> tuple[str, str]:
 
 def build_evaluation_failure_prompt(previous_strategy: str, evaluation_feedback: str) -> tuple[str, str]:
     user_prompt = EVALUATION_FAILURE_REFINEMENT_PROMPT.format(
-        previous_strategy=previous_strategy,
-        evaluation_feedback=evaluation_feedback,
+        previous_strategy=previous_strategy, evaluation_feedback=evaluation_feedback
     )
     return SYSTEM_PROMPT, user_prompt
 
 
+def build_structure_repair_prompt(previous_strategy: str, issue: str) -> tuple[str, str]:
+    user_prompt = STRUCTURE_REPAIR_PROMPT.format(
+        previous_strategy=previous_strategy,
+        issue=issue,
+    )
+    return SYSTEM_PROMPT, user_prompt

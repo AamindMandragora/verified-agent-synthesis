@@ -22,6 +22,7 @@ import argparse
 import sys
 import json
 import random
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -31,6 +32,47 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 # Import from reorganized modules
 from evaluations.common.parser_utils import create_lark_dafny_parser, get_builtin_grammar
+from evaluations.common.generation import dafny_seq_to_str
+
+
+def resolve_compiled_module_dir(run_dir: Path) -> Path:
+    """Return the directory containing GeneratedCSD.py."""
+    run_dir = run_dir.resolve()
+    if (run_dir / "GeneratedCSD.py").exists():
+        return run_dir
+    candidates = [
+        run_dir / "generated_csd",
+        run_dir / "folio_csd",
+        run_dir / "gsm_crane_csd",
+        run_dir / "fol_csd",
+        run_dir / "pddl_csd",
+        run_dir / "sygus_slia_csd",
+    ]
+    for d in candidates:
+        if d.exists() and (d / "GeneratedCSD.py").exists():
+            return d
+    found = list(run_dir.glob("*/GeneratedCSD.py"))
+    if found:
+        return found[0].parent
+    raise FileNotFoundError(f"No compiled CSD module found in {run_dir}")
+
+
+def extract_final_constrained_segment(output_text: str) -> str:
+    """Return the last << >> segment when present, else the full output."""
+    matches = re.findall(r"<<\s*([\s\S]+?)\s*>>", output_text)
+    if matches:
+        return matches[-1]
+    return output_text
+
+
+def ensure_special_tokens(vocab: list[str], size: int) -> list[str]:
+    """Ensure the vocabulary contains delimiter and EOS tokens expected by the template."""
+    specials = ["<<", ">>", "<EOS>"]
+    cleaned: list[str] = []
+    for tok in specials + vocab:
+        if tok and tok not in cleaned:
+            cleaned.append(tok)
+    return cleaned[:size]
 
 
 def create_vocabulary(vocab_type: str = "default", tokenizer_name: Optional[str] = None, size: int = 500) -> list[str]:
@@ -46,19 +88,19 @@ def create_vocabulary(vocab_type: str = "default", tokenizer_name: Optional[str]
                     vocab.append(token)
             except:
                 pass
-        return vocab
+        return ensure_special_tokens(vocab, size)
     
     # Default vocabulary with generic tokens
     vocab = list('{}[]():,."\'+-*/=<>!&|^~%@#$_\\;? \t\n')
     vocab.extend(list('0123456789'))
     vocab.extend(list('abcdefghijklmnopqrstuvwxyz'))
     vocab.extend(list('ABCDEFGHIJKLMNOPQRSTUVWXYZ'))
-    vocab.append('<EOS>')
+    vocab.extend(["<<", ">>", "<EOS>"])
     
     while len(vocab) < size:
         vocab.append(f'<T{len(vocab)}>')
     
-    return vocab[:size]
+    return ensure_special_tokens(vocab, size)
 
 
 def run_csd_with_grammar(
@@ -88,10 +130,10 @@ def run_csd_with_grammar(
     random.seed(seed)
     
     run_dir = Path(run_dir)
-    module_dir = run_dir / "generated_csd"
-    
-    if not module_dir.exists():
-        return {"success": False, "error": f"Module directory not found: {module_dir}"}
+    try:
+        module_dir = resolve_compiled_module_dir(run_dir)
+    except FileNotFoundError as exc:
+        return {"success": False, "error": str(exc)}
     
     # Add module dir to path
     if str(module_dir) not in sys.path:
@@ -127,7 +169,8 @@ def run_csd_with_grammar(
         class TestLM(VerifiedDecoderAgent.LM):
             def __init__(self, tokens):
                 super().__init__()
-                self._Tokens = _dafny.SeqWithoutIsStrInference(tokens)
+                dafny_tokens = [_dafny.SeqWithoutIsStrInference(t) for t in tokens]
+                self._Tokens = _dafny.SeqWithoutIsStrInference(dafny_tokens)
                 self._Ids = _dafny.SeqWithoutIsStrInference(list(range(len(tokens))))
                 self.Logits = _dafny.Array(None, len(tokens))
                 for i in range(len(tokens)):
@@ -155,20 +198,27 @@ def run_csd_with_grammar(
         lm = TestLM(vocab)
         parser = LarkDafnyParser(lm._Tokens)
         prompt = _dafny.SeqWithoutIsStrInference([])
+        eos_token = _dafny.SeqWithoutIsStrInference("<EOS>")
         
         # Run the CSD strategy
-        output = GeneratedCSD.default__.MyCSDStrategy(lm, parser, prompt, max_steps)
-        output_list = [str(t) for t in output]
+        result = GeneratedCSD.default__.MyCSDStrategy(lm, parser, prompt, max_steps, eos_token)
+        if isinstance(result, tuple):
+            output, _remaining_steps = result
+        else:
+            output = result
+        output_list = [dafny_seq_to_str(t) for t in output]
         output_text = "".join(output_list)
         
-        # Validate output
-        is_valid = parser._is_valid_prefix(output_text)
-        is_complete = parser._is_complete(output_text)
+        # Validate the constrained segment rather than any free-form prefix outside delimiters.
+        constrained_text = extract_final_constrained_segment(output_text)
+        is_valid = parser._is_valid_prefix(constrained_text)
+        is_complete = parser._is_complete(constrained_text)
         
         return {
             "success": True,
             "output_tokens": output_list,
             "output_text": output_text,
+            "constrained_text": constrained_text,
             "output_length": len(output_list),
             "is_valid_prefix": is_valid,
             "is_complete": is_complete,
@@ -249,6 +299,7 @@ Examples:
             print(f"✓ Generation successful")
             print(f"  Output length: {results['output_length']} tokens")
             print(f"  Output: {repr(results['output_text'][:80])}...")
+            print(f"  Constrained segment: {repr(results['constrained_text'][:80])}...")
             print(f"  Valid prefix: {results['is_valid_prefix']}")
             print(f"  Complete: {results['is_complete']}")
         else:

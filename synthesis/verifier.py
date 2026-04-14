@@ -1,7 +1,8 @@
 """
-Dafny verification wrapper for CSD synthesis.
+Verification wrapper for Python-first CSD synthesis.
 
-Runs `dafny verify` on generated code and parses the results.
+Transpiles generated Python strategy code to Dafny, runs `dafny verify`,
+and parses the results.
 """
 
 import re
@@ -65,7 +66,8 @@ class DafnyVerifier:
     """
     Wrapper for Dafny verification.
     
-    Writes Dafny code to a temp file, runs verification, and parses results.
+    Writes generated Python code to a temp workspace, transpiles it to Dafny,
+    runs verification, and parses results.
     """
 
     # Regex patterns for parsing Dafny output
@@ -127,12 +129,12 @@ class DafnyVerifier:
         
         return errors
     
-    def verify(self, dafny_code: str) -> VerificationResult:
+    def verify(self, python_code: str) -> VerificationResult:
         """
-        Verify Dafny code.
+        Verify generated Python strategy code.
         
         Args:
-            dafny_code: Complete Dafny source code
+            python_code: Complete Python source code
             
         Returns:
             VerificationResult with success status and any errors
@@ -140,8 +142,8 @@ class DafnyVerifier:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             try:
-                source_file, cwd = prepare_temp_dafny_dir(temp_path, dafny_code, "verify")
-            except FileNotFoundError as e:
+                source_file, cwd, _ = prepare_temp_dafny_dir(temp_path, python_code)
+            except Exception as e:
                 return VerificationResult(
                     success=False,
                     errors=[VerificationError(
@@ -198,10 +200,10 @@ class DafnyVerifier:
     
     def verify_file(self, file_path: Path) -> VerificationResult:
         """
-        Verify a Dafny file directly.
+        Verify a generated Python strategy file directly.
         
         Args:
-            file_path: Path to the Dafny file
+            file_path: Path to the Python file
             
         Returns:
             VerificationResult
@@ -219,4 +221,3 @@ class DafnyVerifier:
             )
         
         return self.verify(file_path.read_text())
-

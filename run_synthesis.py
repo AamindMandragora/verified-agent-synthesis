@@ -185,10 +185,10 @@ Examples:
     args = parser.parse_args()
     args.eval_4bit = not args.no_eval_4bit
 
-    # Resolve Dafny path: prefer repo-local dafny-lang/dafny/dafny if present
+    # Resolve Dafny path: prefer repo-local dafny/dafny if present
     if args.dafny_path is None:
         repo_root = Path(__file__).resolve().parent
-        local_dafny = repo_root / "dafny-lang" / "dafny" / "dafny"
+        local_dafny = repo_root / "dafny" / "dafny"
         args.dafny_path = str(local_dafny) if local_dafny.is_file() else "dafny"
 
     # Normalize output_dir if provided (handle potential backslashes from user input)
@@ -207,6 +207,12 @@ Examples:
 
     # Normalize device: "auto" -> None (generator picks); cuda:2 etc. passed through
     device = None if args.device.strip().lower() == "auto" else args.device.strip()
+
+    if args.max_tokens < 192:
+        print(
+            f"Warning: --max-tokens {args.max_tokens} is very low for a structured Python strategy. "
+            "The generator will internally use a larger budget for initial/repair generations to avoid truncation."
+        )
 
     generator = StrategyGenerator(
         model_name=args.model,
@@ -290,4 +296,3 @@ Examples:
 
 if __name__ == "__main__":
     main()
-

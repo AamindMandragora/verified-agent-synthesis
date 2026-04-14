@@ -14,6 +14,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
+from transpiler.transpiler import transpile_contract_library
+
 from .compiler import CompilationResult, DafnyCompiler
 from .evaluator import Evaluator, EvaluationResult
 from .generator import StrategyGenerator
@@ -39,6 +41,81 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
     import re
     repaired = strategy_code
     changed = False
+
+    # Python-side fix: if branch-local tuple assignments feed later uses of next_token/new_steps,
+    # predeclare them before the branch so transpilation can emit outer-scope variables.
+    if (
+        "unresolved identifier: next_token" in error_summary
+        or "unresolved identifier: new_steps" in error_summary
+    ):
+        pattern = re.compile(
+            r"(?m)^(?P<indent>[ \t]*)if (?P<cond>[^\n]+):\n"
+            r"(?P=indent)[ \t]+(?P<name1>[A-Za-z_]\w*)\s*,\s*(?P<name2>[A-Za-z_]\w*)\s*=\s*helpers\.(?:ConstrainedAnswerStep|ExpressiveStep|UnconstrainedStep)\([^\n]+\)\n"
+            r"(?P=indent)else:\n"
+            r"(?P=indent)[ \t]+(?P=name1)\s*,\s*(?P=name2)\s*=\s*helpers\.(?:ConstrainedAnswerStep|ExpressiveStep|UnconstrainedStep)\([^\n]+\)"
+        )
+
+        def _predeclare_branch_outputs(m: re.Match) -> str:
+            indent = m.group("indent")
+            name1 = m.group("name1")
+            name2 = m.group("name2")
+            prefix = f"{indent}{name1} = eosToken\n{indent}{name2} = stepsLeft\n"
+            return prefix + m.group(0)
+
+        new_repaired = pattern.sub(_predeclare_branch_outputs, repaired)
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Python-first normalization for legacy Dafny-ish outputs.
+    new_repaired = re.sub(r"(?m)^(\s*)//", r"\1#", repaired)
+    new_repaired = new_repaired.replace(":=", "=")
+    new_repaired = new_repaired.replace("&&", " and ")
+    new_repaired = new_repaired.replace("||", " or ")
+    new_repaired = re.sub(r"(?<![=!])!(?!=)", " not ", new_repaired)
+    new_repaired = re.sub(r"(?m)^(\s*)(invariant|decreases)\b", r"\1# \2", new_repaired)
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: Python-only constructs that the strategy transpiler cannot lower to Dafny.
+    if (
+        "Unsupported comparison operator: IsNot" in error_summary
+        or "unresolved identifier: isinstance" in error_summary
+        or "unresolved identifier: str" in error_summary
+        or "type seq<char> does not have a member isalpha" in error_summary
+        or "type seq<char> does not have a member isdigit" in error_summary
+        or "type of 'null' is a reference type" in error_summary
+    ):
+        python_only_patterns = [
+            (r"(?m)^(\s*next_token\s*=\s*)None(\s*)$", r"\1eosToken\2"),
+            (r"(?m)^(\s*new_steps\s*=\s*)None(\s*)$", r"\1stepsLeft\2"),
+            (r"\bisinstance\s*\([^)]*\)", "True"),
+            (r"([A-Za-z_][A-Za-z0-9_\[\]\-]*)\.isalpha\(\)", "True"),
+            (r"([A-Za-z_][A-Za-z0-9_\[\]\-]*)\.isdigit\(\)", "True"),
+            (r"\b([A-Za-z_]\w*)\s+is\s+not\s+None\b", "True"),
+            (r"\b([A-Za-z_]\w*)\s+is\s+None\b", "False"),
+        ]
+        for pattern, replacement in python_only_patterns:
+            new_repaired = re.sub(pattern, replacement, repaired)
+            if new_repaired != repaired:
+                repaired = new_repaired
+                changed = True
+
+    # Template already initializes generated/stepsLeft and finalizes remainingSteps.
+    for pattern in [
+        r"^\s*generated\s*=\s*\[\s*\]\s*\n?",
+        r"^\s*stepsLeft\s*=\s*maxSteps\s*\n?",
+        r"^\s*remainingSteps\s*=\s*stepsLeft\s*\n?",
+        r"^\s*delim\s*=\s*Delimiter\s*\([^)]*\)\s*\n?",
+        r"^\s*helpers\s*=\s*CSDHelpers\s*\([^)]*\)\s*\n?",
+        r"^\s*helpers\.DelimitersInLMAlways\s*\(\s*\)\s*\n?",
+        r"^\s*lm\.ValidTokensIdsLogitsAlways\s*\(\s*\)\s*\n?",
+    ]:
+        new_repaired = re.sub(pattern, "", repaired, flags=re.MULTILINE)
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
 
     # Fix: "Duplicate local-variable name: generated" -> template out-parameter; remove "var generated := [];" lines
     new_repaired = re.sub(
@@ -554,9 +631,51 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
                 re.MULTILINE,
             )
             new_repaired = remove_lemma.sub("\n", repaired)
-            if new_repaired != repaired:
-                repaired = new_repaired
-                changed = True
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: "decreases expression might not decrease" in Python state-machine loops where a branch
+    # sets a string mode like "done" without consuming budget. Replace that terminal assignment
+    # with `break` so the loop exits instead of taking a non-decreasing back-edge.
+    if "decreases expression might not decrease" in error_summary:
+        new_repaired = re.sub(
+            r"(?m)^(\s*)([A-Za-z_]\w*)\s*=\s*(['\"])done\3\s*$",
+            r"\1break",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: if a mode-membership invariant is failing because the loop introduces a terminal "done"
+    # state, drop the overly specific invariant instead of repeating the same invalid state machine.
+    if "invariant could not be proved" in error_summary and "current_step" in error_summary:
+        new_repaired = re.sub(
+            r"(?m)^[ \t]*#\s*invariant\s+current_step\s+in\s+\[[^\n]+\]\n?",
+            "",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: finalization requires a nonempty valid answer. If the strategy can exit with an empty
+    # answer, inject one last constrained answer step when budget remains.
+    if (
+        "precondition for this call could not be proved" in error_summary
+        and ("parser.IsValidPrefix(answer)" in error_summary or "|answer| > 0" in error_summary)
+        and "helpers.FinalizeDelimitedAnswer" in error_summary
+        and "if len(answer) == 0 and stepsLeft > 0 and not parser.IsCompletePrefix(answer):" not in repaired
+    ):
+        guard = (
+            "\nif len(answer) == 0 and stepsLeft > 0 and not parser.IsCompletePrefix(answer):\n"
+            "    next_token, new_steps = helpers.ConstrainedAnswerStep(prompt, generated, answer, stepsLeft)\n"
+            "    answer = answer + [next_token]\n"
+            "    stepsLeft = new_steps\n"
+        )
+        repaired = repaired.rstrip() + guard
+        changed = True
 
     # Fix: "invariant could not be proved" for stepCounter <= maxSteps — remove that invariant (stepCounter can grow without bound in some branches)
     if "invariant could not be proved" in error_summary and "stepCounter" in error_summary and "maxSteps" in error_summary:
@@ -1002,10 +1121,13 @@ def parse_strategy_type(strategy_code: str) -> dict:
         extracted.body_without_rationale.strip() if extracted.has_markers else strategy_code.strip()
     )
 
-    # Detect which primitives are used (VerifiedAgentSynthesis.dfy only has these three)
-    uses_constrained = "ConstrainedStep" in strategy_code_for_match
-    uses_unconstrained = "UnconstrainedStep" in strategy_code_for_match
+    # Detect which primitives are used.
+    uses_constrained = "ConstrainedStep" in strategy_code_for_match or "ConstrainedAnswerStep" in strategy_code_for_match
+    uses_unconstrained = (
+        "UnconstrainedStep" in strategy_code_for_match or "ExpressiveStep" in strategy_code_for_match
+    )
     uses_rollback = "RollbackToValidPrefix" in strategy_code_for_match
+    uses_answer_channel = "ConstrainedAnswerStep" in strategy_code_for_match
 
     if uses_constrained and uses_unconstrained:
         category = "interleaved"
@@ -1018,7 +1140,10 @@ def parse_strategy_type(strategy_code: str) -> dict:
 
     return {
         "strategy_name": "CustomLoop",
-        "parameters": {"uses_rollback": uses_rollback},
+        "parameters": {
+            "uses_rollback": uses_rollback,
+            "uses_answer_channel": uses_answer_channel,
+        },
         "category": category,
         "comparable_to": "N/A",
         "raw_code": strategy_code,
@@ -1031,8 +1156,9 @@ class SynthesisAttempt:
 
     attempt_number: int
     strategy_code: str
-    full_dafny_code: str
     timestamp: str
+    full_python_code: str = ""
+    full_dafny_code: str = ""
 
     # Results from each stage (None if stage not reached)
     verification_result: Optional[VerificationResult] = None
@@ -1058,6 +1184,12 @@ class SynthesisAttempt:
     def get_strategy_analysis(self) -> dict:
         """Get parsed strategy information for research analysis."""
         return parse_strategy_type(self.strategy_code)
+
+    def __post_init__(self) -> None:
+        if not self.full_python_code and self.full_dafny_code:
+            self.full_python_code = self.full_dafny_code
+        elif self.full_python_code and not self.full_dafny_code:
+            self.full_dafny_code = self.full_python_code
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -1163,12 +1295,19 @@ class SynthesisResult:
 
     success: bool
     strategy_code: str
-    full_dafny_code: str
     compiled_module_path: Optional[Path]
     output_dir: Optional[Path]
     run_dir: Optional[Path]
     attempts: list[SynthesisAttempt]
     total_time_ms: float
+    full_python_code: str = ""
+    full_dafny_code: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.full_python_code and self.full_dafny_code:
+            self.full_python_code = self.full_dafny_code
+        elif self.full_python_code and not self.full_dafny_code:
+            self.full_dafny_code = self.full_python_code
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -1326,12 +1465,12 @@ class SynthesisPipeline:
             attempt = SynthesisAttempt(
                 attempt_number=attempt_num,
                 strategy_code=strategy_code,
-                full_dafny_code=full_code,
+                full_python_code=full_code,
                 timestamp=datetime.now().isoformat(),
             )
 
             # Stage 1: Verification
-            print("\n[1/4] Verifying with Dafny...")
+            print("\n[1/4] Verifying transpiled Python strategy...")
             t0 = time.perf_counter()
             verification_result = self.verifier.verify(full_code)
             attempt.verification_result = verification_result
@@ -1359,8 +1498,9 @@ class SynthesisPipeline:
                     error_msg = (
                         f"WARNING: This is the SAME error for {consecutive_same + 1} consecutive attempts. "
                         f"Your previous fixes did NOT work. You MUST use a COMPLETELY DIFFERENT approach. "
-                        f"The ONLY methods on helpers are: UnconstrainedStep, ConstrainedStep, and "
-                        f"(static) RollbackToValidPrefix. Implement a loop that calls these; do NOT call any other method.\n\n"
+                        f"Keep the explicit answer-channel architecture: build expressive free-form text with "
+                        f"helpers.ExpressiveStep(...), build the grammar-constrained answer in `answer` with "
+                        f"helpers.ConstrainedAnswerStep(...), and leave delimiter insertion to the template.\n\n"
                         f"Original error:\n{error_msg}"
                     )
 
@@ -1404,10 +1544,16 @@ class SynthesisPipeline:
 
             print(f"  ✓ Compiled to {compilation_result.output_dir}")
 
-            # Save Dafny source into the run directory (overwritten each successful compile)
-            dafny_path = run_dir / f"{output_name}.dfy"
-            dafny_path.write_text(full_code, encoding="utf-8")
-            print(f"  Dafny CSD saved to: {dafny_path}")
+            python_path = run_dir / f"{output_name}.py"
+            python_path.write_text(full_code, encoding="utf-8")
+            transpiled_result = transpile_contract_library(full_code, module_name_hint=python_path.stem, axiomatize=False)
+            if transpiled_result.is_ok():
+                transpiled_dafny_path = run_dir / f"{output_name}.dfy"
+                transpiled_dafny_path.write_text(transpiled_result.value, encoding="utf-8")
+                print(f"  Python CSD saved to: {python_path}")
+                print(f"  Transpiled Dafny saved to: {transpiled_dafny_path}")
+            else:
+                print(f"  Python CSD saved to: {python_path}")
 
             # Stage 3: Runtime test
             print("\n[3/4] Testing runtime execution...")
@@ -1442,6 +1588,22 @@ class SynthesisPipeline:
 
             print(f"  ✓ Execution successful ({runtime_result.execution_time_ms:.1f}ms)")
             print(f"  Output length: {len(runtime_result.output or [])} tokens")
+
+            if len(runtime_result.output or []) == 0:
+                print("  ✗ Runtime smoke test produced 0 tokens")
+                attempt.failed_at = FailureStage.RUNTIME
+                attempt.error_summary = (
+                    "Runtime smoke test produced 0 tokens. "
+                    "The strategy must execute at least one decoding step in the smoke environment."
+                )
+                attempts.append(attempt)
+
+                print("  Refining based on empty runtime output...")
+                strategy_code = self.generator.refine_after_runtime_error(
+                    strategy_code,
+                    attempt.error_summary,
+                )
+                continue
 
             # Stage 4: Evaluation — use same device as generator to avoid loading on a full GPU
             if getattr(self.generator, "device", None):
@@ -1513,7 +1675,7 @@ class SynthesisPipeline:
             return SynthesisResult(
                 success=True,
                 strategy_code=strategy_code,
-                full_dafny_code=full_code,
+                full_python_code=full_code,
                 compiled_module_path=compilation_result.main_module_path,
                 output_dir=compilation_result.output_dir,
                 run_dir=run_dir,
@@ -1580,14 +1742,16 @@ class SynthesisPipeline:
         run_dir: Path,
     ) -> None:
         """Save a success report and the final strategy."""
-        # Save the Dafny source
-        dafny_path = run_dir / f"{output_name}.dfy"
-        with open(dafny_path, "w") as f:
+        python_path = run_dir / f"{output_name}.py"
+        with open(python_path, "w") as f:
             f.write(full_code)
 
-        # NOTE: We do NOT overwrite dafny/GeneratedCSD.dfy here because it contains
-        # the template markers (QWEN_INSERT_STRATEGY_HERE) needed for future runs.
-        # The final Dafny code is saved in the run directory instead.
+        transpiled_result = transpile_contract_library(full_code, module_name_hint=output_name, axiomatize=False)
+        dafny_path = None
+        if transpiled_result.is_ok():
+            dafny_path = run_dir / f"{output_name}.dfy"
+            with open(dafny_path, "w") as f:
+                f.write(transpiled_result.value)
 
         rationale_extracted = extract_rationale(strategy_code)
 
@@ -1596,7 +1760,8 @@ class SynthesisPipeline:
         report = {
             "strategy_code": strategy_code,
             "tool_choice_rationale": rationale_extracted.rationale,
-            "dafny_file": str(dafny_path),
+            "python_file": str(python_path),
+            "transpiled_dafny_file": str(dafny_path) if dafny_path else None,
             "compiled_dir": str(compilation_result.output_dir),
             "total_attempts": len(attempts),
             "timestamp": datetime.now().isoformat(),
@@ -1605,7 +1770,7 @@ class SynthesisPipeline:
         with open(report_path, "w") as f:
             json.dump(report, f, indent=2)
 
-        print(f"Strategy saved to: {dafny_path}")
+        print(f"Strategy saved to: {python_path}")
         print(f"Success report saved to: {report_path}")
 
         # Create 'latest' symlink in the runs directory
@@ -1656,5 +1821,3 @@ class SynthesisPipeline:
         ]
 
         return patterns
-
-

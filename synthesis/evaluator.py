@@ -248,6 +248,45 @@ class Evaluator:
                 raise ValueError(f"Unknown dataset: {self.dataset_name}")
         return self._grammar_file
 
+    def _extract_gsm_variable_names(self, example: Any) -> List[str]:
+        candidates: List[str] = []
+        for key in ("variable_mapping", "variables", "eval_input", "bindings", "symbolic_variables"):
+            value = self._example_field(example, key, None)
+            if isinstance(value, dict):
+                candidates.extend(str(k) for k in value.keys())
+            elif isinstance(value, (list, tuple, set)):
+                candidates.extend(str(v) for v in value)
+
+        cleaned: List[str] = []
+        for name in candidates:
+            stripped = str(name).strip()
+            if stripped and stripped not in cleaned:
+                cleaned.append(stripped)
+        return cleaned
+
+    def _build_dynamic_gsm_parser(self, env: Dict[str, Any], example: Any):
+        variables = self._extract_gsm_variable_names(example)
+        if not variables:
+            return None
+        try:
+            from evaluations.gsm_symbolic.grammar import build_dynamic_grammar
+            from evaluations.common.parser_utils import create_lark_dafny_parser
+        except Exception:
+            return None
+
+        try:
+            base_grammar = self._get_grammar_file().read_text()
+            dynamic_grammar = build_dynamic_grammar(base_grammar, variables)
+            parser_cls = create_lark_dafny_parser(
+                dynamic_grammar,
+                env["VerifiedDecoderAgent"],
+                env["_dafny"],
+                start="csd_start",
+            )
+            return parser_cls(env["lm"]._Tokens)
+        except Exception:
+            return None
+
     def _load_dataset_sample(self) -> list:
         """Load a sample of the dataset for evaluation."""
         if self._dataset is not None:
@@ -626,12 +665,13 @@ class Evaluator:
         if self.dataset_name == "gsm_symbolic":
             question = self._example_field(example, "question", "") or ""
             return (
-                "Solve the following math problem step by step. "
-                "For each calculation, write the expression inside << >> delimiters.\n\n"
+                "Solve the following math problem. You may write free-form reasoning in plain text, "
+                "but the final answer-bearing mathematical expression or equation must appear inside the final << >> segment.\n"
+                "That final constrained segment should be short, mathematically meaningful, and should end with the numeric answer rather than decorative punctuation.\n\n"
                 "Example:\n"
                 "Q: Amy has 5 apples. She buys 3 more. How many does she have?\n"
                 "A: Amy starts with 5 apples and buys 3 more.\n"
-                "Total apples = <<5 + 3 = 8>>8\n"
+                "The final constrained answer segment is <<5 + 3 = 8>>.\n"
                 "The answer is 8.\n\n"
                 f"Q: {question}\nA:"
             )
@@ -668,19 +708,14 @@ class Evaluator:
     def _ensure_delimiters_around_constrained(self, output: str) -> str:
         """
         Ensure the constrained part(s) are inside delimiters. FOLIO: $ ... %; GSM: << ... >>.
-        If the CSD output has no delimiters, wrap the whole output.
+        For non-FOLIO tasks, do not auto-wrap: missing delimiters should count as a format failure.
         """
         if self.dataset_name == "folio":
             if "$" in output and "%" in output:
                 return output
             s = output.strip()
             return f"${s}%" if s else output
-        if "<<" in output and ">>" in output:
-            return output
-        s = output.strip()
-        if not s:
-            return output
-        return f"<< {s} >>"
+        return output
 
     def _check_format_validity(self, output: str) -> bool:
         """Check if the output has valid format with the dataset's delimiters."""
@@ -713,7 +748,7 @@ class Evaluator:
         matches = self._extract_constrained_content(output)
 
         if not matches:
-            return True, []
+            return False, []
 
         grammar_text = self._get_grammar_file().read_text()
         try:
@@ -797,6 +832,8 @@ class Evaluator:
                             env["lm"]._Tokens,
                             env["tokenizer"],
                         )
+                    elif self.dataset_name == "gsm_symbolic":
+                        dynamic_parser = self._build_dynamic_gsm_parser(env, example)
                     output_text, token_count, gen_time, _ = run_crane_csd(
                         env=env,
                         prompt_text=prompt,
@@ -885,7 +922,7 @@ class Evaluator:
                 success=True,
                 accuracy=num_correct / max(1, num_examples),
                 format_rate=num_valid_format / max(1, num_examples),
-                syntax_rate=num_valid_syntax / max(1, total_segments) if total_segments > 0 else 1.0,
+                syntax_rate=num_valid_syntax / max(1, total_segments) if total_segments > 0 else 0.0,
                 num_examples=num_examples,
                 num_correct=num_correct,
                 total_time_seconds=total_time,

@@ -1,7 +1,8 @@
 """
-Dafny to Python compiler wrapper for CSD synthesis.
+Compiler wrapper for Python-first CSD synthesis.
 
-Runs `dafny build --target:py` to compile verified Dafny code to Python.
+Transpiles generated Python strategy code to Dafny and then runs
+`dafny build --target:py` to compile the verified program to Python.
 """
 
 import re
@@ -125,14 +126,14 @@ class DafnyCompiler:
     
     def compile(
         self,
-        dafny_code: str,
+        python_code: str,
         output_name: str = "generated_csd"
     ) -> CompilationResult:
         """
-        Compile Dafny code to Python.
+        Compile generated Python strategy code to executable Python.
         
         Args:
-            dafny_code: Complete Dafny source code (should be verified first)
+            python_code: Complete generated Python source code
             output_name: Name for the output module
             
         Returns:
@@ -141,8 +142,8 @@ class DafnyCompiler:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             try:
-                source_file, cwd = prepare_temp_dafny_dir(temp_path, dafny_code, "compile")
-            except FileNotFoundError as e:
+                source_file, cwd, _ = prepare_temp_dafny_dir(temp_path, python_code)
+            except Exception as e:
                 return CompilationResult(
                     success=False,
                     errors=[CompilationError(
@@ -253,10 +254,10 @@ class DafnyCompiler:
         output_name: Optional[str] = None
     ) -> CompilationResult:
         """
-        Compile a Dafny file to Python.
+        Compile a generated Python source file.
         
         Args:
-            file_path: Path to the Dafny file
+            file_path: Path to the Python file
             output_name: Name for the output module (default: file stem)
             
         Returns:
@@ -276,4 +277,3 @@ class DafnyCompiler:
         
         output_name = output_name or file_path.stem
         return self.compile(file_path.read_text(), output_name)
-

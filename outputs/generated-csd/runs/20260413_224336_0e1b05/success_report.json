@@ -1,0 +1,9 @@
+{
+  "strategy_code": "# CSD_RATIONALE_BEGIN\n# This strategy performs a simple pipeline smoke test by alternating between unconstrained and constrained decoding steps until the maximum number of steps is reached or the parser completes the prefix.\n# CSD_RATIONALE_END\n\n# invariant lm.ValidTokensIdsLogits()\n# invariant 0 <= steps",
+  "tool_choice_rationale": "This strategy performs a simple pipeline smoke test by alternating between unconstrained and constrained decoding steps until the maximum number of steps is reached or the parser completes the prefix.",
+  "python_file": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260413_224336_0e1b05/pipeline_smoke.py",
+  "transpiled_dafny_file": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260413_224336_0e1b05/pipeline_smoke.dfy",
+  "compiled_dir": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260413_224336_0e1b05/pipeline_smoke",
+  "total_attempts": 1,
+  "timestamp": "2026-04-13T22:44:23.117421"
+}

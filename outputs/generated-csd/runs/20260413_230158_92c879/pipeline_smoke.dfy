@@ -19,7 +19,18 @@ module GeneratedCSD {
     lm.ValidTokensIdsLogitsAlways();
     generated := [];
     var stepsLeft := maxSteps;
-    // QWEN_INSERT_STRATEGY_HERE
+    while (stepsLeft > 0 && !parser.IsCompletePrefix(generated))
+      invariant lm.ValidTokensIdsLogits()
+      invariant 0 <= stepsLeft <= maxSteps
+      invariant |generated| + stepsLeft <= maxSteps
+      invariant helpers.ConstrainedWindowValid(generated)
+      decreases stepsLeft
+    {
+      var next_token, new_steps := helpers.UnconstrainedStep(prompt, generated, stepsLeft);
+      generated := (generated + [next_token]);
+      stepsLeft := new_steps;
+    }
     remainingSteps := stepsLeft;
   }
+
 }

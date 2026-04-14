@@ -1,16 +1,20 @@
 syncode: "<<" start ">>"
 
-start: s_expr
+start: answer
 
-// For CSD prefix parsing - Accepts ONLY symbolic expressions (must contain variables)
-// This forces the model to use the symbolic variables defined in the question.
-csd_start: s_expr ">>"
+// For CSD prefix parsing - the constrained answer must become either a single
+// expression or a single equation before the final >>.
+csd_start: answer ">>"
 
 // For expression-only parsing (without >> delimiter) - used in constrained generation
-expr_only: s_expr
+expr_only: answer
+
+?answer: equation
+       | any_expr
+
+?equation: any_expr "=" any_expr
 
 // Any expression - either symbolic (contains variables) or numeric (numbers only)
-// This is a UNION rule that accepts both types for CSD termination purposes.
 ?any_expr: s_expr
          | n_expr
 

@@ -1,0 +1,9 @@
+{
+  "strategy_code": "# CSD_RATIONALE_BEGIN\n# This pipeline smoke test strategy performs unconstrained steps until the maximum number of steps is reached or the parser indicates that the generated sequence is complete.\n# CSD_RATIONALE_END\n\n# invariant lm.ValidTokensIdsLogits()\n# invariant 0 <= stepsLeft <= maxSteps\n# invariant len(generated) + stepsLeft <= maxSteps\n# invariant helpers.ConstrainedWindowValid(generated)\n# decreases stepsLeft\nwhile stepsLeft > 0 and not parser.IsCompletePrefix(generated):\n    next_token, new_steps = helpers.UnconstrainedStep(prompt, generated, stepsLeft)\n    generated = generated + [next_token]\n    stepsLeft = new_steps",
+  "tool_choice_rationale": "This pipeline smoke test strategy performs unconstrained steps until the maximum number of steps is reached or the parser indicates that the generated sequence is complete.",
+  "python_file": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260413_230158_92c879/pipeline_smoke.py",
+  "transpiled_dafny_file": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260413_230158_92c879/pipeline_smoke.dfy",
+  "compiled_dir": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260413_230158_92c879/pipeline_smoke",
+  "total_attempts": 1,
+  "timestamp": "2026-04-13T23:02:49.161753"
+}

@@ -72,20 +72,6 @@ class StrategyRunner:
         self.max_steps = max_steps
         self.parser_mode = parser_mode
         
-        # Auto-detect extern functions path
-        if extern_functions_path is None:
-            extern_functions_path = (
-                Path(__file__).parent.parent / 
-                "dafny_externs" / 
-                "extern_functions.py"
-            )
-        
-        if not extern_functions_path.exists():
-            raise FileNotFoundError(
-                f"Extern functions not found at {extern_functions_path}. "
-                "Make sure extern_functions.py exists in dafny_externs/"
-            )
-        
         self.extern_functions_path = extern_functions_path
         self._externs_module = None
     
@@ -492,4 +478,3 @@ class StrategyRunner:
                 error_traceback=traceback.format_exc(),
                 execution_time_ms=execution_time
             )
-

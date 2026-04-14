@@ -293,6 +293,7 @@ def generate_csd(
     task: str,
     output_name: str,
     model: str,
+    dataset: str,
     temperature: float = 0.7,
     max_iterations: int = 10,
 ) -> Optional[str]:
@@ -304,12 +305,31 @@ def generate_csd(
     cmd = [
         sys.executable, "run_synthesis.py",
         "--task", task,
+        "--dataset", dataset,
         "--output-name", output_name,
         "--model", model,
         "--temperature", str(temperature),
         "--max-iterations", str(max_iterations),
         "--device", "auto",
     ]
+
+    if dataset == "gsm_symbolic":
+        cmd.extend([
+            "--min-accuracy", "0.3",
+            "--min-format-rate", "0.5",
+            "--min-syntax-rate", "0.5",
+            "--eval-sample-size", "10",
+            "--eval-max-steps", "2048",
+        ])
+    elif dataset == "folio":
+        cmd.extend([
+            "--min-accuracy", "0.5",
+            "--min-format-rate", "0.8",
+            "--min-syntax-rate", "0.8",
+            "--eval-sample-size", "10",
+        ])
+    else:
+        raise ValueError(f"Unsupported dataset for comprehensive_eval synthesis: {dataset}")
     
     print(f"  Running: python run_synthesis.py --task '...' --output-name {output_name}")
     returncode, stdout, stderr = run_command(cmd, timeout=1800)  # 30 min timeout
@@ -761,6 +781,7 @@ def generate_csds_for_model(
             task=task_desc,
             output_name=output_name,
             model=model,
+            dataset="gsm_symbolic" if task_type == "gsm" else "folio",
             temperature=temp,
             max_iterations=10,
         )

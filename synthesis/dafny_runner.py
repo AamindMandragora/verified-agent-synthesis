@@ -1,38 +1,36 @@
 """
-Shared Dafny path and temp-dir setup for verifier and compiler.
+Shared Dafny workspace setup for the Python-first synthesis pipeline.
 
-Provides get_verified_agent_synthesis_path(), check_dafny_available(),
-and prepare_temp_dafny_dir() so verifier and compiler don't duplicate
-logic for finding VerifiedAgentSynthesis.dfy and laying out temp directories.
+The synthesis loop now treats Python sources as the source of truth.
+This module prepares a temporary workspace containing:
+- the generated Python strategy file (`GeneratedCSD.py`)
+- Python contract dependencies such as `VerifiedAgentSynthesis.py`
+- the transpiled Dafny workspace used by `dafny verify` / `dafny build`
 """
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
-from typing import Literal, Tuple
+from typing import Tuple
+
+from transpiler.transpiler import prepare_dafny_workspace_from_python
+
+
+GENERATED_MODULE_FILENAME = "GeneratedCSD.py"
+VERIFIED_AGENT_FILENAME = "VerifiedAgentSynthesis.py"
 
 
 def get_verified_agent_synthesis_path() -> Path | None:
-    """
-    Return path to VerifiedAgentSynthesis.dfy, or None if not found.
-
-    Looks in proofs/ then dafny/ relative to the synthesis package root (repo root).
-    """
+    """Return the Python contract source for VerifiedAgentSynthesis, or None if not found."""
     root = Path(__file__).resolve().parent.parent
-    for candidate in (root / "proofs" / "VerifiedAgentSynthesis.dfy", root / "dafny" / "VerifiedAgentSynthesis.dfy"):
-        if candidate.exists():
-            return candidate
-    return None
+    candidate = root / VERIFIED_AGENT_FILENAME
+    return candidate if candidate.exists() else None
 
 
 def check_dafny_available(dafny_path: str, timeout: int = 10) -> None:
-    """
-    Check that Dafny is installed and accessible.
-
-    Raises:
-        RuntimeError: If Dafny is not found or returns non-zero.
-    """
+    """Check that Dafny is installed and accessible."""
     try:
         result = subprocess.run(
             [dafny_path, "--version"],
@@ -51,48 +49,32 @@ def check_dafny_available(dafny_path: str, timeout: int = 10) -> None:
         raise RuntimeError("Dafny version check timed out")
 
 
-def prepare_temp_dafny_dir(
-    temp_path: Path,
-    dafny_code: str,
-    mode: Literal["verify", "compile"],
-) -> Tuple[Path, Path]:
+def prepare_temp_dafny_dir(temp_path: Path, python_code: str) -> Tuple[Path, Path, Path]:
     """
-    Write VerifiedAgentSynthesis.dfy and GeneratedCSD.dfy into temp_path for verify or compile.
+    Materialize a temporary Dafny workspace from Python sources.
 
     Args:
-        temp_path: Existing temp directory to write into
-        dafny_code: Contents of GeneratedCSD.dfy
-        mode: "verify" or "compile" — layout differs (verify uses root + agents; compile uses agents + proofs)
+        temp_path: Existing temp directory
+        python_code: Complete contents of the generated `GeneratedCSD.py`
 
     Returns:
-        (source_file_path, cwd) where source_file_path is the GeneratedCSD.dfy to pass to Dafny,
-        and cwd is the directory to run Dafny from.
-
-    Raises:
-        FileNotFoundError: If VerifiedAgentSynthesis.dfy is not found in proofs/ or dafny/
+        `(source_file_path, cwd, generated_python_path)` where `source_file_path`
+        is the transpiled main Dafny file, `cwd` is the temp workspace root,
+        and `generated_python_path` is the written Python source file.
     """
-    source_proof = get_verified_agent_synthesis_path()
-    if not source_proof or not source_proof.exists():
-        raise FileNotFoundError("VerifiedAgentSynthesis.dfy not found in proofs/ or dafny/")
+    source_python = get_verified_agent_synthesis_path()
+    if not source_python or not source_python.exists():
+        raise FileNotFoundError(f"{VERIFIED_AGENT_FILENAME} not found in repo root")
 
-    proof_text = source_proof.read_text()
+    generated_python = temp_path / GENERATED_MODULE_FILENAME
+    generated_python.write_text(python_code)
+    shutil.copyfile(source_python, temp_path / VERIFIED_AGENT_FILENAME)
 
-    if mode == "verify":
-        (temp_path / "VerifiedAgentSynthesis.dfy").write_text(proof_text)
-        agents_dir = temp_path / "agents"
-        agents_dir.mkdir(exist_ok=True)
-        (agents_dir / "VerifiedAgentSynthesis.dfy").write_text(proof_text)
-        source_file = temp_path / "GeneratedCSD.dfy"
-        source_file.write_text(dafny_code)
-        return source_file, temp_path
+    workspace = temp_path / "dafny_workspace"
+    workspace.mkdir(exist_ok=True)
 
-    # mode == "compile"
-    agents_dir = temp_path / "agents"
-    agents_dir.mkdir()
-    proofs_dir = temp_path / "proofs"
-    proofs_dir.mkdir()
-    (proofs_dir / "VerifiedAgentSynthesis.dfy").write_text(proof_text)
-    (agents_dir / "VerifiedAgentSynthesis.dfy").write_text(proof_text)
-    source_file = agents_dir / "GeneratedCSD.dfy"
-    source_file.write_text(dafny_code)
-    return source_file, temp_path
+    result = prepare_dafny_workspace_from_python(generated_python, workspace, axiomatize=False)
+    if result.is_err():
+        raise result.error
+
+    return result.value, workspace, generated_python
