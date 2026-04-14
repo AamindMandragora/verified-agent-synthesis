@@ -18,6 +18,13 @@ einops>=0.7.0
 pytest>=7.0.0
 pytest-timeout>=2.0.0
 
+# Parsing / grammar support
+lark>=1.1.8
+
+# Verification / transpiler support
+mypy>=1.8.0
+sympy>=1.12
+
 # Evaluation harnesses (apples-to-apples-ish vs Syncode/IterGen papers)
 datasets>=2.16.0
 jsonschema>=4.20.0
@@ -26,4 +33,3 @@ jsonschema>=4.20.0
 nltk>=3.8.0
 ply>=3.11
 z3-solver>=4.12.0
-

@@ -1,8 +1,0 @@
-{
-  "strategy_code": "// CSD_RATIONALE_BEGIN\n// I chose GenerateWithReasonableLength to generate short symbolic mathematical expressions.\n// This helper ensures that the expression is complete and within a reasonable length, which fits the strict grammar rules.\n// reasonableLength is set to 10 to balance between expressiveness and brevity.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.GenerateWithReasonableLength(lm, parser, prompt, maxSteps, 10);",
-  "tool_choice_rationale": "I chose GenerateWithReasonableLength to generate short symbolic mathematical expressions.\nThis helper ensures that the expression is complete and within a reasonable length, which fits the strict grammar rules.\nreasonableLength is set to 10 to balance between expressiveness and brevity.",
-  "dafny_file": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260122_161325_8bfc01/gsm_csd_2.dfy",
-  "compiled_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260122_161325_8bfc01/gsm_csd_2",
-  "total_attempts": 1,
-  "timestamp": "2026-01-22T16:13:46.474016"
-}

@@ -1,8 +1,0 @@
-{
-  "strategy_code": "// CSD_RATIONALE_BEGIN\n// I chose HybridGeneration to balance exploration and constraint adherence. \n// The interval N=5 allows occasional unconstrained attempts when likely safe,\n// while still maintaining overall constraint adherence.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 5);",
-  "tool_choice_rationale": "I chose HybridGeneration to balance exploration and constraint adherence.\nThe interval N=5 allows occasional unconstrained attempts when likely safe,\nwhile still maintaining overall constraint adherence.",
-  "dafny_file": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163113_3aa5b6/generated_csd.dfy",
-  "compiled_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_163113_3aa5b6/generated_csd",
-  "total_attempts": 1,
-  "timestamp": "2026-01-16T16:31:32.444530"
-}

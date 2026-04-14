@@ -13,8 +13,8 @@ and guarantees that the answer-bearing part of the output is grammar-valid.
 The repository is Python-first.
 
 Authoritative inputs:
-- [VerifiedAgentSynthesis.py](/home/advayth2/projects/verified-agent-synthesis/VerifiedAgentSynthesis.py): verified helper library and contracts
-- [GeneratedAgentTemplate.py](/home/advayth2/projects/verified-agent-synthesis/GeneratedAgentTemplate.py): synthesis template for new strategies
+- [VerifiedAgentSynthesis.py](/home/advayth2/projects/verified-agent-synthesis/generation/csd/VerifiedAgentSynthesis.py): verified helper library and contracts
+- [GeneratedAgentTemplate.py](/home/advayth2/projects/verified-agent-synthesis/generation/csd/GeneratedAgentTemplate.py): synthesis template for new strategies
 
 Dafny is a generated intermediate used for verification and compilation.
 Do not treat hand-authored `.dfy` files as the primary authoring format.
@@ -33,7 +33,7 @@ A trivial unconstrained-only loop should not satisfy the template.
 ## Core Flow
 The synthesis / verification / compilation loop is:
 1. An LLM generates a Python body for `MyCSDStrategy`.
-2. That body is injected into [GeneratedAgentTemplate.py](/home/advayth2/projects/verified-agent-synthesis/GeneratedAgentTemplate.py#L1).
+2. That body is injected into [GeneratedAgentTemplate.py](/home/advayth2/projects/verified-agent-synthesis/generation/csd/GeneratedAgentTemplate.py#L1).
 3. The transpiler lowers Python sources to Dafny in a temporary workspace.
 4. `dafny verify` checks the transpiled program.
 5. `dafny build --target:py` compiles the transpiled program to Python.
@@ -60,7 +60,7 @@ Transpiler-supported Python constructs that are especially relevant for synthesi
 - `list_var.append(token)` for local token buffers
 - `break` inside `while` loops
 
-These are lowered to Dafny-friendly forms by [transpiler/transpiler.py](/home/advayth2/projects/verified-agent-synthesis/transpiler/transpiler.py#L1238).
+These are lowered to Dafny-friendly forms by [verification/transpiler/transpiler.py](/home/advayth2/projects/verified-agent-synthesis/verification/transpiler/transpiler.py#L1238).
 If a newly generated strategy fails because of another ordinary Python construct, prefer extending the transpiler plus adding a focused test before overfitting prompts around that one syntax error.
 
 Helper usage conventions:
@@ -93,12 +93,12 @@ For GSM-style tasks:
 - the right-most numeric value in the final constrained segment is what the evaluator will typically extract as the answer
 - free-form reasoning outside the final answer segment is allowed, but delimiter control should stay explicit
 
-The GSM grammar in [grammars/gsm.lark](/home/advayth2/projects/verified-agent-synthesis/grammars/gsm.lark#L1) is now aimed at a single final answer expression/equation rather than many interleaved constrained windows.
+The GSM grammar in [utils/grammars/gsm.lark](/home/advayth2/projects/verified-agent-synthesis/utils/grammars/gsm.lark#L1) is now aimed at a single final answer expression/equation rather than many interleaved constrained windows.
 
 ## Important Files
-- [GeneratedAgentTemplate.py](/home/advayth2/projects/verified-agent-synthesis/GeneratedAgentTemplate.py#L1): Python template with the synthesis hole
-- [VerifiedAgentSynthesis.py](/home/advayth2/projects/verified-agent-synthesis/VerifiedAgentSynthesis.py#L1): verified helper library and contracts
-- [transpiler/transpiler.py](/home/advayth2/projects/verified-agent-synthesis/transpiler/transpiler.py#L1): Python-to-Dafny lowering and verification entrypoint
+- [GeneratedAgentTemplate.py](/home/advayth2/projects/verified-agent-synthesis/generation/csd/GeneratedAgentTemplate.py#L1): Python template with the synthesis hole
+- [VerifiedAgentSynthesis.py](/home/advayth2/projects/verified-agent-synthesis/generation/csd/VerifiedAgentSynthesis.py#L1): verified helper library and contracts
+- [verification/transpiler/transpiler.py](/home/advayth2/projects/verified-agent-synthesis/verification/transpiler/transpiler.py#L1): Python-to-Dafny lowering and verification entrypoint
 - [synthesis/generator.py](/home/advayth2/projects/verified-agent-synthesis/synthesis/generator.py#L1): Qwen strategy generation and structural filtering
 - [synthesis/prompts.py](/home/advayth2/projects/verified-agent-synthesis/synthesis/prompts.py#L1): prompting rules for Python strategy bodies
 - [synthesis/feedback_loop.py](/home/advayth2/projects/verified-agent-synthesis/synthesis/feedback_loop.py#L1): generate → verify → compile → run → evaluate loop
@@ -109,23 +109,23 @@ The GSM grammar in [grammars/gsm.lark](/home/advayth2/projects/verified-agent-sy
 Verify the helper library:
 
 ```bash
-python transpiler/transpiler.py VerifiedAgentSynthesis.py
+python verification/transpiler/transpiler.py generation/csd/VerifiedAgentSynthesis.py
 ```
 
 Print only the transpiled Dafny:
 
 ```bash
-python transpiler/transpiler.py VerifiedAgentSynthesis.py --print-dafny
+python verification/transpiler/transpiler.py generation/csd/VerifiedAgentSynthesis.py --print-dafny
 ```
 
 Verify the strategy template with dependencies auto-transpiled:
 
 ```bash
-python transpiler/transpiler.py GeneratedAgentTemplate.py
+python verification/transpiler/transpiler.py generation/csd/GeneratedAgentTemplate.py
 ```
 
 ## Editing Guidance
-- Do not casually change [VerifiedAgentSynthesis.py](/home/advayth2/projects/verified-agent-synthesis/VerifiedAgentSynthesis.py#L1); it defines the contract surface for the whole synthesis stack.
+- Do not casually change [VerifiedAgentSynthesis.py](/home/advayth2/projects/verified-agent-synthesis/generation/csd/VerifiedAgentSynthesis.py#L1); it defines the contract surface for the whole synthesis stack.
 - Keep the final answer-channel guarantee intact: the last `<< ... >>` segment must remain grammar-constrained.
 - Prefer Python-first prompt repair and transpiler fixes over reintroducing Dafny-authored strategy templates.
 - Remove or avoid stale Dafny-era synthesis assumptions when they conflict with the current Python-first architecture.
@@ -141,8 +141,8 @@ python transpiler/transpiler.py GeneratedAgentTemplate.py
 After changing the synthesis stack, run:
 
 ```bash
-python -m py_compile synthesis/*.py transpiler/*.py GeneratedAgentTemplate.py VerifiedAgentSynthesis.py run_synthesis.py test_pipeline.py
-python transpiler/transpiler.py VerifiedAgentSynthesis.py
-python transpiler/transpiler.py GeneratedAgentTemplate.py
+python -m py_compile generation/*.py verification/*.py verification/transpiler/*.py verification/transpiler/support/*.py evaluation/common/*.py synthesis/*.py synthesis/cli/*.py generation/csd/*.py run_synthesis.py test_pipeline.py
+python verification/transpiler/transpiler.py generation/csd/VerifiedAgentSynthesis.py
+python verification/transpiler/transpiler.py generation/csd/GeneratedAgentTemplate.py
 python test_pipeline.py
 ```

@@ -14,14 +14,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from transpiler.transpiler import transpile_contract_library
-
-from .compiler import CompilationResult, DafnyCompiler
-from .evaluator import Evaluator, EvaluationResult
-from .generator import StrategyGenerator
-from .rationale import extract_rationale
+from verification.transpiler.transpiler import transpile_contract_library
+from evaluation.evaluator import EvaluationResult, Evaluator
+from generation.generator import StrategyGenerator
+from generation.rationale import extract_rationale
+from verification.compiler import CompilationResult, DafnyCompiler
+from verification.verifier import DafnyVerifier, VerificationResult
 from .runner import RuntimeResult, StrategyRunner
-from .verifier import DafnyVerifier, VerificationResult
 
 
 class FailureStage(Enum):
@@ -1337,7 +1336,7 @@ class SynthesisPipeline:
     6. Feedback-based refinement on failure
     """
 
-    DEFAULT_OUTPUT_DIR = Path(__file__).parent.parent / "outputs" / "generated-csd"
+    DEFAULT_OUTPUT_DIR = Path(__file__).parent.parent / "outputs"
 
     def __init__(
         self,
@@ -1421,7 +1420,7 @@ class SynthesisPipeline:
 
         # Create an isolated output directory for this run
         run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + secrets.token_hex(3)
-        run_dir = self.output_dir / "runs" / run_id
+        run_dir = self.output_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
 
         # Update a convenience pointer to the most recent run

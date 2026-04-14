@@ -1,8 +1,0 @@
-{
-  "strategy_code": "// CSD_RATIONALE_BEGIN\n// I chose GenerateWithReasonableLength because the expressions are expected to be short (5-20 tokens).\n// This strategy stops early if the expression is complete and within a reasonable length, making it efficient for concise expressions like math problems.\n// reasonableLength is set to 15 to accommodate typical mathematical expressions.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.GenerateWithReasonableLength(lm, parser, prompt, maxSteps, 15);",
-  "tool_choice_rationale": "I chose GenerateWithReasonableLength because the expressions are expected to be short (5-20 tokens).\nThis strategy stops early if the expression is complete and within a reasonable length, making it efficient for concise expressions like math problems.\nreasonableLength is set to 15 to accommodate typical mathematical expressions.",
-  "dafny_file": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260120_045945_8416e8/gsm_crane_csd.dfy",
-  "compiled_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260120_045945_8416e8/gsm_crane_csd",
-  "total_attempts": 1,
-  "timestamp": "2026-01-20T05:00:33.839450"
-}

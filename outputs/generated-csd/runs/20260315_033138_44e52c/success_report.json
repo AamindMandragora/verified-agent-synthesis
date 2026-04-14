@@ -1,8 +1,0 @@
-{
-  "strategy_code": "// CSD_RATIONALE_BEGIN\n// This strategy uses a Crane-style approach where we first generate a constrained segment\n// using ConstrainedStep between delimiters, and then continue with unconstrained steps\n// until the maximum number of steps is reached or the prefix becomes complete.\n// Delimiters are handled appropriately, and the parser ensures grammatical correctness.\n// CSD_RATIONALE_END\n\ngenerated := [];\nwhile stepsLeft > 0 && !parser.IsCompletePrefix(generated)\n  invariant lm.ValidTokensIdsLogits()\n  invariant parser.IsValidPrefix(generated)\n  invariant 0 <= stepsLeft <= maxSteps\n  invariant |generated| + stepsLeft == maxSteps\n  decreases stepsLeft\n{\n  CSDHelpers.RollbackPreservesTokenInvariant(lm, parser, generated);\n  var next, newSteps := helpers.ConstrainedStep(lm, parser, prompt, generated, stepsLeft);\n  generated := generated + [next];\n  stepsLeft := newSteps;\n}",
-  "tool_choice_rationale": "This strategy uses a Crane-style approach where we first generate a constrained segment\nusing ConstrainedStep between delimiters, and then continue with unconstrained steps\nuntil the maximum number of steps is reached or the prefix becomes complete.\nDelimiters are handled appropriately, and the parser ensures grammatical correctness.",
-  "dafny_file": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260315_033138_44e52c/gsm_crane_csd.dfy",
-  "compiled_dir": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260315_033138_44e52c/gsm_crane_csd",
-  "total_attempts": 2,
-  "timestamp": "2026-03-15T03:49:05.050425"
-}

@@ -1,8 +1,0 @@
-{
-  "strategy_code": "strategy2",
-  "tool_choice_rationale": null,
-  "dafny_file": "/Users/aadivyaraushan/Documents/GitHub/focal-lab/outputs/generated-csd/runs/20260215_010027_ba3775/generated_csd.dfy",
-  "compiled_dir": "/var/folders/tg/flxt01vx7cq7wbt3tjcfzq3c0000gp/T/tmp5wgyejfk",
-  "total_attempts": 2,
-  "timestamp": "2026-02-15T01:00:27.562057"
-}

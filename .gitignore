@@ -1,21 +1,19 @@
 .pytest_cache/
 cache/
+outputs/
+evaluations/gsm_symbolic/compiled_csd-py/
 
 # Dafny binary
 dafny/
 
 # Python cache
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
 
 # OS files
 .DS_Store
 Thumbs.db
-
-# Model/data cache
-cache/
+.gdb_history
 
 # Log and temp files
 *.log

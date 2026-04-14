@@ -1,8 +1,0 @@
-{
-  "strategy_code": "// CSD_RATIONALE_BEGIN\n// I chose HybridGeneration for a math problem because it balances the need for strict parsing\n// with occasional creative exploration to potentially find a solution quickly.\n// HybridGeneration allows the model to generate reasoning segments within << and >>,\n// providing a structured approach while still allowing for some freedom if necessary.\n// CSD_RATIONALE_END\n\ngenerated := helpers.HybridGeneration(lm, parser, prompt, maxSteps);\ncost := helpers.cost;",
-  "tool_choice_rationale": "I chose HybridGeneration for a math problem because it balances the need for strict parsing\nwith occasional creative exploration to potentially find a solution quickly.\nHybridGeneration allows the model to generate reasoning segments within << and >>,\nproviding a structured approach while still allowing for some freedom if necessary.",
-  "dafny_file": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260212_201100_2af723/generated_csd.dfy",
-  "compiled_dir": "/home/advayth2/projects/verified-agent-synthesis/outputs/generated-csd/runs/20260212_201100_2af723/generated_csd",
-  "total_attempts": 1,
-  "timestamp": "2026-02-12T20:12:02.071550"
-}

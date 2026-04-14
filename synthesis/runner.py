@@ -305,9 +305,9 @@ class StrategyRunner:
                 self._token_list = list(lm_tokens)
                 
                 # Import JSON validator using Lark grammar
-                from parsers.lark_parser import LarkGrammarParser
+                from utils.parsers.lark_parser import LarkGrammarParser
                 import os
-                grammar_path = os.path.join(os.path.dirname(__file__), '..', 'grammars', 'json.lark')
+                grammar_path = os.path.join(os.path.dirname(__file__), '..', 'utils', 'grammars', 'json.lark')
                 self._parser = LarkGrammarParser.from_grammar_file(grammar_path)
                 self._is_valid_prefix = self._parser.is_valid_prefix
                 self._is_complete = self._parser.is_complete

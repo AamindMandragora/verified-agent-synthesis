@@ -1,18 +1,16 @@
 """
-Synthesis module for Qwen-based CSD (Constrained Decoding Strategy) generation.
+Synthesis-stage orchestration for the end-to-end CSD pipeline.
 
-This module provides a pipeline for:
-1. Generating Dafny CSD strategies using Qwen
-2. Verifying them with Dafny
-3. Compiling to Python
-4. Running with feedback-based refinement
+This package coordinates Python generation, verification through transpilation,
+runtime execution, and dataset evaluation.
 """
 
-from .generator import StrategyGenerator
-from .verifier import DafnyVerifier, VerificationResult
-from .compiler import DafnyCompiler, CompilationResult
+from evaluation import EvaluationResult, Evaluator
+from generation import StrategyGenerator
+from verification import CompilationResult, DafnyCompiler, DafnyVerifier, VerificationResult
 from .runner import StrategyRunner, RuntimeResult
 from .feedback_loop import SynthesisPipeline, SynthesisExhaustionError
+from .presets import DATASET_PRESETS, MODEL_PRESETS, SynthesisPreset, get_synthesis_preset, resolve_model_name
 
 __all__ = [
     "StrategyGenerator",
@@ -20,9 +18,15 @@ __all__ = [
     "VerificationResult",
     "DafnyCompiler",
     "CompilationResult",
+    "Evaluator",
+    "EvaluationResult",
     "StrategyRunner",
     "RuntimeResult",
     "SynthesisPipeline",
     "SynthesisExhaustionError",
+    "SynthesisPreset",
+    "DATASET_PRESETS",
+    "MODEL_PRESETS",
+    "get_synthesis_preset",
+    "resolve_model_name",
 ]
-

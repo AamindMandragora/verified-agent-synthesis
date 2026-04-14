@@ -1,8 +1,0 @@
-{
-  "strategy_code": "// CSD_RATIONALE_BEGIN\n// I chose GenerateWithReasonableLength to generate short symbolic mathematical expressions efficiently.\n// The reasonableLength of 10 is appropriate for compact expressions like 'n1 + n2 * 12'.\n// This helper also stops early if an expression is complete and within the length limit.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.GenerateWithReasonableLength(lm, parser, prompt, maxSteps, 10);",
-  "tool_choice_rationale": "I chose GenerateWithReasonableLength to generate short symbolic mathematical expressions efficiently.\nThe reasonableLength of 10 is appropriate for compact expressions like 'n1 + n2 * 12'.\nThis helper also stops early if an expression is complete and within the length limit.",
-  "dafny_file": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_150404_ffdb81/gsm_crane_csd.dfy",
-  "compiled_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_150404_ffdb81/gsm_crane_csd",
-  "total_attempts": 1,
-  "timestamp": "2026-01-16T15:04:26.199286"
-}

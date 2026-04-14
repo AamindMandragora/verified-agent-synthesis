@@ -1,3 +1,0 @@
-// Full Dafny code with: // CSD_RATIONALE_BEGIN
-// Refined strategy
-// CSD_...

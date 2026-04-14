@@ -1,13 +1,21 @@
-#!/bin/bash
-export HF_HOME=/home/aadivyar/.cache/huggingface
-export TRANSFORMERS_CACHE=/home/aadivyar/.cache/huggingface
-export TMPDIR=/tmp
+#!/usr/bin/env bash
+set -euo pipefail
 
-CUDA_VISIBLE_DEVICES=2 python -m evaluations.gsm_symbolic.cli \
-    --run-dir outputs/generated-csd/latest \
-    --model Qwen/Qwen2.5-Coder-7B-Instruct \
-    --device cuda \
-    --limit 3 \
-    --max-steps 1024 \
-    --vocab-size 3000 \
-    --debug-delimiters
+REPO_ROOT=$(cd "$(dirname "$0")" && pwd)
+cd "$REPO_ROOT"
+
+RUN_DIR=${RUN_DIR:-outputs/latest}
+MODEL=${MODEL:-Qwen/Qwen2.5-Coder-7B-Instruct}
+DEVICE=${DEVICE:-cuda}
+LIMIT=${LIMIT:-3}
+MAX_STEPS=${MAX_STEPS:-1024}
+VOCAB_SIZE=${VOCAB_SIZE:-3000}
+
+exec python -m evaluation.gsm_symbolic.cli \
+  --run-dir "$RUN_DIR" \
+  --model "$MODEL" \
+  --device "$DEVICE" \
+  --limit "$LIMIT" \
+  --max-steps "$MAX_STEPS" \
+  --vocab-size "$VOCAB_SIZE" \
+  "$@"

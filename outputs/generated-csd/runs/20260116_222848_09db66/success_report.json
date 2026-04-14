@@ -1,8 +1,0 @@
-{
-  "strategy_code": "// CSD_RATIONALE_BEGIN\n// I chose ConstrainedGeneration because JSON syntax is strict and any invalid token breaks parsing.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.ConstrainedGeneration(lm, parser, prompt, maxSteps);",
-  "tool_choice_rationale": "I chose ConstrainedGeneration because JSON syntax is strict and any invalid token breaks parsing.",
-  "dafny_file": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_222848_09db66/generated_csd.dfy",
-  "compiled_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_222848_09db66/generated_csd",
-  "total_attempts": 1,
-  "timestamp": "2026-01-16T22:29:07.736931"
-}

@@ -1,8 +1,0 @@
-{
-  "strategy_code": "strategy_after_eval_fail",
-  "tool_choice_rationale": null,
-  "dafny_file": "/Users/aadivyaraushan/Documents/GitHub/focal-lab/outputs/generated-csd/runs/20260215_010027_540862/generated_csd.dfy",
-  "compiled_dir": "/var/folders/tg/flxt01vx7cq7wbt3tjcfzq3c0000gp/T/tmpdj6guqy8",
-  "total_attempts": 3,
-  "timestamp": "2026-02-15T01:00:27.564115"
-}

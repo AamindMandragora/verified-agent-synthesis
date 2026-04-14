@@ -1,8 +1,0 @@
-{
-  "strategy_code": "// CSD_RATIONALE_BEGIN\n// I chose HybridGeneration to balance exploration and constraint adherence. Since JSON grammar allows partial tokens, occasional unconstrained attempts can help find valid completions more efficiently. Interval N=5 strikes a good balance between exploration and validation.\n// CSD_RATIONALE_END\ngenerated := CSDHelpers.HybridGeneration(lm, parser, prompt, maxSteps, 5);",
-  "tool_choice_rationale": "I chose HybridGeneration to balance exploration and constraint adherence. Since JSON grammar allows partial tokens, occasional unconstrained attempts can help find valid completions more efficiently. Interval N=5 strikes a good balance between exploration and validation.",
-  "dafny_file": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_222813_88b5db/generated_csd.dfy",
-  "compiled_dir": "/home/aadivyar/csd-generation/outputs/generated-csd/runs/20260116_222813_88b5db/generated_csd",
-  "total_attempts": 1,
-  "timestamp": "2026-01-16T22:28:35.202907"
-}
