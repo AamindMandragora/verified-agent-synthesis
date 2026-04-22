@@ -4,10 +4,25 @@ Dafny to Python compiler wrapper for CSD synthesis.
 Runs `dafny build --target:py` to compile verified Dafny code to Python.
 """
 
+import os
 import re
 import shutil
 import subprocess
 import tempfile
+
+
+def _dafny_subprocess_env() -> dict:
+    """Return env for dafny subprocesses with /opt/anaconda/bin prepended to PATH.
+
+    Dafny 4.x requires a `z3` binary discoverable on PATH (or next to the dafny
+    binary). Our install has no bundled z3; /opt/anaconda/bin/z3 (4.12.2) works.
+    """
+    env = os.environ.copy()
+    extra = "/opt/anaconda/bin"
+    current = env.get("PATH", "")
+    if extra not in current.split(":"):
+        env["PATH"] = f"{extra}:{current}" if current else extra
+    return env
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -190,7 +205,8 @@ class DafnyCompiler:
                     capture_output=True,
                     text=True,
                     timeout=self.timeout,
-                    cwd=temp_path
+                    cwd=temp_path,
+                    env=_dafny_subprocess_env()
                 )
             except subprocess.TimeoutExpired:
                 return CompilationResult(

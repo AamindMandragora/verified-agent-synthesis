@@ -24,6 +24,7 @@ from .verifier import DafnyVerifier, VerificationResult
 class FailureStage(Enum):
     """Stage where synthesis attempt failed."""
 
+    PROOF_CRITIQUE = "proof_critique"
     VERIFICATION = "verification"
     COMPILATION = "compilation"
     RUNTIME = "runtime"
@@ -291,9 +292,10 @@ class SynthesisPipeline:
         save_reports: bool = True,
         # Evaluation thresholds
         min_accuracy: float = 0.0,
-        min_format_rate: float = 0.0,
         min_syntax_rate: float = 0.0,
+        require_delimiters: bool = True,
         eval_sample_size: int = 10,
+        eval_max_seconds_per_example: Optional[float] = None,
     ):
         """
         Initialize the synthesis pipeline.
@@ -308,9 +310,10 @@ class SynthesisPipeline:
             output_dir: Directory for outputs and reports
             save_reports: Whether to save failure reports to disk
             min_accuracy: Minimum accuracy threshold for evaluation
-            min_format_rate: Minimum format validity rate threshold
             min_syntax_rate: Minimum syntax validity rate threshold
+            require_delimiters: Whether evaluated outputs must contain << >> spans
             eval_sample_size: Number of examples to evaluate on
+            eval_max_seconds_per_example: Optional runtime budget per example in seconds
         """
         self.evaluator = evaluator
         self.generator = generator or StrategyGenerator()
@@ -323,12 +326,51 @@ class SynthesisPipeline:
 
         # Evaluation thresholds
         self.min_accuracy = min_accuracy
-        self.min_format_rate = min_format_rate
         self.min_syntax_rate = min_syntax_rate
+        self.require_delimiters = require_delimiters
         self.eval_sample_size = eval_sample_size
+        self.eval_max_seconds_per_example = eval_max_seconds_per_example
 
         # Ensure output directory exists
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def _get_recent_behavioral_context(self, attempts: list[SynthesisAttempt]) -> str:
+        """Return a compact behavior summary from the most recent evaluated attempt."""
+        for attempt in reversed(attempts):
+            if attempt.eval_result is not None:
+                summary = attempt.eval_result.get_behavioral_context_summary()
+                if summary:
+                    return summary
+        return ""
+
+    def _get_verification_history_summary(self, attempts: list[SynthesisAttempt], max_attempts: int = 3) -> str:
+        """Summarize recent verification failures so refinement can avoid oscillation."""
+        recent_failures = [
+            attempt
+            for attempt in attempts
+            if attempt.failed_at == FailureStage.VERIFICATION and attempt.verification_result is not None
+        ][-max_attempts:]
+        if not recent_failures:
+            return ""
+
+        lines = []
+        for attempt in recent_failures:
+            diagnostics = attempt.verification_result.diagnostics or []
+            if not diagnostics:
+                preview = attempt.error_summary.splitlines()[0] if attempt.error_summary else "Unknown verification failure"
+                lines.append(f"Attempt {attempt.attempt_number}: {preview}")
+                continue
+
+            primary = diagnostics[0]
+            line = f"Attempt {attempt.attempt_number}: {primary.obligation_kind} at line {primary.line}"
+            if primary.call_name:
+                line += f" around {primary.call_name}(...)"
+            if primary.failing_text:
+                line += f" | failing code: {primary.failing_text}"
+            if primary.related_file and primary.related_line:
+                line += f" | related contract: {Path(primary.related_file).name}:{primary.related_line}"
+            lines.append(line)
+        return "\n".join(lines)
 
     def synthesize(
         self,
@@ -382,6 +424,11 @@ class SynthesisPipeline:
         print(f"Generating initial strategy for: {task_description}")
         strategy_code = self.generator.generate_initial(task_description)
 
+        # Index in `attempts` after which we last performed a fresh restart.
+        # Used to bound the "consecutive verification failures since last restart"
+        # counter so that a restart resets it.
+        last_restart_index = 0
+
         for iteration in range(self.max_iterations):
             attempt_num = iteration + 1
             print(f"\n{'='*60}")
@@ -400,6 +447,15 @@ class SynthesisPipeline:
                 timestamp=datetime.now().isoformat(),
             )
 
+            # Stage 0: Proof-sketch critique — DISABLED.
+            # The critic was rejecting plausible candidates for stylistic
+            # reasons ("helper postcondition not cited explicitly", etc.) that
+            # Dafny itself will verify or refute deterministically. Dafny's
+            # structured diagnostics (obligation_kind + contract_excerpt +
+            # failing_text) are a strictly richer refinement signal than the
+            # critic's prose. We now go straight to Dafny.
+            print("\n[0/4] Critic disabled — going straight to Dafny verification")
+
             # Stage 1: Verification
             print("\n[1/4] Verifying with Dafny...")
             verification_result = self.verifier.verify(full_code)
@@ -407,6 +463,7 @@ class SynthesisPipeline:
 
             if not verification_result.success:
                 print("  ✗ Verification failed")
+                print(f"  Error: {verification_result.get_error_summary()[:300]}")
                 attempt.failed_at = FailureStage.VERIFICATION
                 attempt.error_summary = verification_result.get_error_summary()
                 attempts.append(attempt)
@@ -421,21 +478,45 @@ class SynthesisPipeline:
                         break
 
                 if consecutive_same >= 2:
-                    # After 3+ identical errors, prepend strong guidance
-                    error_msg = (
-                        f"WARNING: This is the SAME error for {consecutive_same + 1} consecutive attempts. "
-                        f"Your previous fixes did NOT work. You MUST use a COMPLETELY DIFFERENT strategy. "
-                        f"Do NOT use any method that doesn't exist. Use ONLY: PureConstrainedGeneration, "
-                        f"TryUnconstrainedThenConstrained, HybridGeneration, CraneGeneration, SpeculativeGeneration, "
-                        f"CompletePrefix, GenerateWithReasonableLength, "
-                        f"GenerateUntilFirstComplete, GenerateAndSelectBest.\n\n"
-                        f"Original error:\n{error_msg}"
+                    # After 3+ identical errors, abandon refinement and start fresh
+                    print(f"  Stuck on same error for {consecutive_same + 1} attempts — restarting with fresh generation...")
+                    strategy_code = self.generator.generate_initial(task_description)
+                    last_restart_index = len(attempts)
+                    continue
+
+                # Also restart if the last 3 attempts since the most recent
+                # restart all failed verification, even when the specific
+                # errors differ. This catches cases where the model is
+                # rewriting the strategy every iteration and each broken
+                # version surfaces a fresh error.
+                post_restart_attempts = attempts[last_restart_index:]
+                consecutive_verif_failures = 0
+                for prev in reversed(post_restart_attempts):
+                    if prev.failed_at == FailureStage.VERIFICATION:
+                        consecutive_verif_failures += 1
+                    else:
+                        break
+
+                if consecutive_verif_failures >= 3:
+                    print(
+                        f"  {consecutive_verif_failures} consecutive verification failures "
+                        f"since last restart — restarting with fresh generation..."
                     )
+                    strategy_code = self.generator.generate_initial(task_description)
+                    last_restart_index = len(attempts)
+                    continue
 
                 # Refine based on verification error
                 print("  Refining based on verification error...")
+                behavioral_context = self._get_recent_behavioral_context(attempts[:-1])
+                structured_feedback = verification_result.get_structured_feedback()
+                error_history = self._get_verification_history_summary(attempts)
                 strategy_code = self.generator.refine_after_verification_error(
-                    strategy_code, error_msg
+                    strategy_code,
+                    error_msg,
+                    behavioral_context,
+                    structured_feedback,
+                    error_history,
                 )
                 continue
 
@@ -461,9 +542,6 @@ class SynthesisPipeline:
 
             print(f"  ✓ Compiled to {compilation_result.output_dir}")
 
-            # Stage 3: Runtime test
-            print("\n[3/4] Testing runtime execution...")
-
             if compilation_result.main_module_path is None:
                 print("  ✗ No main module found")
                 attempt.failed_at = FailureStage.RUNTIME
@@ -476,27 +554,61 @@ class SynthesisPipeline:
                 )
                 continue
 
-            runtime_result = runner.run(compilation_result.main_module_path)
-            attempt.runtime_result = runtime_result
+            if self.evaluator.dataset_name != "gsm_symbolic":
+                print("\n[3/4] Testing runtime execution...")
 
-            if not runtime_result.success:
-                print(f"  ✗ Runtime error: {runtime_result.error_type}")
-                attempt.failed_at = FailureStage.RUNTIME
-                attempt.error_summary = runtime_result.get_error_summary()
-                attempts.append(attempt)
+                runtime_result = runner.run(compilation_result.main_module_path)
+                attempt.runtime_result = runtime_result
 
-                # Refine based on runtime error
-                print("  Refining based on runtime error...")
-                strategy_code = self.generator.refine_after_runtime_error(
-                    strategy_code, runtime_result.get_error_summary()
-                )
-                continue
+                if not runtime_result.success:
+                    print(f"  ✗ Runtime error: {runtime_result.error_type}")
+                    attempt.failed_at = FailureStage.RUNTIME
+                    attempt.error_summary = runtime_result.get_error_summary()
+                    attempts.append(attempt)
 
-            print(f"  ✓ Execution successful ({runtime_result.execution_time_ms:.1f}ms)")
-            print(f"  Output length: {len(runtime_result.output or [])} tokens")
+                    print("  Refining based on runtime error...")
+                    strategy_code = self.generator.refine_after_runtime_error(
+                        strategy_code, runtime_result.get_error_summary()
+                    )
+                    continue
+
+                print(f"  ✓ Execution successful ({runtime_result.execution_time_ms:.1f}ms)")
+                print(f"  Output length: {len(runtime_result.output or [])} tokens")
+            else:
+                print("\n[3/4] Skipping toy runtime check for GSM-Symbolic...")
 
             # Stage 4: Evaluation
             print("\n[4/4] Evaluating on dataset sample...")
+            # Unload generator model to free GPU memory for eval model
+            if self.generator._model is not None:
+                del self.generator._model
+                self.generator._model = None
+                import gc
+                gc.collect()
+                import torch
+                torch.cuda.empty_cache()
+                print("  Generator model (HF) unloaded to free GPU memory")
+            # Also unload vllm engine if present (vllm backend keeps workers in subprocesses)
+            if getattr(self.generator, '_vllm', None) is not None:
+                import gc
+                import torch
+                vllm_obj = self.generator._vllm
+                self.generator._vllm = None
+                try:
+                    vllm_obj._run_engine = None  # sever reference to engine
+                except Exception:
+                    pass
+                del vllm_obj
+                try:
+                    from vllm.distributed import destroy_model_parallel, destroy_distributed_environment
+                    destroy_model_parallel()
+                    destroy_distributed_environment()
+                except Exception:
+                    pass
+                gc.collect()
+                torch.cuda.empty_cache()
+                print("  Generator vllm engine unloaded to free GPU memory")
+
             eval_result = self.evaluator.evaluate_sample(
                 compiled_module_path=compilation_result.main_module_path,
                 sample_size=self.eval_sample_size,
@@ -518,26 +630,49 @@ class SynthesisPipeline:
             # Check if evaluation meets thresholds
             if not eval_result.meets_threshold(
                 min_accuracy=self.min_accuracy,
-                min_format_rate=self.min_format_rate,
                 min_syntax_rate=self.min_syntax_rate,
+                require_delimiters=self.require_delimiters,
+                max_seconds_per_example=self.eval_max_seconds_per_example,
             ):
                 print(f"  ✗ Evaluation below threshold:")
                 print(f"    Accuracy: {eval_result.accuracy:.1%} (min: {self.min_accuracy:.1%})")
-                print(f"    Format: {eval_result.format_rate:.1%} (min: {self.min_format_rate:.1%})")
+                print(
+                    "    Contains << >>: "
+                    f"{'yes' if eval_result.contains_delimiters else 'no'} "
+                    f"(required: {'yes' if self.require_delimiters else 'no'})"
+                )
                 print(f"    Syntax: {eval_result.syntax_rate:.1%} (min: {self.min_syntax_rate:.1%})")
+                if self.eval_max_seconds_per_example is not None:
+                    print(
+                        f"    Slowest Example Time: {eval_result.max_sample_time_seconds:.2f}s "
+                        f"(max: {self.eval_max_seconds_per_example:.2f}s)"
+                    )
                 attempt.failed_at = FailureStage.EVALUATION
                 attempt.error_summary = eval_result.get_feedback_summary()
                 attempts.append(attempt)
 
                 print("  Refining based on evaluation results...")
+                threshold_feedback = (
+                    "Required thresholds:\n"
+                    f"  Accuracy: {self.min_accuracy:.1%}\n"
+                    f"  Syntax Rate: {self.min_syntax_rate:.1%}\n\n"
+                    f"  Contains << >>: {'required' if self.require_delimiters else 'optional'}\n"
+                    + (
+                        f"  Max Runtime / Example: {self.eval_max_seconds_per_example:.2f}s\n"
+                        if self.eval_max_seconds_per_example is not None
+                        else ""
+                    )
+                    + "\n"
+                    + eval_result.get_feedback_summary()
+                )
                 strategy_code = self.generator.refine_after_evaluation_failure(
-                    strategy_code, eval_result.get_feedback_summary()
+                    strategy_code, threshold_feedback
                 )
                 continue
 
             print(f"  ✓ Evaluation passed:")
             print(f"    Accuracy: {eval_result.accuracy:.1%}")
-            print(f"    Format: {eval_result.format_rate:.1%}")
+            print(f"    Contains << >>: {'yes' if eval_result.contains_delimiters else 'no'}")
             print(f"    Syntax: {eval_result.syntax_rate:.1%}")
 
             # Success!
@@ -551,7 +686,13 @@ class SynthesisPipeline:
 
             # Save successful strategy
             self._save_success_report(
-                strategy_code, full_code, compilation_result, attempts, output_name, run_dir
+                strategy_code,
+                full_code,
+                compilation_result,
+                attempts,
+                output_name,
+                run_dir,
+                eval_result,
             )
 
             return SynthesisResult(
@@ -622,6 +763,7 @@ class SynthesisPipeline:
         attempts: list[SynthesisAttempt],
         output_name: str,
         run_dir: Path,
+        evaluation_result: EvaluationResult,
     ) -> None:
         """Save a success report and the final strategy."""
         # Save the Dafny source
@@ -644,6 +786,8 @@ class SynthesisPipeline:
             "compiled_dir": str(compilation_result.output_dir),
             "total_attempts": len(attempts),
             "timestamp": datetime.now().isoformat(),
+            "evaluation_result": evaluation_result.to_dict(),
+            "sample_outputs": evaluation_result.sample_outputs,
         }
 
         with open(report_path, "w") as f:
@@ -674,7 +818,10 @@ class SynthesisPipeline:
         error_counts: dict[str, int] = {}
 
         for attempt in attempts:
-            if attempt.failed_at == FailureStage.VERIFICATION:
+            if attempt.failed_at == FailureStage.PROOF_CRITIQUE:
+                patterns.setdefault("proof_critique_failures", 0)
+                patterns["proof_critique_failures"] += 1
+            elif attempt.failed_at == FailureStage.VERIFICATION:
                 patterns["verification_failures"] += 1
             elif attempt.failed_at == FailureStage.COMPILATION:
                 patterns["compilation_failures"] += 1
@@ -700,5 +847,3 @@ class SynthesisPipeline:
         ]
 
         return patterns
-
-
