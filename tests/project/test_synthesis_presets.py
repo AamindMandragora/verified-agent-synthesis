@@ -8,6 +8,10 @@ def test_get_synthesis_preset_returns_gsm_defaults():
 
     assert preset.output_name == "gsm_crane_csd"
     assert preset.eval_max_steps == 2048
+    assert preset.min_accuracy == 0.5
+    assert preset.min_format_rate == 1.0
+    assert preset.min_syntax_rate == 1.0
+    assert "Pure arithmetic expressions are valid" in preset.task_description
 
 
 def test_resolve_model_name_prefers_explicit_model():

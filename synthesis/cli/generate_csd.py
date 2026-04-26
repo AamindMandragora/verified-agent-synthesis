@@ -63,6 +63,36 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Inference device to pass through to run_synthesis.py.",
     )
     parser.add_argument(
+        "--min-accuracy",
+        type=float,
+        default=None,
+        help="Override the preset accuracy threshold.",
+    )
+    parser.add_argument(
+        "--min-format-rate",
+        type=float,
+        default=None,
+        help="Override the preset format threshold.",
+    )
+    parser.add_argument(
+        "--min-syntax-rate",
+        type=float,
+        default=None,
+        help="Override the preset syntax threshold.",
+    )
+    parser.add_argument(
+        "--eval-sample-size",
+        type=int,
+        default=None,
+        help="Override the preset evaluation sample size.",
+    )
+    parser.add_argument(
+        "--eval-max-steps",
+        type=int,
+        default=None,
+        help="Override the preset evaluation max steps.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print the generated command instead of running it.",
@@ -78,6 +108,11 @@ def build_synthesis_command(
     max_iterations: int = 10,
     temperature: float = 0.7,
     device: str = "auto",
+    min_accuracy: float | None = None,
+    min_format_rate: float | None = None,
+    min_syntax_rate: float | None = None,
+    eval_sample_size: int | None = None,
+    eval_max_steps: int | None = None,
 ) -> list[str]:
     """Build the `run_synthesis.py` command for a dataset preset."""
     preset = get_synthesis_preset(dataset)
@@ -90,6 +125,11 @@ def build_synthesis_command(
             temperature=temperature,
             device=device,
             output_name=output_name,
+            min_accuracy=min_accuracy,
+            min_format_rate=min_format_rate,
+            min_syntax_rate=min_syntax_rate,
+            eval_sample_size=eval_sample_size,
+            eval_max_steps=eval_max_steps,
         ),
     ]
 
@@ -106,6 +146,11 @@ def main() -> int:
         max_iterations=args.max_iterations,
         temperature=args.temperature,
         device=args.device,
+        min_accuracy=args.min_accuracy,
+        min_format_rate=args.min_format_rate,
+        min_syntax_rate=args.min_syntax_rate,
+        eval_sample_size=args.eval_sample_size,
+        eval_max_steps=args.eval_max_steps,
     )
 
     print(f"Dataset preset: {preset.dataset}")

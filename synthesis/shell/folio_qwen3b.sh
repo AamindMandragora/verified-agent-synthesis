@@ -1,26 +1,25 @@
 #!/bin/bash
 # Make CSD for FOLIO using Qwen 3B (lighter).
-# Usage: bash synthesis/shell/folio_qwen3b.sh
-set -e
+# Usage: bash synthesis/shell/folio_qwen3b.sh [extra generate_csd args]
+set -euo pipefail
 
-# FOLIO: allow multiple << formula >> windows; evaluation uses the last one. Plain text unconstrained, then constrained inside delimiters.
-TASK_DESC="FOLIO: the strategy must generate plain text first (unconstrained), then one or more \" << \" formula \" >>\" segments (Prover9 grammar: {forall}, {exists}, predicates, {and}, {or}, {not}, {implies}, {iff}, {xor}). Evaluation uses only the last << >> segment. Use UnconstrainedStep for plain text; use ConstrainedStep only for the segment between the delimiters. Respect the grammar only between the delimiters. All structure instructions are in the prompt."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$REPO_ROOT"
 
-echo "Making FOLIO CSD (Qwen 3B)..."
-echo "Task: $TASK_DESC"
+DEVICE="${DEVICE:-auto}"
+MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
+TEMPERATURE="${TEMPERATURE:-0.7}"
+
+echo "Making FOLIO CSD (Qwen 3B) from the preset wrapper..."
+echo "Tip: set DEVICE=cuda:3 or CUDA_VISIBLE_DEVICES=3 to pin a GPU."
 echo ""
 
-python run_synthesis.py \
-  --task "$TASK_DESC" \
-  --dataset folio \
-  --max-iterations 10 \
-  --model "Qwen/Qwen2.5-Coder-3B-Instruct" \
-  --output-name "folio_csd" \
-  --temperature 0.7 \
-  --device auto \
-  --min-accuracy 0.5 \
-  --min-format-rate 0.8 \
-  --min-syntax-rate 0.8 \
-  --eval-sample-size 3
+python -m synthesis.cli.generate_csd folio \
+  --model-preset qwen3b \
+  --max-iterations "$MAX_ITERATIONS" \
+  --temperature "$TEMPERATURE" \
+  --device "$DEVICE" \
+  "$@"
 
 echo "FOLIO CSD (Qwen 3B) done. Run dir: outputs/ (see latest_run.txt)"

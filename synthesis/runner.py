@@ -4,6 +4,7 @@ Python runner for compiled Dafny CSD strategies.
 Executes the compiled Python code and captures results/errors.
 
 Supports both permissive testing mode and real JSON parsing mode.
+Also supports running the original Python source directly (no Dafny compilation).
 """
 
 import importlib.util
@@ -13,6 +14,9 @@ import inspect
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Literal
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_VAS_DIR = _PROJECT_ROOT / "generation" / "csd"
 
 # Type for parser mode
 ParserMode = Literal["permissive", "json"]
@@ -470,11 +474,124 @@ class StrategyRunner:
         
         except Exception as e:
             execution_time = (time.time() - start_time) * 1000
-            
+
             return RuntimeResult(
                 success=False,
                 error_type=type(e).__name__,
                 error_message=str(e),
                 error_traceback=traceback.format_exc(),
                 execution_time_ms=execution_time
+            )
+
+    def run_python_native(self, python_file: Path) -> "RuntimeResult":
+        """
+        Run a generated strategy Python file directly without Dafny compilation.
+
+        Loads VerifiedAgentSynthesis for the contract library, creates stub
+        LM and Parser instances that use plain Python types (no Dafny runtime),
+        then calls MyCSDStrategy from the generated file.
+        """
+        import random
+        import time
+
+        start_time = time.time()
+
+        try:
+            # Make VerifiedAgentSynthesis importable from generation/csd/
+            vas_dir = str(_VAS_DIR)
+            if vas_dir not in sys.path:
+                sys.path.insert(0, vas_dir)
+
+            import VerifiedAgentSynthesis as VAS
+
+            class _TestLM(VAS.LM):
+                def __init__(self, vocab_size: int = 100):
+                    # Override base __init__ with a proper vocabulary
+                    tokens = ["<<", ">>", "<EOS>"]
+                    for i in range(vocab_size - 3):
+                        if i < 26:
+                            tokens.append(chr(ord("a") + i))
+                        else:
+                            tokens.append(f"<T{i}>")
+                    self.Tokens = tokens
+                    self.Ids = list(range(len(tokens)))
+                    self.Logits = [0.0] * len(tokens)
+                    self._Tokens = self.Tokens
+
+                def GenerateLogits(self, input_prefix: list) -> None:
+                    for i in range(len(self.Logits)):
+                        self.Logits[i] = random.gauss(0, 1)
+
+                def ChooseNextToken(self) -> str:
+                    best_i = max(range(len(self.Logits)), key=lambda i: self.Logits[i])
+                    return self.Tokens[best_i]
+
+                def MaskTokensExcept(self, valid_tokens: list) -> None:
+                    valid_set = set(valid_tokens)
+                    for i in range(len(self.Logits)):
+                        if self.Tokens[i] not in valid_set:
+                            self.Logits[i] = -1e9
+
+            class _TestParser(VAS.Parser):
+                def __init__(self, tokens: list):
+                    self._tokens = list(tokens)
+                    self._step_count = 0
+
+                def IsValidPrefix(self, prefix: list) -> bool:
+                    return True
+
+                def IsCompletePrefix(self, prefix: list) -> bool:
+                    if len(prefix) == 0:
+                        return False
+                    self._step_count += 1
+                    return self._step_count > 10
+
+                def ValidNextTokens(self, prefix: list) -> list:
+                    return self._tokens
+
+            # Load the strategy module so its import of VerifiedAgentSynthesis resolves
+            module_dir = str(python_file.parent)
+            if module_dir not in sys.path:
+                sys.path.insert(0, module_dir)
+
+            spec = importlib.util.spec_from_file_location("generated_csd_native", python_file)
+            if spec is None or spec.loader is None:
+                raise RuntimeError(f"Could not load strategy from {python_file}")
+            strategy_module = importlib.util.module_from_spec(spec)
+            sys.modules["generated_csd_native"] = strategy_module
+            spec.loader.exec_module(strategy_module)
+
+            lm = _TestLM(vocab_size=self.vocab_size)
+            parser = _TestParser(lm.Tokens)
+            prompt: list = []
+            max_steps = self.max_steps
+            eos_token = "<EOS>"
+
+            result = strategy_module.MyCSDStrategy(lm, parser, prompt, max_steps, eos_token)
+
+            if isinstance(result, tuple) and len(result) == 2:
+                output, remaining_steps = result
+                cost = max_steps - remaining_steps
+            else:
+                output = result
+                cost = 0
+
+            output_list = list(output) if hasattr(output, "__iter__") else []
+            execution_time = (time.time() - start_time) * 1000
+
+            return RuntimeResult(
+                success=True,
+                output=output_list,
+                cost=cost,
+                execution_time_ms=execution_time,
+            )
+
+        except Exception as e:
+            execution_time = (time.time() - start_time) * 1000
+            return RuntimeResult(
+                success=False,
+                error_type=type(e).__name__,
+                error_message=str(e),
+                error_traceback=traceback.format_exc(),
+                execution_time_ms=execution_time,
             )

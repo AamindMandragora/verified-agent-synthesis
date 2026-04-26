@@ -7,7 +7,30 @@ configurations (main, p1, p2) and supports limiting/sampling for efficient evalu
 
 from __future__ import annotations
 
+import os
 from typing import Optional
+
+
+def _datasets_offline_enabled() -> bool:
+    """True when dataset loading should stay offline / cache-only."""
+    return any(os.environ.get(name, "").strip() in {"1", "true", "True"} for name in (
+        "HF_DATASETS_OFFLINE",
+        "HF_HUB_OFFLINE",
+    ))
+
+
+def _is_hf_connection_error(exc: Exception) -> bool:
+    """Best-effort detection for HF dataset connectivity failures."""
+    text = str(exc).lower()
+    return any(marker in text for marker in (
+        "failed to resolve",
+        "name or service not known",
+        "temporary failure in name resolution",
+        "connection error",
+        "maxretryerror",
+        "httpsconnectionpool",
+        "offline mode",
+    ))
 
 
 def load_gsm_symbolic(
@@ -37,7 +60,7 @@ def load_gsm_symbolic(
         ValueError: If config is not one of the valid options
     """
     try:
-        from datasets import load_dataset
+        from datasets import DownloadConfig, load_dataset
     except ImportError as e:
         raise RuntimeError(
             "Missing dependency `datasets`. Install with: pip install datasets"
@@ -50,17 +73,37 @@ def load_gsm_symbolic(
     sample_str = " (random sample)" if random_sample and limit else ""
     limit_str = f" (limit={limit})" if limit else ""
     print(f"Loading GSM-Symbolic dataset (config={config}, split={split}{limit_str}{sample_str})...")
-    
-    try:
-        ds = load_dataset("apple/GSM-Symbolic", name=config, split=split)
-    except Exception as e:
-        # Some datasets only have certain splits
-        print(f"Failed to load split '{split}', trying 'test'...")
+
+    def _load_split(split_name: str, *, local_only: bool) -> any:
+        kwargs = {
+            "path": "apple/GSM-Symbolic",
+            "name": config,
+            "split": split_name,
+        }
+        if local_only:
+            kwargs["download_config"] = DownloadConfig(local_files_only=True)
+        return load_dataset(**kwargs)
+
+    offline_only = _datasets_offline_enabled()
+
+    def _try_sequence(local_only: bool):
         try:
-            ds = load_dataset("apple/GSM-Symbolic", name=config, split="test")
+            return _load_split(split, local_only=local_only)
         except Exception:
-            print(f"Failed to load 'test', trying 'train'...")
-            ds = load_dataset("apple/GSM-Symbolic", name=config, split="train")
+            print(f"Failed to load split '{split}', trying 'test'...")
+            try:
+                return _load_split("test", local_only=local_only)
+            except Exception:
+                print(f"Failed to load 'test', trying 'train'...")
+                return _load_split("train", local_only=local_only)
+
+    try:
+        ds = _try_sequence(local_only=offline_only)
+    except Exception as e:
+        if offline_only or not _is_hf_connection_error(e):
+            raise
+        print("  HuggingFace dataset lookup failed; retrying from local cache only.")
+        ds = _try_sequence(local_only=True)
 
     # Apply limit if specified
     if limit is not None and limit > 0:

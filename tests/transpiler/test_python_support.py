@@ -1,6 +1,12 @@
 import ast
+from pathlib import Path
 
-from verification.transpiler.transpiler import _translate_compare, _translate_expr, _translate_stmt_list
+from verification.transpiler.transpiler import (
+    _translate_compare,
+    _translate_expr,
+    _translate_stmt_list,
+    transpile_contract_library,
+)
 
 
 def test_translate_isinstance_str_to_true():
@@ -148,6 +154,15 @@ def test_translate_mixed_any_predicates_parenthesizes_quantifiers():
     assert "c in next_token" not in translated
 
 
+def test_translate_any_isalpha_over_token_uses_char_literals():
+    expr = ast.parse("any(char.isalpha() for char in next_token)", mode="eval").body
+    translated = _translate_expr(expr)
+
+    assert "'a'" in translated
+    assert "'Z'" in translated
+    assert '"a"' not in translated
+
+
 def test_translate_startswith_tuple_literal():
     expr = ast.parse("next_token.startswith(('n', 'x'))", mode="eval").body
     translated = _translate_expr(expr)
@@ -171,3 +186,25 @@ def test_translate_tuple_literal_assignment():
     )
 
     assert translated == ["var next_token := eosToken;", "var new_steps := 0;"]
+
+
+def test_transpile_verified_agent_repair_by_retry_preserves_both_returns():
+    source = Path("generation/csd/VerifiedAgentSynthesis.py").read_text()
+
+    result = transpile_contract_library(source, module_name_hint="VerifiedAgentSynthesis")
+
+    assert result.is_ok()
+    assert "method {:axiom} RepairByRetry(" in result.value
+    assert "returns (result: Prefix, remainingSteps: nat)" in result.value
+
+
+def test_transpile_verified_agent_append_helpers_preserve_named_returns():
+    source = Path("generation/csd/VerifiedAgentSynthesis.py").read_text()
+
+    result = transpile_contract_library(source, module_name_hint="VerifiedAgentSynthesis")
+
+    assert result.is_ok()
+    assert "method AppendConstrainedStep(" in result.value
+    assert "returns (updated: Prefix, remainingSteps: nat)" in result.value
+    assert "method AppendLeftDelimiter(" in result.value
+    assert "returns (updated: Prefix, remainingSteps: nat)" in result.value

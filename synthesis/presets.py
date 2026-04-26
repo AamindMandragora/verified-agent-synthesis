@@ -28,6 +28,11 @@ class SynthesisPreset:
         temperature: float,
         device: str,
         output_name: str | None = None,
+        min_accuracy: float | None = None,
+        min_format_rate: float | None = None,
+        min_syntax_rate: float | None = None,
+        eval_sample_size: int | None = None,
+        eval_max_steps: int | None = None,
     ) -> list[str]:
         """Build ``run_synthesis.py`` CLI arguments for this preset."""
         return [
@@ -46,15 +51,15 @@ class SynthesisPreset:
             "--max-iterations",
             str(max_iterations),
             "--min-accuracy",
-            str(self.min_accuracy),
+            str(self.min_accuracy if min_accuracy is None else min_accuracy),
             "--min-format-rate",
-            str(self.min_format_rate),
+            str(self.min_format_rate if min_format_rate is None else min_format_rate),
             "--min-syntax-rate",
-            str(self.min_syntax_rate),
+            str(self.min_syntax_rate if min_syntax_rate is None else min_syntax_rate),
             "--eval-sample-size",
-            str(self.eval_sample_size),
+            str(self.eval_sample_size if eval_sample_size is None else eval_sample_size),
             "--eval-max-steps",
-            str(self.eval_max_steps),
+            str(self.eval_max_steps if eval_max_steps is None else eval_max_steps),
         ]
 
 
@@ -71,19 +76,27 @@ DATASET_PRESETS = {
         task_description=(
             "Generate short symbolic mathematical expressions for GSM-Symbolic "
             "reasoning. The parser enforces a strict arithmetic expression grammar "
-            "with variables and numeric constants. CRITICAL RULES: "
-            "1. Every expression must contain at least one variable. "
-            "2. Variables represent problem values; numeric constants are for unit "
-            "conversions and percentages. "
-            "3. The constrained answer segment should stay short and compact. "
-            "4. Prefer balanced parentheses and concise expressions. "
-            "5. The final constrained segment must be complete before the closing "
-            "delimiter. "
-            "6. Avoid trivial outputs unless they are genuinely correct."
+            "with numeric constants and optional variables. CRITICAL RULES: "
+            "1. Pure arithmetic expressions are valid; the final << >> segment may "
+            "be either a single expression or a single equation. "
+            "2. The evaluator computes the numeric value of the final constrained "
+            "expression, so the model does not need to simplify all the way to a "
+            "standalone numeral. "
+            "3. Use variables only when they genuinely help; pure numeric "
+            "expressions like 16 * 8.5 + 4 * 10.5 + 13 are allowed. "
+            "4. Preserve numeric values exactly from the problem statement. Do "
+            "not round or truncate decimals like 8.5 into 8. "
+            "5. The constrained answer segment should stay short, compact, and "
+            "mathematically meaningful. "
+            "6. Prefer exactly one final << >> answer span; avoid emitting extra "
+            "delimiter windows after the answer, and do not mention << or >> in "
+            "the free-form reasoning text. "
+            "7. The final constrained segment must be complete before the closing "
+            "delimiter."
         ),
-        min_accuracy=0.3,
-        min_format_rate=0.5,
-        min_syntax_rate=0.5,
+        min_accuracy=0.5,
+        min_format_rate=1.0,
+        min_syntax_rate=1.0,
         eval_sample_size=10,
         eval_max_steps=2048,
     ),

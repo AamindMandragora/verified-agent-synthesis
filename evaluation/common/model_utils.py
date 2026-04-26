@@ -8,6 +8,7 @@ for multi-GPU setups using accelerate's device_map="auto".
 from __future__ import annotations
 
 import math
+import os
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -24,6 +25,97 @@ FOL_KEYWORD_TOKENS = [
 # and '>>' (id 2452) for >>. We ensure both ' <<' and ' >>' are in vocab, plus '>>'
 # as a fallback in case ' >>' is not a single BPE token.
 GSM_DELIMITER_STRINGS = [" <<", " >>", ">>"]
+
+
+def _hf_offline_enabled() -> bool:
+    """True when HuggingFace model/tokenizer loaders should stay offline."""
+    return any(os.environ.get(name, "").strip() in {"1", "true", "True"} for name in (
+        "HF_HUB_OFFLINE",
+        "TRANSFORMERS_OFFLINE",
+    ))
+
+
+def _is_hf_connection_error(exc: Exception) -> bool:
+    """Best-effort detection for DNS/network lookup failures in HF loading."""
+    text = str(exc).lower()
+    return any(marker in text for marker in (
+        "failed to resolve",
+        "name or service not known",
+        "temporary failure in name resolution",
+        "connection error",
+        "maxretryerror",
+        "httpsconnectionpool",
+        "offline mode",
+    ))
+
+
+def _load_tokenizer(model_name: str, **kwargs):
+    """Load a tokenizer, falling back to local-files-only on network failure."""
+    load_kwargs = dict(kwargs)
+    if _hf_offline_enabled():
+        load_kwargs["local_files_only"] = True
+    try:
+        return AutoTokenizer.from_pretrained(model_name, **load_kwargs)
+    except Exception as exc:
+        if load_kwargs.get("local_files_only") or not _is_hf_connection_error(exc):
+            raise
+        print("  HuggingFace network lookup failed; retrying tokenizer load from local cache only.")
+        load_kwargs["local_files_only"] = True
+        return AutoTokenizer.from_pretrained(model_name, **load_kwargs)
+
+
+def _load_causal_lm(**kwargs):
+    """Load a causal LM, falling back to local-files-only on network failure."""
+    load_kwargs = dict(kwargs)
+    if _hf_offline_enabled():
+        load_kwargs["local_files_only"] = True
+    try:
+        return AutoModelForCausalLM.from_pretrained(**load_kwargs)
+    except Exception as exc:
+        if load_kwargs.get("local_files_only") or not _is_hf_connection_error(exc):
+            raise
+        print("  HuggingFace network lookup failed; retrying model load from local cache only.")
+        load_kwargs["local_files_only"] = True
+        return AutoModelForCausalLM.from_pretrained(**load_kwargs)
+
+
+def _decode_single_token(tokenizer, token_id: int) -> str:
+    """Decode one token ID without cleanup so token strings stay stable."""
+    return tokenizer.decode([token_id], clean_up_tokenization_spaces=False)
+
+
+def _dedupe_token_ids_by_decoded_string(tokenizer, token_ids: list[int]) -> tuple[list[int], int]:
+    """
+    Keep only the first HF token ID for each decoded token string.
+
+    The verified LM invariant requires logical tokens to be unique strings, but
+    HuggingFace vocabularies often contain multiple IDs that decode to the same
+    surface form. Collapsing duplicates here preserves a stable logical vocab
+    while still letting us use the original HF IDs for logits lookup.
+    """
+    unique_ids: list[int] = []
+    seen_tokens: set[str] = set()
+    dropped = 0
+    for token_id in token_ids:
+        token = _decode_single_token(tokenizer, token_id)
+        if token in seen_tokens:
+            dropped += 1
+            continue
+        seen_tokens.add(token)
+        unique_ids.append(token_id)
+    return unique_ids, dropped
+
+
+def _valid_tokens_ids_logits_py(tokens: list[str], ids: list[int], logits: list[float]) -> bool:
+    """Python-native equivalent of LM.ValidTokensIdsLogits with linear-time uniqueness."""
+    return (
+        len(tokens) == len(ids) == len(logits)
+        and len(ids) > 0
+        and ids[0] == 0
+        and all(i == ids[i] for i in range(len(ids)))
+        and len(set(tokens)) == len(tokens)
+        and all(-1e9 <= logit <= 1e9 for logit in logits)
+    )
 
 
 def get_model_input_device(model) -> torch.device:
@@ -106,7 +198,7 @@ def create_huggingface_lm(
     elif load_in_8bit: prec_str = "8-bit"
     
     print(f"Loading model: {model_name} on {device}... ({prec_str})")
-    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    tokenizer = _load_tokenizer(model_name, trust_remote_code=True)
 
     # Add FOL keywords as single tokens so "{and}", "{or}" etc. are one token (ValidNextTokens can then extend formulas)
     if add_fol_keyword_tokens:
@@ -135,14 +227,14 @@ def create_huggingface_lm(
         else:
             kwargs["torch_dtype"] = torch.float16
             
-        model = AutoModelForCausalLM.from_pretrained(**kwargs)
+        model = _load_causal_lm(**kwargs)
         input_device = get_model_input_device(model)
         num_gpus = torch.cuda.device_count()
         print(f"Model loaded across {num_gpus} GPU(s), inputs go to {input_device}")
     else:
         # CPU fallback
-        model = AutoModelForCausalLM.from_pretrained(
-            model_name,
+        model = _load_causal_lm(
+            pretrained_model_name_or_path=model_name,
             trust_remote_code=True,
             torch_dtype=torch.float32,
         )
@@ -175,8 +267,12 @@ def create_huggingface_lm(
                         existing_ids.add(tid)
                         print(f"  Added GSM delimiter token {repr(s)} (id={tid}) to vocabulary.")
 
+    token_ids, dropped_duplicates = _dedupe_token_ids_by_decoded_string(tokenizer, token_ids)
+    if dropped_duplicates:
+        print(f"  Deduplicated {dropped_duplicates} decoded token string(s) from vocabulary.")
+
     tokens_dafny = _dafny.SeqWithoutIsStrInference(
-        [_dafny.Seq(tokenizer.decode([tid])) for tid in token_ids]
+        [_dafny.Seq(_decode_single_token(tokenizer, tid)) for tid in token_ids]
     )
 
     class HuggingFaceLM(VerifiedDecoderAgent.LM):
@@ -204,7 +300,7 @@ def create_huggingface_lm(
             self._forbid_first_token_ids = set()
             for vid in range(min(vocab_size, 200000)):  # cap for speed
                 try:
-                    s = hf_tokenizer.decode([vid])
+                    s = _decode_single_token(hf_tokenizer, vid)
                     if s in HuggingFaceLM._FORBID_FIRST_STRINGS:
                         self._forbid_first_token_ids.add(vid)
                     elif not s:  # forbid tokens that decode to empty string
@@ -274,7 +370,7 @@ def create_huggingface_lm(
             self._full_logits = logits
 
             # BigRational cannot represent ±inf; clamp so forbidden tokens stay worst
-            _LOGIT_FORBIDDEN = -1e30
+            _LOGIT_FORBIDDEN = -1e9
             for i, tid in enumerate(self._token_ids):
                 v = float(logits[tid].item())
                 if not math.isfinite(v):
@@ -312,17 +408,21 @@ def create_huggingface_lm(
                 raise RuntimeError("Must call GenerateLogits before ChooseNextTokenUnconstrained")
             logits = self._full_logits.clone()
             best_idx = int(logits.argmax().item())
-            token_text = self.tokenizer.decode([best_idx])
+            token_text = _decode_single_token(self.tokenizer, best_idx)
             # If this was the first token and we got empty/EOS (mask failed or tokenizer quirk), take next-best
             if getattr(self, "_first_token_choice", False):
                 self._first_token_choice = False
-                eos_str = self.tokenizer.decode([self.tokenizer.eos_token_id]) if getattr(self.tokenizer, "eos_token_id", None) is not None else ""
+                eos_str = (
+                    _decode_single_token(self.tokenizer, self.tokenizer.eos_token_id)
+                    if getattr(self.tokenizer, "eos_token_id", None) is not None
+                    else ""
+                )
                 for _ in range(50):
                     if token_text and token_text.strip() and token_text != eos_str:
                         break
                     logits[best_idx] = float("-inf")
                     best_idx = int(logits.argmax().item())
-                    token_text = self.tokenizer.decode([best_idx])
+                    token_text = _decode_single_token(self.tokenizer, best_idx)
             
             if debug:
                 print(f"    [UNCONSTRAINED DEBUG] chosen_token={repr(token_text)}")
@@ -377,3 +477,177 @@ def create_huggingface_lm(
                 print(f"    [MASK DEBUG] Masked {masked_count} tokens, {len(valid_set)} remain valid.")
 
     return HuggingFaceLM(model, tokenizer, tokens_dafny, token_ids, input_device)
+
+
+def create_huggingface_lm_native(
+    model_name: str,
+    device: str,
+    vocab_size: int,
+    VerifiedAgentSynthesis,
+    token_ids=None,
+    load_in_4bit: bool = False,
+    load_in_8bit: bool = False,
+    add_gsm_delimiter_tokens: bool = False,
+):
+    """
+    Create a HuggingFace LM wrapped with a Python-native (non-Dafny) interface.
+
+    Uses plain Python lists for Tokens/Ids/Logits so the strategy code runs
+    directly without the Dafny runtime.
+    """
+    prec_str = "FP16"
+    if load_in_4bit:
+        prec_str = "4-bit"
+    elif load_in_8bit:
+        prec_str = "8-bit"
+
+    print(f"Loading model (native): {model_name} on {device}... ({prec_str})")
+    tokenizer = _load_tokenizer(model_name, trust_remote_code=True)
+
+    if device.startswith("cuda"):
+        kwargs = {
+            "pretrained_model_name_or_path": model_name,
+            "trust_remote_code": True,
+            "device_map": "auto",
+        }
+        if load_in_4bit:
+            from transformers import BitsAndBytesConfig
+            kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+            )
+        elif load_in_8bit:
+            kwargs["load_in_8bit"] = True
+        else:
+            kwargs["torch_dtype"] = torch.float16
+        model = _load_causal_lm(**kwargs)
+        input_device = get_model_input_device(model)
+    else:
+        model = _load_causal_lm(
+            pretrained_model_name_or_path=model_name,
+            trust_remote_code=True,
+            torch_dtype=torch.float32,
+        )
+        input_device = torch.device("cpu")
+
+    model.eval()
+
+    if token_ids is None:
+        token_ids = list(range(vocab_size))
+        if add_gsm_delimiter_tokens:
+            existing_ids = set(token_ids)
+            for s in GSM_DELIMITER_STRINGS:
+                ids = tokenizer.encode(s, add_special_tokens=False)
+                if len(ids) == 1:
+                    tid = ids[0]
+                    if tid not in existing_ids:
+                        token_ids.append(tid)
+                        existing_ids.add(tid)
+                        print(f"  Added GSM delimiter token {repr(s)} (id={tid}) to vocabulary.")
+
+    token_ids, dropped_duplicates = _dedupe_token_ids_by_decoded_string(tokenizer, token_ids)
+    if dropped_duplicates:
+        print(f"  Deduplicated {dropped_duplicates} decoded token string(s) from vocabulary.")
+
+    tokens = [_decode_single_token(tokenizer, tid) for tid in token_ids]
+    max_input_len = get_max_input_length(model, tokenizer)
+
+    class HuggingFaceLMNative(VerifiedAgentSynthesis.LM):
+        """HuggingFace model wrapped with Python-native (non-Dafny) LM interface."""
+
+        _FORBID_FIRST_STRINGS = frozenset({"<<", "<", " <<", " << ", " >>", ">>", "$"})
+
+        def __init__(self):
+            # Bypass parent __init__ (sets 2-token dummy vocab); set full vocab directly
+            self.Tokens = tokens
+            self.Ids = list(range(len(tokens)))
+            self.Logits = [0.0] * len(tokens)
+            self._Tokens = self.Tokens  # alias for evaluator compat
+            self._token_ids = token_ids
+            self._input_device = input_device
+            self._max_input_len = max_input_len
+            self.tokenizer = tokenizer
+            self.instruction_text = ""
+            self._full_logits = None
+            self._first_token_choice = False
+            vocab_sz = tokenizer.vocab_size if hasattr(tokenizer, "vocab_size") else len(tokenizer)
+            self._forbid_first_token_ids: set = set()
+            for vid in range(min(vocab_sz, 200000)):
+                try:
+                    s = _decode_single_token(tokenizer, vid)
+                    if s in HuggingFaceLMNative._FORBID_FIRST_STRINGS or not s:
+                        self._forbid_first_token_ids.add(vid)
+                except Exception:
+                    pass
+            eos_id = getattr(tokenizer, "eos_token_id", None)
+            if eos_id is not None:
+                self._forbid_first_token_ids.add(int(eos_id))
+            pad_id = getattr(tokenizer, "pad_token_id", None)
+            if pad_id is not None and pad_id != eos_id:
+                self._forbid_first_token_ids.add(int(pad_id))
+
+        def ValidTokensIdsLogits(self) -> bool:
+            return _valid_tokens_ids_logits_py(self.Tokens, self.Ids, self.Logits)
+
+        def ValidTokensIdsLogitsAlways(self) -> None:
+            assert self.ValidTokensIdsLogits()
+
+        def GenerateLogits(self, input_prefix: list) -> None:
+            prefix_text = "".join(str(t) for t in input_prefix)
+            full_prompt = self.instruction_text + prefix_text
+            inputs = tokenizer(full_prompt, return_tensors="pt", add_special_tokens=False)
+            if inputs["input_ids"].shape[-1] > self._max_input_len:
+                inputs["input_ids"] = inputs["input_ids"][:, -self._max_input_len:]
+                if "attention_mask" in inputs:
+                    inputs["attention_mask"] = inputs["attention_mask"][:, -self._max_input_len:]
+            inputs = inputs.to(self._input_device)
+
+            self._first_token_choice = len(input_prefix) == 0
+            with torch.no_grad():
+                output = model(**inputs)
+                logits = output.logits[0, -1, :].float().cpu()
+
+            if self._first_token_choice and self._forbid_first_token_ids:
+                for vid in self._forbid_first_token_ids:
+                    if vid < logits.shape[0]:
+                        logits[vid] = float("-inf")
+
+            self._full_logits = logits
+            _LOGIT_FORBIDDEN = -1e9
+            for i, tid in enumerate(self._token_ids):
+                v = float(logits[tid].item())
+                if not math.isfinite(v):
+                    v = _LOGIT_FORBIDDEN
+                self.Logits[i] = v
+
+        def ChooseNextToken(self) -> str:
+            best_i = max(range(len(self.Logits)), key=lambda i: self.Logits[i])
+            return self.Tokens[best_i]
+
+        def ChooseNextTokenUnconstrained(self) -> str:
+            if self._full_logits is None:
+                raise RuntimeError("Call GenerateLogits before ChooseNextTokenUnconstrained")
+            logits = self._full_logits.clone()
+            best_idx = int(logits.argmax().item())
+            return _decode_single_token(tokenizer, best_idx)
+
+        def MaskTokensExcept(self, valid_tokens: list) -> None:
+            valid_set = set(str(t) for t in valid_tokens)
+            if self._first_token_choice:
+                self._first_token_choice = False
+                eos_str = (
+                    _decode_single_token(tokenizer, tokenizer.eos_token_id)
+                    if getattr(tokenizer, "eos_token_id", None) is not None
+                    else ""
+                )
+                forbid = {"", eos_str} | set(HuggingFaceLMNative._FORBID_FIRST_STRINGS)
+                reduced = valid_set - forbid
+                if reduced:
+                    valid_set = reduced
+            for i in range(len(self.Logits)):
+                if self.Tokens[i] not in valid_set:
+                    self.Logits[i] = -1e9
+
+    return HuggingFaceLMNative()

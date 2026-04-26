@@ -1031,6 +1031,19 @@ _RETURN_NAME_OVERRIDES: dict[str, list[str]] = {
     "ExpressiveStep": ["next", "stepsLeft'"],
     "ConstrainedStep": ["next", "stepsLeft'"],
     "ConstrainedAnswerStep": ["next", "stepsLeft'"],
+    "SoftConstrainedStep": ["next", "stepsLeft'"],
+    "TopKConstrainedStep": ["next", "stepsLeft'"],
+    "ForcedTokenStep": ["next", "stepsLeft'"],
+    "BudgetAwareStep": ["next", "stepsLeft'"],
+    "AppendUnconstrainedStep": ["updated", "remainingSteps"],
+    "AppendConstrainedStep": ["updated", "remainingSteps"],
+    "AppendSoftConstrainedStep": ["updated", "remainingSteps"],
+    "AppendTopKConstrainedStep": ["updated", "remainingSteps"],
+    "AppendBudgetAwareStep": ["updated", "remainingSteps"],
+    "AppendForcedToken": ["updated", "remainingSteps"],
+    "AppendLeftDelimiter": ["updated", "remainingSteps"],
+    "AppendRightDelimiter": ["updated", "remainingSteps"],
+    "RepairByRetry": ["result", "remainingSteps"],
     "ChooseNextToken": ["token"],
     "MyCSDStrategy": ["generated", "remainingSteps"],
 }
@@ -1062,6 +1075,22 @@ _PARAM_TYPE_OVERRIDES: dict[tuple[str | None, str, str], str] = {
     ("CSDHelpers", "ExpressiveStep", "stepsLeft"): "nat",
     ("CSDHelpers", "ConstrainedStep", "stepsLeft"): "nat",
     ("CSDHelpers", "ConstrainedAnswerStep", "stepsLeft"): "nat",
+    ("CSDHelpers", "SoftConstrainedStep", "stepsLeft"): "nat",
+    ("CSDHelpers", "TopKConstrainedStep", "stepsLeft"): "nat",
+    ("CSDHelpers", "ForcedTokenStep", "stepsLeft"): "nat",
+    ("CSDHelpers", "BudgetAwareStep", "stepsLeft"): "nat",
+    ("CSDHelpers", "BudgetAwareStep", "completionThreshold"): "nat",
+    ("CSDHelpers", "AppendUnconstrainedStep", "stepsLeft"): "nat",
+    ("CSDHelpers", "AppendConstrainedStep", "stepsLeft"): "nat",
+    ("CSDHelpers", "AppendSoftConstrainedStep", "stepsLeft"): "nat",
+    ("CSDHelpers", "AppendTopKConstrainedStep", "stepsLeft"): "nat",
+    ("CSDHelpers", "AppendBudgetAwareStep", "stepsLeft"): "nat",
+    ("CSDHelpers", "AppendBudgetAwareStep", "completionThreshold"): "nat",
+    ("CSDHelpers", "AppendForcedToken", "stepsLeft"): "nat",
+    ("CSDHelpers", "AppendLeftDelimiter", "stepsLeft"): "nat",
+    ("CSDHelpers", "AppendRightDelimiter", "stepsLeft"): "nat",
+    ("CSDHelpers", "RepairByRetry", "maxRetries"): "nat",
+    ("CSDHelpers", "RepairByRetry", "stepsLeft"): "nat",
     (None, "MyCSDStrategy", "maxSteps"): "nat",
 }
 
@@ -1070,6 +1099,19 @@ _METHOD_RETURN_TYPE_OVERRIDES: dict[tuple[str | None, str], list[str]] = {
     ("CSDHelpers", "ExpressiveStep"): ["Token", "nat"],
     ("CSDHelpers", "ConstrainedStep"): ["Token", "nat"],
     ("CSDHelpers", "ConstrainedAnswerStep"): ["Token", "nat"],
+    ("CSDHelpers", "SoftConstrainedStep"): ["Token", "nat"],
+    ("CSDHelpers", "TopKConstrainedStep"): ["Token", "nat"],
+    ("CSDHelpers", "ForcedTokenStep"): ["Token", "nat"],
+    ("CSDHelpers", "BudgetAwareStep"): ["Token", "nat"],
+    ("CSDHelpers", "AppendUnconstrainedStep"): ["Prefix", "nat"],
+    ("CSDHelpers", "AppendConstrainedStep"): ["Prefix", "nat"],
+    ("CSDHelpers", "AppendSoftConstrainedStep"): ["Prefix", "nat"],
+    ("CSDHelpers", "AppendTopKConstrainedStep"): ["Prefix", "nat"],
+    ("CSDHelpers", "AppendBudgetAwareStep"): ["Prefix", "nat"],
+    ("CSDHelpers", "AppendForcedToken"): ["Prefix", "nat"],
+    ("CSDHelpers", "AppendLeftDelimiter"): ["Prefix", "nat"],
+    ("CSDHelpers", "AppendRightDelimiter"): ["Prefix", "nat"],
+    ("CSDHelpers", "RepairByRetry"): ["Prefix", "nat"],
     (None, "MyCSDStrategy"): ["Prefix", "nat"],
 }
 
@@ -1301,11 +1343,11 @@ def _translate_token_predicate(base: str, predicate: str) -> str:
 def _translate_char_predicate(base: str, predicate: str) -> str:
     if predicate == "isalpha":
         return (
-            f"((\"a\" <= {base} && {base} <= \"z\") || "
-            f"(\"A\" <= {base} && {base} <= \"Z\"))"
+            f"(('a' <= {base} && {base} <= 'z') || "
+            f"('A' <= {base} && {base} <= 'Z'))"
         )
     if predicate in {"isdigit", "isnumeric"}:
-        return f"(\"0\" <= {base} && {base} <= \"9\")"
+        return f"('0' <= {base} && {base} <= '9')"
     raise NotImplementedError(f"Unsupported char predicate: {predicate}")
 
 
@@ -1457,6 +1499,7 @@ def _translate_expr(node: ast.AST, current_class: str | None = None, name_map: d
             ast.Sub: "-",
             ast.Mult: "*",
             ast.Div: "/",
+            ast.FloorDiv: "/",
             ast.Mod: "%",
         }
         op = op_map[type(node.op)]
@@ -1482,6 +1525,17 @@ def _translate_expr(node: ast.AST, current_class: str | None = None, name_map: d
                     return "true"
             if func_name in {"any", "all"} and isinstance(node.args[0], ast.GeneratorExp):
                 return _translate_generator_quantifier(func_name, node.args[0], current_class, name_map)
+            if func_name == "abs" and len(node.args) == 1:
+                arg = _translate_expr(node.args[0], current_class, name_map)
+                return f"(if ({arg}) < 0 then -({arg}) else ({arg}))"
+            if func_name == "min" and len(node.args) == 2:
+                a = _translate_expr(node.args[0], current_class, name_map)
+                b = _translate_expr(node.args[1], current_class, name_map)
+                return f"(if ({a}) < ({b}) then ({a}) else ({b}))"
+            if func_name == "max" and len(node.args) == 2:
+                a = _translate_expr(node.args[0], current_class, name_map)
+                b = _translate_expr(node.args[1], current_class, name_map)
+                return f"(if ({a}) < ({b}) then ({b}) else ({a}))"
             if func_name in _CONSTRUCTOR_NAMES:
                 return f"new {func_name}({', '.join(_translate_expr(arg, current_class, name_map) for arg in node.args)})"
         if isinstance(node.func, ast.Attribute):
@@ -1503,6 +1557,11 @@ def _translate_expr(node: ast.AST, current_class: str | None = None, name_map: d
                 arg = _translate_expr(node.args[0], current_class, name_map)
                 return f"{base} := ({base} + [{arg}])"
         return f"{_translate_expr(node.func, current_class, name_map)}({', '.join(_translate_expr(arg, current_class, name_map) for arg in node.args)})"
+    if isinstance(node, ast.IfExp):
+        cond = _translate_expr(node.test, current_class, name_map)
+        body = _translate_expr(node.body, current_class, name_map)
+        orelse = _translate_expr(node.orelse, current_class, name_map)
+        return f"(if {cond} then {body} else {orelse})"
     raise NotImplementedError(f"Unsupported expression: {type(node).__name__}: {ast.dump(node)}")
 
 
@@ -1642,8 +1701,11 @@ def _special_stmt_body(name: str, current_class: str | None) -> list[str] | None
         return [
             "  this.lm := lm;",
             "  this.parser := parser;",
-            "  this.delimiter := delimiter;",
         ]
+    if name == "__init__" and current_class == "CheckpointStack":
+        return ["  this.stack := [];"]
+    if name == "__init__" and current_class == "RepetitionTracker":
+        return ["  this.ngramSize := ngramSize;"]
     if name == "FirstRightDelimiterAppendRight" and current_class == "Delimiter":
         return [
             "  if |content| == 0 {",
@@ -1892,6 +1954,7 @@ def _translate_stmt_list(
                 ast.Sub: "-",
                 ast.Mult: "*",
                 ast.Div: "/",
+                ast.FloorDiv: "/",
                 ast.Mod: "%",
             }
             op = op_map[type(stmt.op)]
@@ -1900,7 +1963,7 @@ def _translate_stmt_list(
             lines.append(prefix + f"{target} := {target} {op} {value};")
             continue
         if isinstance(stmt, ast.Return):
-            if not return_names:
+            if not return_names or stmt.value is None:
                 lines.append(prefix + "return;")
             elif (
                 isinstance(stmt.value, ast.Tuple)
@@ -1918,6 +1981,11 @@ def _translate_stmt_list(
             continue
         if isinstance(stmt, ast.Break):
             lines.append(prefix + "break;")
+            continue
+        if isinstance(stmt, ast.Continue):
+            lines.append(prefix + "continue;")
+            continue
+        if isinstance(stmt, ast.Pass):
             continue
         if isinstance(stmt, ast.Raise):
             lines.append(prefix + "assert false;")
@@ -1979,6 +2047,12 @@ def _method_return_names(node: ast.FunctionDef) -> list[str]:
     if node.name in _RETURN_NAME_OVERRIDES:
         return _RETURN_NAME_OVERRIDES[node.name]
     if node.returns is None:
+        return []
+    # `-> None` annotation: AST is Constant(None) or Name('None'), not Python None
+    ret = node.returns
+    if isinstance(ret, ast.Constant) and ret.value is None:
+        return []
+    if isinstance(ret, ast.Name) and ret.id == "None":
         return []
     return ["result"]
 

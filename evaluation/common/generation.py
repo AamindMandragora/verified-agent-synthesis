@@ -148,6 +148,68 @@ def run_crane_csd(
     return output_text, len(result_tokens), execution_time, constrained_segments
 
 
+def run_crane_csd_native(
+    env: dict,
+    prompt_text: str,
+    max_steps: int,
+    grammar_file,
+    debug_delimiters: bool = False,
+    dynamic_parser=None,
+    debug_csd: bool = False,
+    initial_prefix=None,
+) -> Tuple[str, int, float, List[Tuple[str, bool]]]:
+    """
+    Run the CSD strategy using the original Python source (no Dafny runtime).
+
+    env must contain: "strategy_module", "lm", "parser", "tokenizer"
+    All tokens are plain Python strings; no Dafny.Seq conversion is needed.
+    """
+    import sys
+    lm = env["lm"]
+    parser = dynamic_parser if dynamic_parser is not None else env["parser"]
+    strategy_module = env["strategy_module"]
+
+    lm.instruction_text = prompt_text
+    eos_token_str = lm.tokenizer.eos_token or "<|endoftext|>"
+    start_time = time.time()
+
+    print("  [GEN] run_crane_csd_native entered", flush=True)
+
+    try:
+        result = strategy_module.MyCSDStrategy(
+            lm, parser, [], max_steps, eos_token_str
+        )
+    except Exception as e:
+        import traceback as _tb
+        print(f"  [GEN] MyCSDStrategy RAISED: {e!r}", flush=True)
+        _tb.print_exc()
+        raise
+
+    print("  [GEN] MyCSDStrategy returned", flush=True)
+
+    if isinstance(result, tuple) and len(result) >= 2:
+        csd_output, remaining_steps = result[0], result[1]
+    else:
+        csd_output = result
+        remaining_steps = 0
+
+    # Tokens are plain Python strings already
+    result_tokens = [str(t) for t in csd_output] if csd_output else []
+    output_text = "".join(result_tokens)
+
+    print(f"  [GEN] result_tokens: {len(result_tokens)} (repr={repr(output_text[:120])})", flush=True)
+    sys.stdout.flush()
+
+    execution_time = time.time() - start_time
+    constrained_segments: List[Tuple[str, bool]] = []
+
+    if len(result_tokens) == 0:
+        print("  [GEN] WARNING: Strategy returned 0 tokens.", flush=True)
+
+    print(f"  [GEN] RETURN len={len(output_text)} tokens={len(result_tokens)}", flush=True)
+    return output_text, len(result_tokens), execution_time, constrained_segments
+
+
 def run_unconstrained(
     env: dict,
     prompt_text: str,

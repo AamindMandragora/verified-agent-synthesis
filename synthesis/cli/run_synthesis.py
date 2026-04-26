@@ -6,7 +6,7 @@ The pipeline runs: generate → verify → compile → runtime → evaluate → 
 until evaluation thresholds are met or max iterations exhausted.
 
 This is the main entry point for making CSDs. For a quick pipeline smoke test
-without the LLM, use test_pipeline.py (optional).
+without the LLM, use tests/synthesis/test_pipeline.py (optional).
 
 Usage:
     python run_synthesis.py --task "..." --dataset gsm_symbolic \\

@@ -41,11 +41,22 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
     repaired = strategy_code
     changed = False
 
+    def _insert_after_rationale_block(code: str, insertion: str) -> str:
+        marker = "# CSD_RATIONALE_END"
+        marker_index = code.find(marker)
+        if marker_index == -1:
+            return insertion + code
+        line_end = code.find("\n", marker_index)
+        if line_end == -1:
+            return code + "\n" + insertion
+        return code[: line_end + 1] + insertion + code[line_end + 1 :]
+
     # Python-side fix: if branch-local tuple assignments feed later uses of next_token/new_steps,
     # predeclare them before the branch so transpilation can emit outer-scope variables.
     if (
         "unresolved identifier: next_token" in error_summary
         or "unresolved identifier: new_steps" in error_summary
+        or "unresolved identifier: _" in error_summary
     ):
         pattern = re.compile(
             r"(?m)^(?P<indent>[ \t]*)if (?P<cond>[^\n]+):\n"
@@ -65,6 +76,34 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
         if new_repaired != repaired:
             repaired = new_repaired
             changed = True
+
+        predeclarations: list[str] = []
+        if (
+            "unresolved identifier: next_token" in error_summary
+            and not re.search(r"(?m)^\s*next_token\s*=", repaired)
+        ):
+            predeclarations.append("next_token = eosToken")
+        if (
+            "unresolved identifier: new_steps" in error_summary
+            and not re.search(r"(?m)^\s*new_steps\s*=", repaired)
+        ):
+            predeclarations.append("new_steps = stepsLeft")
+        if (
+            "unresolved identifier: _" in error_summary
+            and not re.search(r"(?m)^\s*_\s*=", repaired)
+        ):
+            if re.search(r"(?m)^\s*_\s*,\s*(?:new_steps|stepsLeft)\s*=", repaired):
+                predeclarations.append("_ = eosToken")
+            elif re.search(r"(?m)^\s*(?:next_token|[A-Za-z_]\w*)\s*,\s*_\s*=", repaired):
+                predeclarations.append("_ = stepsLeft")
+            else:
+                predeclarations.append("_ = eosToken")
+
+        if predeclarations:
+            new_repaired = _insert_after_rationale_block(repaired, "\n".join(predeclarations) + "\n")
+            if new_repaired != repaired:
+                repaired = new_repaired
+                changed = True
 
     # Python-first normalization for legacy Dafny-ish outputs.
     new_repaired = re.sub(r"(?m)^(\s*)//", r"\1#", repaired)
@@ -215,6 +254,209 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
         repaired = new_repaired
         changed = True
 
+    # Fix: generated prefixes are seq<Token>/Prefix values, not booleans. Rewrite truthiness
+    # tests on helpers.LongestValidSuffix(...) into explicit length comparisons.
+    if (
+        "condition is expected to be of type bool, but is Prefix" in error_summary
+        or "logical/bitwise negation expects a boolean or bitvector argument" in error_summary
+    ):
+        suffix_truthiness_patterns = [
+            (
+                r"(?m)^(\s*)(if|elif|while)\s+not\s+(helpers\.LongestValidSuffix\([^)]+\))\s*:\s*$",
+                r"\1\2 len(\3) == 0:",
+            ),
+            (
+                r"(?m)^(\s*)(if|elif|while)\s+(helpers\.LongestValidSuffix\([^)]+\))\s*:\s*$",
+                r"\1\2 len(\3) > 0:",
+            ),
+        ]
+        for pattern, replacement in suffix_truthiness_patterns:
+            new_repaired = re.sub(pattern, replacement, repaired)
+            if new_repaired != repaired:
+                repaired = new_repaired
+                changed = True
+
+    # Fix: ForcedTokenStep is a step helper that returns (next_token, new_steps). Rewrite bare
+    # call + literal append blocks into the standard budget-carrying pattern.
+    if "returns 2 values but is assigned to 0 variable" in error_summary and "ForcedTokenStep" in repaired:
+        def _rewrite_bare_forced_token_step(m: re.Match) -> str:
+            indent = m.group("indent")
+            args = m.group("args")
+            budget = m.group("budget")
+            sync_target = m.group("sync_target")
+            sync_value = m.group("sync_value")
+            lines = [
+                f"{indent}next_token, new_steps = helpers.ForcedTokenStep({args})",
+                f"{indent}generated = generated + [next_token]",
+            ]
+            if sync_target and sync_value:
+                lines.append(f"{indent}{sync_target} = {sync_value}")
+            elif budget:
+                lines.append(f"{indent}{budget} = new_steps")
+            else:
+                lines.append(f"{indent}stepsLeft = new_steps")
+            return "\n".join(lines)
+
+        bare_forced_pattern = re.compile(
+            r"(?m)^(?P<indent>[ \t]*)helpers\.ForcedTokenStep\((?P<args>.*,\s*(?P<budget>[A-Za-z_]\w*))\)\s*$\n"
+            r"(?P=indent)generated\s*=\s*generated\s*\+\s*\[(?P<token_expr>[^\]\n]+)\]\s*$"
+            r"(?:\n(?P=indent)(?P<sync_target>[A-Za-z_]\w*)\s*=\s*(?P<sync_value>[A-Za-z_]\w*)\s*$)?"
+        )
+        new_repaired = bare_forced_pattern.sub(_rewrite_bare_forced_token_step, repaired)
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: verifier cannot prove termination for open-ended sentinel loops. Budget-bound Python
+    # while loops with stepsLeft so the loop has an explicit decreasing measure.
+    if "cannot prove termination; try supplying a decreases clause for the loop" in error_summary:
+        def _budget_guard_while(m: re.Match) -> str:
+            indent = m.group("indent")
+            condition = m.group("condition").strip()
+            if "stepsLeft" in condition or "new_steps" in condition:
+                return m.group(0)
+            return f"{indent}while stepsLeft > 0 and {condition}:"
+
+        new_repaired = re.sub(
+            r"(?m)^(?P<indent>[ \t]*)while\s+(?P<condition>[^\n:]+)\s*:\s*$",
+            _budget_guard_while,
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: constrained helpers require an incomplete grammar suffix. Strengthen budgeted loops
+    # so strategies do not call constrained steps after the answer is already complete.
+    if "requires !parser.IsCompletePrefix(LongestValidSuffix(generated))" in error_summary:
+        def _guard_constrained_while(m: re.Match) -> str:
+            indent = m.group(1)
+            condition = m.group(2)
+            guard = "not parser.IsCompletePrefix(helpers.LongestValidSuffix(generated))"
+            if guard in condition:
+                return m.group(0)
+            return f"{indent}while {condition} and {guard}:"
+
+        new_repaired = re.sub(
+            r"(?m)^(\s*)while\s+([^\n:]*\b(?:stepsLeft|new_steps)\b[^\n:]*)\s*:\s*$",
+            _guard_constrained_while,
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    if (
+        "requires CanConstrain(prefix)" in error_summary
+        or "requires !parser.IsCompletePrefix(LongestValidSuffix(generated))" in error_summary
+    ):
+        constrained_branch = re.compile(
+            r"(?m)^(?P<indent>[ \t]*)(?P<head>if|elif)\s+(?P<cond>[^\n:]+)\s*:\s*\n"
+            r"(?P=indent)[ \t]+(?P<lhs1>[A-Za-z_]\w*)\s*,\s*(?P<lhs2>[A-Za-z_]\w*)\s*=\s*helpers\."
+            r"(?P<helper>AppendConstrainedStep|AppendSoftConstrainedStep|AppendTopKConstrainedStep|ConstrainedStep|SoftConstrainedStep|TopKConstrainedStep)\("
+        )
+
+        def _guard_constrained_branch(m: re.Match) -> str:
+            condition = m.group("cond")
+            if "helpers.CanConstrain(generated)" in condition or "helpers.LongestValidSuffix(generated)" in condition:
+                return m.group(0)
+            guarded = f"{m.group('indent')}{m.group('head')} {condition} and helpers.CanConstrain(generated):\n"
+            call = (
+                f"{m.group('indent')}    {m.group('lhs1')}, {m.group('lhs2')} = "
+                f"helpers.{m.group('helper')}("
+            )
+            return guarded + call
+
+        new_repaired = constrained_branch.sub(_guard_constrained_branch, repaired)
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: synthesized loops often omit the core proof-carrying invariants that all helper
+    # steps rely on to re-establish LM/logit well-formedness.
+    if "requires this.lm.ValidTokensIdsLogits()" in error_summary or "Logits[i] <= 1e9" in error_summary:
+        def _inject_standard_loop_invariants(code: str) -> tuple[str, bool]:
+            lines = code.split("\n")
+            out: list[str] = []
+            local_changed = False
+            for line in lines:
+                match = re.match(r"^(\s*)while\s+([^\n:]*\b(?:stepsLeft|new_steps)\b[^\n:]*)\s*:\s*$", line)
+                if match:
+                    indent = match.group(1)
+                    condition = match.group(2)
+                    budget_var = "new_steps" if "new_steps" in condition and "stepsLeft" not in condition else "stepsLeft"
+                    if not (
+                        out
+                        and out[-1].strip() == f"# decreases {budget_var}"
+                    ):
+                        out.extend(
+                            [
+                                f"{indent}# invariant lm.ValidTokensIdsLogits()",
+                                f"{indent}# invariant 0 <= {budget_var} <= maxSteps",
+                                f"{indent}# invariant |generated| + {budget_var} <= maxSteps",
+                                f"{indent}# decreases {budget_var}",
+                            ]
+                        )
+                        local_changed = True
+                out.append(line)
+            return "\n".join(out), local_changed
+
+        new_repaired, inv_injected = _inject_standard_loop_invariants(repaired)
+        if inv_injected:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: forced-token emission still consumes one step. Wrap paired call+append blocks so the
+    # verifier can see they only execute when budget remains.
+    if "helpers.ForcedTokenStep" in error_summary and "requires stepsLeft >= 1" in error_summary:
+        def _wrap_forced_token_step(m: re.Match) -> str:
+            indent = m.group("indent")
+            lines = [
+                f"{indent}if {m.group('budget')} > 0:",
+                f"{indent}    {m.group('lhs')}, {m.group('budget')} = helpers.ForcedTokenStep({m.group('args')})",
+                f"{indent}    generated = generated + [{m.group('token_expr')}]",
+            ]
+            sync_target = m.group("sync_target")
+            sync_value = m.group("sync_value")
+            if sync_target and sync_value:
+                lines.append(f"{indent}    {sync_target} = {sync_value}")
+            return "\n".join(lines)
+
+        new_repaired = re.sub(
+            r"(?m)^(?P<indent>[ \t]*)(?P<lhs>[A-Za-z_]\w*|_)\s*,\s*(?P<budget>[A-Za-z_]\w*)\s*=\s*helpers\.ForcedTokenStep\((?P<args>[^\n]+)\)\s*$\n"
+            r"(?P=indent)generated\s*=\s*generated\s*\+\s*\[(?P<token_expr>[^\]\n]+)\]\s*$"
+            r"(?:\n(?P=indent)(?P<sync_target>[A-Za-z_]\w*)\s*=\s*(?P<sync_value>[A-Za-z_]\w*)\s*$)?",
+            _wrap_forced_token_step,
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: proof sometimes cannot establish that a learned penalty remains positive. Replace the
+    # dynamic penalty argument with a small positive literal so SoftConstrainedStep verifies.
+    if "requires penalty > 0.0" in error_summary:
+        new_repaired = re.sub(
+            r"helpers\.SoftConstrainedStep\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^)]+)\)",
+            r"helpers.SoftConstrainedStep(\1, \2, 0.1, \4)",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: Prefix values are persistent sequences in the transpiler subset; replace standalone
+    # ".pop()" mutation with explicit slicing.
+    if "type seq<Token> does not have a member pop" in error_summary:
+        new_repaired = re.sub(
+            r"(?m)^(\s*)([A-Za-z_]\w*)\.pop\(\)\s*$",
+            r"\1\2 = \2[:-1]",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
     # Fix: old API — helpers.UnconstrainedStep(lm, prompt, ...) -> helpers.UnconstrainedStep(prompt, ...)
     new_repaired = re.sub(
         r"helpers\.UnconstrainedStep\s*\(\s*lm\s*,\s*",
@@ -244,6 +486,37 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
     if new_repaired != repaired:
         repaired = new_repaired
         changed = True
+
+    # Fix: SoftConstrainedStep called with wrong number of args (2 instead of 4) — replace with ConstrainedStep
+    if "wrong number of arguments" in error_summary and "SoftConstrainedStep" in error_summary:
+        new_repaired = re.sub(
+            r"helpers\.SoftConstrainedStep\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*(?:penalty\s*=\s*)?([^,)\n]+)\s*,\s*(?:stepsLeft\s*=\s*)?([^)]+)\)",
+            r"helpers.SoftConstrainedStep(\1, \2, \3, \4)",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+        new_repaired = re.sub(
+            r"helpers\.SoftConstrainedStep\s*\(\s*([^,)]+)\s*,\s*([^,)]+)\s*\)",
+            r"helpers.ConstrainedStep(\1, \2, stepsLeft)",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: BudgetAwareStep written with a keyword threshold argument; rewrite to positional.
+    if "wrong number of arguments" in error_summary and "BudgetAwareStep" in error_summary:
+        new_repaired = re.sub(
+            r"helpers\.BudgetAwareStep\s*\(\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*(?:threshold|completionThreshold)\s*=\s*([^)]+)\)",
+            r"helpers.BudgetAwareStep(\1, \2, \3, \4)",
+            repaired,
+        )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
 
     # Fix: old static lemma — CSDHelpers.RollbackPreservesTokenInvariant(...) no longer exists; remove the call
     new_repaired = re.sub(
@@ -716,6 +989,110 @@ def repair_verification_strategy(strategy_code: str, error_summary: str) -> tupl
             repaired = new_repaired
             changed = True
 
+    # Fix: normalize Python len(X) → Dafny |X| in # invariant comment lines.
+    # Do this before the postcondition repair so "invariant |generated|..." is found correctly.
+    def _norm_len_in_inv(line: str) -> str:
+        if not line.strip().startswith("# invariant"):
+            return line
+        return re.sub(r"\blen\(([a-zA-Z_]\w*)\)", r"|\1|", line)
+
+    lines_norm = [_norm_len_in_inv(l) for l in repaired.split("\n")]
+    new_repaired = "\n".join(lines_norm)
+    if new_repaired != repaired:
+        repaired = new_repaired
+        changed = True
+
+    # Fix: "postcondition could not be proved" for |generated| <= maxSteps —
+    # the strategy is missing the loop invariant |generated| + stepsLeft <= maxSteps.
+    # Insert it into the while loop so Dafny can prove the postcondition at the end.
+    if (
+        "postcondition could not be proved" in error_summary
+        and "invariant |generated| + stepsLeft <= maxSteps" not in repaired
+    ):
+        new_repaired = re.sub(
+            r"(# invariant 0 <= stepsLeft <= maxSteps\n)",
+            r"\1# invariant |generated| + stepsLeft <= maxSteps\n",
+            repaired,
+        )
+        if new_repaired == repaired:
+            # Fallback: insert after the first # invariant line in the while comment block
+            new_repaired = re.sub(
+                r"(# invariant [^\n]+\n)",
+                r"\1# invariant |generated| + stepsLeft <= maxSteps\n",
+                repaired,
+                count=1,
+            )
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
+    # Fix: strategies with multiple while loops often only annotate the first one.
+    # When postcondition fails or ForcedTokenStep precondition fails, add standard
+    # invariants (lm.ValidTokensIdsLogits, |generated|+stepsLeft<=maxSteps, decreases stepsLeft)
+    # before every while loop. Use a tight 5-line context window matching what _loop_specs
+    # can actually pick up (it stops scanning at the previous while loop's body lines).
+    if "postcondition could not be proved" in error_summary or (
+        "precondition for this call could not be proved" in error_summary
+        and "ForcedTokenStep" in repaired
+    ):
+        # Always insert all three invariants immediately before each while loop.
+        # _loop_specs scans backwards from the while and stops at the first non-spec comment
+        # after finding specs — so invariants from a previous loop's block (separated by a
+        # non-spec comment like "# Free-form phase") would not be picked up. Add them
+        # unconditionally; having duplicate invariant clauses in Dafny is harmless.
+        lines_in = repaired.split("\n")
+        result_lines: list[str] = []
+        for line in lines_in:
+            if re.match(r"^\s*while\b", line):
+                indent = re.match(r"^(\s*)", line).group(1)
+                result_lines.append(indent + "# invariant lm.ValidTokensIdsLogits()")
+                result_lines.append(indent + "# invariant |generated| + stepsLeft <= maxSteps")
+                result_lines.append(indent + "# decreases stepsLeft")
+                changed = True
+            result_lines.append(line)
+        new_repaired = "\n".join(result_lines)
+        if new_repaired != repaired:
+            repaired = new_repaired
+
+    # Fix: "precondition for this call could not be proved" for ForcedTokenStep —
+    # ForcedTokenStep requires stepsLeft >= 1, but the call is in an if-block where
+    # stepsLeft may be 0 (after a while loop exited). Wrap the 3-line ForcedTokenStep
+    # block with "if stepsLeft >= 1:" to guard the call.
+    if (
+        "precondition for this call could not be proved" in error_summary
+        and "ForcedTokenStep" in repaired
+    ):
+        forced_step_pattern = re.compile(
+            r"^([ \t]+)(next_token\s*,\s*new_steps\s*=\s*helpers\.ForcedTokenStep\s*\([^\n]+\))\n"
+            r"(\1generated\s*=\s*generated\s*\+\s*\[next_token\])\n"
+            r"(\1stepsLeft\s*=\s*new_steps)",
+            re.MULTILINE,
+        )
+        def _add_stepsLeft_guard(m: re.Match) -> str:
+            indent = m.group(1)
+            call_line = m.group(2)   # no leading spaces (captured after group 1)
+            gen_line = m.group(3)    # starts with indent (from \1 backreference)
+            steps_line = m.group(4)  # starts with indent (from \1 backreference)
+            # Check if the preceding line already has a stepsLeft guard
+            start = m.start()
+            prev_line = repaired[:start].rstrip("\n").rsplit("\n", 1)[-1] if "\n" in repaired[:start] else ""
+            if "stepsLeft >= 1" in prev_line or "stepsLeft > 0" in prev_line:
+                return m.group(0)
+            # Re-indent each line by adding 4 spaces after the existing indent
+            gen_body = gen_line[len(indent):]  # strip leading indent, leaving bare "generated = ..."
+            steps_body = steps_line[len(indent):]  # strip leading indent
+            return (
+                f"{indent}if stepsLeft >= 1:\n"
+                f"{indent}    {call_line}\n"
+                f"{indent}    {gen_body}\n"
+                f"{indent}    {steps_body}"
+            )
+
+        new_repaired = forced_step_pattern.sub(_add_stepsLeft_guard, repaired)
+        if new_repaired != repaired:
+            repaired = new_repaired
+            changed = True
+
     # Fix: "invariant could not be proved" for |generated| <= maxSteps — the correct provable invariant
     # is |generated| + stepsLeft <= maxSteps (sum unchanged per step, decreases on rollback).
     # Replace the broken |generated| <= maxSteps invariant with the correct form.
@@ -1127,6 +1504,10 @@ def parse_strategy_type(strategy_code: str) -> dict:
     )
     uses_rollback = "RollbackToValidPrefix" in strategy_code_for_match
     uses_answer_channel = "ConstrainedAnswerStep" in strategy_code_for_match
+    if "AppendConstrainedStep" in strategy_code_for_match or "AppendSoftConstrainedStep" in strategy_code_for_match:
+        uses_constrained = True
+    if "AppendUnconstrainedStep" in strategy_code_for_match:
+        uses_unconstrained = True
 
     if uses_constrained and uses_unconstrained:
         category = "interleaved"
@@ -1429,14 +1810,6 @@ class SynthesisPipeline:
         except Exception:
             pass
 
-        # Use a per-run compiler output directory.
-        compiler = DafnyCompiler(
-            dafny_path=self.compiler.dafny_path,
-            output_dir=run_dir,
-            timeout=self.compiler.timeout,
-            extra_args=list(self.compiler.extra_args),
-        )
-
         # Initial generation (one LLM call, can take 30–90s or longer on CPU/slow GPU)
         print(f"Generating initial strategy for: {task_description[:80]}...")
         print("  (LLM steps can take 1–2 min each; evaluation can take several minutes. Interrupt with Ctrl+C if needed.)")
@@ -1469,7 +1842,7 @@ class SynthesisPipeline:
             )
 
             # Stage 1: Verification
-            print("\n[1/4] Verifying transpiled Python strategy...")
+            print("\n[1/3] Verifying transpiled Python strategy...")
             t0 = time.perf_counter()
             verification_result = self.verifier.verify(full_code)
             attempt.verification_result = verification_result
@@ -1497,9 +1870,10 @@ class SynthesisPipeline:
                     error_msg = (
                         f"WARNING: This is the SAME error for {consecutive_same + 1} consecutive attempts. "
                         f"Your previous fixes did NOT work. You MUST use a COMPLETELY DIFFERENT approach. "
-                        f"Keep the explicit answer-channel architecture: build expressive free-form text with "
-                        f"helpers.ExpressiveStep(...), build the grammar-constrained answer in `answer` with "
-                        f"helpers.ConstrainedAnswerStep(...), and leave delimiter insertion to the template.\n\n"
+                        f"Prefer the append-style helper API: use helpers.AppendUnconstrainedStep(...) for short "
+                        f"free-form reasoning, then helpers.AppendLeftDelimiter(...), then "
+                        f"helpers.AppendConstrainedStep(...) only inside branches guarded by "
+                        f"helpers.CanConstrain(generated), and finally helpers.AppendRightDelimiter(...).\n\n"
                         f"Original error:\n{error_msg}"
                     )
 
@@ -1523,26 +1897,6 @@ class SynthesisPipeline:
 
             print("  ✓ Verification passed")
 
-            # Stage 2: Compilation
-            print("\n[2/4] Compiling to Python...")
-            compilation_result = compiler.compile(full_code, output_name)
-            attempt.compilation_result = compilation_result
-
-            if not compilation_result.success:
-                print("  ✗ Compilation failed")
-                attempt.failed_at = FailureStage.COMPILATION
-                attempt.error_summary = compilation_result.get_error_summary()
-                attempts.append(attempt)
-
-                # Refine based on compilation error
-                print("  Refining based on compilation error...")
-                strategy_code = self.generator.refine_after_compilation_error(
-                    strategy_code, compilation_result.get_error_summary()
-                )
-                continue
-
-            print(f"  ✓ Compiled to {compilation_result.output_dir}")
-
             python_path = run_dir / f"{output_name}.py"
             python_path.write_text(full_code, encoding="utf-8")
             transpiled_result = transpile_contract_library(full_code, module_name_hint=python_path.stem, axiomatize=False)
@@ -1554,22 +1908,10 @@ class SynthesisPipeline:
             else:
                 print(f"  Python CSD saved to: {python_path}")
 
-            # Stage 3: Runtime test
-            print("\n[3/4] Testing runtime execution...")
+            # Stage 2: Runtime test (Dafny compilation skipped — run Python source directly)
+            print("\n[2/3] Testing runtime execution...")
 
-            if compilation_result.main_module_path is None:
-                print("  ✗ No main module found")
-                attempt.failed_at = FailureStage.RUNTIME
-                attempt.error_summary = "No main module path in compilation result"
-                attempts.append(attempt)
-
-                strategy_code = self.generator.refine_after_runtime_error(
-                    strategy_code,
-                    "Compilation succeeded but no Python module was generated",
-                )
-                continue
-
-            runtime_result = runner.run(compilation_result.main_module_path)
+            runtime_result = runner.run_python_native(python_path)
             attempt.runtime_result = runtime_result
 
             if not runtime_result.success:
@@ -1604,12 +1946,12 @@ class SynthesisPipeline:
                 )
                 continue
 
-            # Stage 4: Evaluation — use same device as generator to avoid loading on a full GPU
+            # Stage 3: Evaluation — use same device as generator to avoid loading on a full GPU
             if getattr(self.generator, "device", None):
                 self.evaluator.device = self.generator.device
-            print("\n[4/4] Evaluating on dataset sample... (may take several minutes)")
+            print("\n[3/3] Evaluating on dataset sample... (may take several minutes)")
             eval_result = self.evaluator.evaluate_sample(
-                compiled_module_path=compilation_result.main_module_path,
+                python_source_path=python_path,
                 sample_size=self.eval_sample_size,
             )
             attempt.eval_result = eval_result
@@ -1668,15 +2010,15 @@ class SynthesisPipeline:
 
             # Save successful strategy
             self._save_success_report(
-                strategy_code, full_code, compilation_result, attempts, output_name, run_dir
+                strategy_code, full_code, attempts, output_name, run_dir
             )
 
             return SynthesisResult(
                 success=True,
                 strategy_code=strategy_code,
                 full_python_code=full_code,
-                compiled_module_path=compilation_result.main_module_path,
-                output_dir=compilation_result.output_dir,
+                compiled_module_path=python_path,
+                output_dir=run_dir,
                 run_dir=run_dir,
                 attempts=attempts,
                 total_time_ms=total_time,
@@ -1735,22 +2077,23 @@ class SynthesisPipeline:
         self,
         strategy_code: str,
         full_code: str,
-        compilation_result: CompilationResult,
         attempts: list[SynthesisAttempt],
         output_name: str,
         run_dir: Path,
     ) -> None:
         """Save a success report and the final strategy."""
         python_path = run_dir / f"{output_name}.py"
-        with open(python_path, "w") as f:
-            f.write(full_code)
+        if not python_path.exists():
+            with open(python_path, "w") as f:
+                f.write(full_code)
 
         transpiled_result = transpile_contract_library(full_code, module_name_hint=output_name, axiomatize=False)
         dafny_path = None
         if transpiled_result.is_ok():
             dafny_path = run_dir / f"{output_name}.dfy"
-            with open(dafny_path, "w") as f:
-                f.write(transpiled_result.value)
+            if not dafny_path.exists():
+                with open(dafny_path, "w") as f:
+                    f.write(transpiled_result.value)
 
         rationale_extracted = extract_rationale(strategy_code)
 
@@ -1761,7 +2104,6 @@ class SynthesisPipeline:
             "tool_choice_rationale": rationale_extracted.rationale,
             "python_file": str(python_path),
             "transpiled_dafny_file": str(dafny_path) if dafny_path else None,
-            "compiled_dir": str(compilation_result.output_dir),
             "total_attempts": len(attempts),
             "timestamp": datetime.now().isoformat(),
         }

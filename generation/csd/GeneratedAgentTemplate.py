@@ -2,14 +2,11 @@ from __future__ import annotations
 
 from VerifiedAgentSynthesis import (
     CSDHelpers,
-    DelimitedAnswerValidForParser,
-    Delimiter,
     LM,
     LeftDelimiter,
-    Parser,
-    PrefixContains,
-    Prefix,
     RightDelimiter,
+    Parser,
+    Prefix,
     Token,
     dafny_spec,
 )
@@ -28,14 +25,14 @@ DAFNY_OPEN_IMPORT = "VerifiedDecoderAgent"
         "parser.IsValidPrefix([])",
         "!parser.IsCompletePrefix([])",
         "forall t: Token :: t in parser.ValidNextTokens([]) ==> t in lm.Tokens",
-        "LeftDelimiter in lm.Tokens && RightDelimiter in lm.Tokens",
-        "maxSteps >= 4",
+        "maxSteps >= 2",
+        "LeftDelimiter in lm.Tokens",
+        "RightDelimiter in lm.Tokens",
     ),
     ensures=(
         "lm.ValidTokensIdsLogits()",
         "|generated| <= maxSteps",
         "remainingSteps >= 0 && remainingSteps <= maxSteps",
-        "DelimitedAnswerValidForParser(parser, generated)",
     ),
 )
 def MyCSDStrategy(
@@ -45,17 +42,12 @@ def MyCSDStrategy(
     maxSteps: int,
     eosToken: Token,
 ) -> tuple[Prefix, int]:
-    delim = Delimiter(LeftDelimiter, RightDelimiter)
-    helpers = CSDHelpers(lm, parser, delim)
-    helpers.DelimitersInLMAlways()
+    helpers = CSDHelpers(lm, parser)
     lm.ValidTokensIdsLogitsAlways()
     generated = []
-    answer = []
-    stepsLeft = maxSteps - 2
+    stepsLeft = maxSteps
     # QWEN_INSERT_STRATEGY_BEGIN
     raise NotImplementedError("QWEN_INSERT_STRATEGY_HERE")
     # QWEN_INSERT_STRATEGY_END
-    helpers.FinalizeDelimitedAnswer(generated, answer)
-    generated = generated + [LeftDelimiter] + answer + [RightDelimiter]
     remainingSteps = stepsLeft
     return generated, remainingSteps

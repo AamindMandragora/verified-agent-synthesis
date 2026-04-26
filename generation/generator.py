@@ -6,6 +6,7 @@ for insertion into `generation/csd/GeneratedAgentTemplate.py`.
 """
 
 import ast
+import os
 import re
 import textwrap
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
@@ -25,6 +26,28 @@ from .prompts import (
     build_structure_repair_prompt,
 )
 from .rationale import extract_rationale
+
+
+def _hf_offline_enabled() -> bool:
+    """True when HuggingFace loaders should stay strictly offline."""
+    return any(os.environ.get(name, "").strip() in {"1", "true", "True"} for name in (
+        "HF_HUB_OFFLINE",
+        "TRANSFORMERS_OFFLINE",
+    ))
+
+
+def _is_hf_connection_error(exc: Exception) -> bool:
+    """Best-effort detection for transient offline/network lookup failures."""
+    text = str(exc).lower()
+    return any(marker in text for marker in (
+        "failed to resolve",
+        "name or service not known",
+        "temporary failure in name resolution",
+        "connection error",
+        "maxretryerror",
+        "httpsconnectionpool",
+        "offline mode",
+    ))
 
 
 class StrategyGenerator:
@@ -49,26 +72,33 @@ class StrategyGenerator:
     MIN_STRATEGY_TOKENS = 192
     SEARCH_ATTEMPTS = 3
     ALLOWED_HELPER_METHODS = {
-        "ConstrainedAnswerStep",
-        "ExpressiveStep",
-        "CompletedDelimitedAnswer",
-        "DelimitedAnswerValid",
-        "ConstrainedWindowValid",
-        "GetDelimitedContent",
-        "InsideDelimitedWindow",
-        "LeftDelimiter",
-        "RightDelimiter",
-        "ContentIsValidInWindow",
-        "ValidNextTokensInLM",
-        "DelimitersInLM",
-        "DelimitersInLMAlways",
-        "FinalizeDelimitedAnswer",
-        "EnterDelimitedWindow",
-        "ExitDelimitedWindow",
-        "GetDelimitedContentAppend",
-        "InDelimitedWindowThenContentValid",
-        "ConstrainedStepNextValid",
-        "RollbackPreservesTokenInvariant",
+        "UnconstrainedStep",
+        "ConstrainedStep",
+        "SoftConstrainedStep",
+        "TopKConstrainedStep",
+        "ForcedTokenStep",
+        "BudgetAwareStep",
+        "AppendUnconstrainedStep",
+        "AppendConstrainedStep",
+        "AppendSoftConstrainedStep",
+        "AppendTopKConstrainedStep",
+        "AppendBudgetAwareStep",
+        "AppendForcedToken",
+        "AppendLeftDelimiter",
+        "AppendRightDelimiter",
+        "LongestValidSuffix",
+        "CanConstrain",
+        "RollbackToValidPrefix",
+        "FindLongestValidSpan",
+        "ExtractAllValidSpans",
+        "RepairByRetry",
+        "HasBudget",
+        "MinStepsToComplete",
+        "SoftConstrainToGrammar",
+        "IntersectWithGrammar",
+        "BiasForCompletion",
+        "AllValidNextTokensInLM",
+        "ValidTokensIdsLogitsAlways",
     }
     ALLOWED_PARSER_METHODS = {
         "IsValidPrefix",
@@ -77,47 +107,45 @@ class StrategyGenerator:
         "ValidNextToken",
         "ValidNextTokens",
         "EmptyPrefixIsValid",
+        "ValidContinuationCount",
+        "ParserDistanceToComplete",
     }
 
     STARTER_STRATEGY = """\
 # CSD_RATIONALE_BEGIN
-# Fallback starter strategy: keep delimiter control explicit, spend a small controlled budget on expressive free-form text, then drive a separate constrained answer channel until it becomes complete.
+# Fallback starter strategy: budget-split between unconstrained reasoning and grammar-constrained answer inside << >> delimiters.
 # CSD_RATIONALE_END
 phase = 0
-preamble_tokens = 0
-exploration_budget = 1
-answer_tokens = 0
+reasoning_tokens = 0
+constrained_tokens = 0
+reasoning_budget = 8
+if stepsLeft < 16:
+    reasoning_budget = stepsLeft // 4
 # invariant lm.ValidTokensIdsLogits()
-# invariant 0 <= stepsLeft <= maxSteps - 2
-# invariant 0 <= preamble_tokens <= 1
-# invariant 0 <= exploration_budget <= 1
-# invariant 0 <= answer_tokens
-# invariant helpers.ConstrainedWindowValid(generated)
-# invariant parser.IsValidPrefix(answer)
-# invariant |generated| + |answer| + stepsLeft <= maxSteps - 2
-# invariant |answer| == 0 ==> exploration_budget < stepsLeft
+# invariant 0 <= stepsLeft <= maxSteps
+# invariant 0 <= reasoning_tokens
+# invariant 0 <= constrained_tokens
+# invariant 0 <= phase <= 3
+# invariant |generated| + stepsLeft <= maxSteps
 # decreases stepsLeft
-while stepsLeft > 0 and not parser.IsCompletePrefix(answer):
-    next_token = eosToken
-    new_steps = stepsLeft
-    spend_freeform = phase < 2 and exploration_budget > 0 and preamble_tokens < 1 and stepsLeft > 1
-    if spend_freeform:
-        next_token, new_steps = helpers.ExpressiveStep(prompt, generated, stepsLeft)
-        generated = generated + [next_token]
-        stepsLeft = new_steps
-        preamble_tokens = preamble_tokens + 1
-        exploration_budget = exploration_budget - 1
-        if preamble_tokens >= 1:
+while stepsLeft > 0 and phase < 3:
+    if phase == 0 and reasoning_tokens < reasoning_budget and stepsLeft > 2:
+        generated, stepsLeft = helpers.AppendUnconstrainedStep(prompt, generated, stepsLeft)
+        reasoning_tokens = reasoning_tokens + 1
+        if reasoning_tokens >= reasoning_budget or stepsLeft <= 2:
             phase = 1
-        if preamble_tokens >= 1 or stepsLeft <= 1:
-            phase = 2
-    else:
-        next_token, new_steps = helpers.ConstrainedAnswerStep(prompt, generated, answer, stepsLeft)
-        answer = answer + [next_token]
-        stepsLeft = new_steps
-        answer_tokens = answer_tokens + 1
-        if answer_tokens >= 1:
-            phase = 3
+    elif phase == 0:
+        generated, stepsLeft = helpers.AppendLeftDelimiter(generated, stepsLeft)
+        phase = 2
+    elif phase == 1:
+        generated, stepsLeft = helpers.AppendLeftDelimiter(generated, stepsLeft)
+        phase = 2
+    elif phase == 2 and helpers.CanConstrain(generated):
+        generated, stepsLeft = helpers.AppendConstrainedStep(prompt, generated, stepsLeft)
+        constrained_tokens = constrained_tokens + 1
+    elif phase == 2 and not helpers.CanConstrain(generated):
+        generated, stepsLeft = helpers.AppendRightDelimiter(generated, stepsLeft)
+        phase = 3
 """
 
     def __init__(
@@ -187,19 +215,49 @@ while stepsLeft > 0 and not parser.IsCompletePrefix(answer):
         """Lazy-load the model and tokenizer. On CUDA OOM, try other GPUs before CPU."""
         if self._model is None:
             print(f"Loading {self.model_name}...")
-            self._tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name,
-                trust_remote_code=True
-            )
+            tokenizer_kwargs = {
+                "trust_remote_code": True,
+            }
+            if _hf_offline_enabled():
+                tokenizer_kwargs["local_files_only"] = True
+            try:
+                self._tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_name,
+                    **tokenizer_kwargs,
+                )
+            except Exception as e:
+                if tokenizer_kwargs.get("local_files_only") or not _is_hf_connection_error(e):
+                    raise
+                print("  HuggingFace network lookup failed; retrying tokenizer load from local cache only.")
+                tokenizer_kwargs["local_files_only"] = True
+                self._tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_name,
+                    **tokenizer_kwargs,
+                )
 
             device_map = self.device if (self.device and self.device != "mps") else None
+            model_kwargs = {
+                "torch_dtype": self.torch_dtype,
+                "device_map": device_map,
+                "trust_remote_code": True,
+            }
+            if _hf_offline_enabled():
+                model_kwargs["local_files_only"] = True
             try:
                 self._model = AutoModelForCausalLM.from_pretrained(
                     self.model_name,
-                    torch_dtype=self.torch_dtype,
-                    device_map=device_map,
-                    trust_remote_code=True
+                    **model_kwargs,
                 )
+            except Exception as e:
+                if model_kwargs.get("local_files_only") or not _is_hf_connection_error(e):
+                    raise
+                print("  HuggingFace network lookup failed; retrying model load from local cache only.")
+                model_kwargs["local_files_only"] = True
+                self._model = AutoModelForCausalLM.from_pretrained(
+                    self.model_name,
+                    **model_kwargs,
+                )
+            try:
                 if self.device == "mps":
                     self._model = self._model.to(self.device)
                 print(f"Model loaded on {self.device}")
@@ -237,11 +295,16 @@ while stepsLeft > 0 and not parser.IsCompletePrefix(answer):
                             torch.cuda.empty_cache()
                         self.device = cand
                         self.torch_dtype = torch.bfloat16
+                        retry_kwargs = {
+                            "torch_dtype": self.torch_dtype,
+                            "device_map": self.device,
+                            "trust_remote_code": True,
+                        }
+                        if _hf_offline_enabled():
+                            retry_kwargs["local_files_only"] = True
                         self._model = AutoModelForCausalLM.from_pretrained(
                             self.model_name,
-                            torch_dtype=self.torch_dtype,
-                            device_map=self.device,
-                            trust_remote_code=True
+                            **retry_kwargs,
                         )
                         print(f"   Loaded on {self.device} instead.")
                         loaded = True
@@ -256,10 +319,15 @@ while stepsLeft > 0 and not parser.IsCompletePrefix(answer):
                         torch.cuda.empty_cache()
                     self.device = "cpu"
                     self.torch_dtype = torch.float32
+                    cpu_kwargs = {
+                        "torch_dtype": self.torch_dtype,
+                        "trust_remote_code": True,
+                    }
+                    if _hf_offline_enabled():
+                        cpu_kwargs["local_files_only"] = True
                     self._model = AutoModelForCausalLM.from_pretrained(
                         self.model_name,
-                        torch_dtype=self.torch_dtype,
-                        trust_remote_code=True
+                        **cpu_kwargs,
                     ).to(self.device)
                     print(f"Model loaded on {self.device} (CPU fallback)")
     
@@ -478,61 +546,194 @@ while stepsLeft > 0 and not parser.IsCompletePrefix(answer):
         except SyntaxError as exc:
             return f"The body is not valid Python: {exc.msg}."
 
+        parent_map: dict[ast.AST, ast.AST] = {}
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                parent_map[child] = parent
+
         has_while = any(isinstance(node, ast.While) for node in ast.walk(tree))
         if not has_while:
             return "The body must contain a while loop that performs decoding steps."
 
-        step_calls = 0
-        constrained_answer_calls = 0
-        expressive_calls = 0
+        constrained_step_calls = 0
+        forced_token_calls = 0
+        unconstrained_calls = 0
+        emits_left_delimiter = False
+        emits_right_delimiter = False
         appends_generated = False
-        appends_answer = False
+        bare_forced_token_calls = 0
+        bare_append_helper_calls = 0
+        append_helper_wrong_targets: set[str] = set()
         extra_state: set[str] = set()
-        disallowed_calls: set[str] = set()
         unsupported_helper_calls: set[str] = set()
         unsupported_parser_calls: set[str] = set()
         parser_on_generated_methods: set[str] = set()
-        answer_reasoning = False
+        generated_string_methods: set[str] = set()
+        suffix_string_methods: set[str] = set()
+        old_api_calls: set[str] = set()
+        helper_parser_confusions: set[str] = set()
+        unguarded_constrained_calls: set[str] = set()
         if_count = 0
         while_nodes = [node for node in ast.walk(tree) if isinstance(node, ast.While)]
+        append_helper_methods = {
+            "AppendUnconstrainedStep",
+            "AppendConstrainedStep",
+            "AppendSoftConstrainedStep",
+            "AppendTopKConstrainedStep",
+            "AppendBudgetAwareStep",
+            "AppendForcedToken",
+            "AppendLeftDelimiter",
+            "AppendRightDelimiter",
+        }
+        constrained_helper_methods = {
+            "ConstrainedStep",
+            "SoftConstrainedStep",
+            "TopKConstrainedStep",
+            "AppendConstrainedStep",
+            "AppendSoftConstrainedStep",
+            "AppendTopKConstrainedStep",
+        }
+        unconstrained_helper_methods = {
+            "UnconstrainedStep",
+            "AppendUnconstrainedStep",
+            "BudgetAwareStep",
+            "AppendBudgetAwareStep",
+        }
+        forced_helper_methods = {
+            "ForcedTokenStep",
+            "AppendForcedToken",
+            "AppendLeftDelimiter",
+            "AppendRightDelimiter",
+        }
+
+        OLD_API = {
+            "ExpressiveStep", "ConstrainedAnswerStep", "FinalizeDelimitedAnswer",
+            "InsideDelimitedWindow", "CompletedDelimitedAnswer", "DelimitedAnswerValid",
+            "ConstrainedWindowValid", "GetDelimitedContent", "DelimitersInLM",
+            "DelimitersInLMAlways",
+        }
+
+        def _is_name(node: ast.AST, expected: str) -> bool:
+            return isinstance(node, ast.Name) and node.id == expected
+
+        def _has_generated_suffix_call(node: ast.AST) -> bool:
+            return (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "helpers"
+                and node.func.attr == "LongestValidSuffix"
+                and len(node.args) >= 1
+                and _is_name(node.args[0], "generated")
+            )
+
+        def _condition_has_constrain_guard(test: ast.AST) -> bool:
+            for inner in ast.walk(test):
+                if (
+                    isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Attribute)
+                    and isinstance(inner.func.value, ast.Name)
+                    and inner.func.value.id == "helpers"
+                    and inner.func.attr == "CanConstrain"
+                    and len(inner.args) >= 1
+                    and _is_name(inner.args[0], "generated")
+                ):
+                    return True
+                if (
+                    isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Attribute)
+                    and isinstance(inner.func.value, ast.Name)
+                    and inner.func.value.id == "parser"
+                    and inner.func.attr == "IsCompletePrefix"
+                    and len(inner.args) >= 1
+                    and _has_generated_suffix_call(inner.args[0])
+                ):
+                    return True
+            return False
+
         for node in ast.walk(tree):
             if isinstance(node, ast.If):
                 if_count += 1
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
                 if isinstance(node.func.value, ast.Name) and node.func.value.id == "helpers":
-                    if node.func.attr not in self.ALLOWED_HELPER_METHODS and node.func.attr not in {
-                        "UnconstrainedStep",
-                        "ConstrainedStep",
-                        "RollbackToValidPrefix",
-                        "InsideDelimitedWindow",
-                    }:
-                        unsupported_helper_calls.add(node.func.attr)
-                    if node.func.attr in {"ExpressiveStep", "ConstrainedAnswerStep"}:
-                        step_calls += 1
-                    if node.func.attr == "ConstrainedAnswerStep":
-                        constrained_answer_calls += 1
-                    if node.func.attr == "ExpressiveStep":
-                        expressive_calls += 1
-                    if node.func.attr in {
-                        "UnconstrainedStep",
-                        "ConstrainedStep",
-                        "RollbackToValidPrefix",
-                        "InsideDelimitedWindow",
-                        "FinalizeDelimitedAnswer",
-                    }:
-                        disallowed_calls.add(node.func.attr)
-                    if node.func.attr in {"ConstrainedAnswerStep", "CompletedDelimitedAnswer", "DelimitedAnswerValid"}:
-                        answer_reasoning = True
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                    attr = node.func.attr
+                    if attr in OLD_API:
+                        old_api_calls.add(attr)
+                    elif attr not in self.ALLOWED_HELPER_METHODS:
+                        unsupported_helper_calls.add(attr)
+                        if attr in self.ALLOWED_PARSER_METHODS:
+                            helper_parser_confusions.add(attr)
+                    if attr in constrained_helper_methods:
+                        constrained_step_calls += 1
+                        current = node
+                        guarded = False
+                        while current in parent_map:
+                            current = parent_map[current]
+                            if isinstance(current, (ast.If, ast.While)) and _condition_has_constrain_guard(current.test):
+                                guarded = True
+                                break
+                        if not guarded:
+                            unguarded_constrained_calls.add(attr)
+                    if attr in forced_helper_methods:
+                        forced_token_calls += 1
+                    if attr in unconstrained_helper_methods:
+                        unconstrained_calls += 1
+                    if attr == "AppendLeftDelimiter":
+                        emits_left_delimiter = True
+                    elif attr == "AppendRightDelimiter":
+                        emits_right_delimiter = True
+                    elif attr == "ForcedTokenStep" and len(node.args) >= 3:
+                        if _is_name(node.args[2], "LeftDelimiter"):
+                            emits_left_delimiter = True
+                        elif _is_name(node.args[2], "RightDelimiter"):
+                            emits_right_delimiter = True
+                    elif attr == "AppendForcedToken" and len(node.args) >= 2:
+                        if _is_name(node.args[1], "LeftDelimiter"):
+                            emits_left_delimiter = True
+                        elif _is_name(node.args[1], "RightDelimiter"):
+                            emits_right_delimiter = True
                 if isinstance(node.func.value, ast.Name) and node.func.value.id == "parser":
-                    if node.func.attr not in self.ALLOWED_PARSER_METHODS:
-                        unsupported_parser_calls.add(node.func.attr)
+                    attr = node.func.attr
+                    if attr not in self.ALLOWED_PARSER_METHODS:
+                        unsupported_parser_calls.add(attr)
                     if (
                         node.args
                         and isinstance(node.args[0], ast.Name)
                         and node.args[0].id == "generated"
                     ):
-                        parser_on_generated_methods.add(node.func.attr)
+                        parser_on_generated_methods.add(attr)
+                if isinstance(node.func.value, ast.Name) and node.func.value.id == "generated":
+                    attr = node.func.attr
+                    if attr in {"startswith", "endswith", "strip", "lstrip", "rstrip"}:
+                        generated_string_methods.add(attr)
+                if (
+                    isinstance(node.func.value, ast.Call)
+                    and isinstance(node.func.value.func, ast.Attribute)
+                    and isinstance(node.func.value.func.value, ast.Name)
+                    and node.func.value.func.value.id == "helpers"
+                    and node.func.value.func.attr == "LongestValidSuffix"
+                ):
+                    attr = node.func.attr
+                    if attr in {"startswith", "endswith", "strip", "lstrip", "rstrip"}:
+                        suffix_string_methods.add(attr)
+            if (
+                isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Attribute)
+                and isinstance(node.value.func.value, ast.Name)
+                and node.value.func.value.id == "helpers"
+                and node.value.func.attr == "ForcedTokenStep"
+            ):
+                bare_forced_token_calls += 1
+            if (
+                isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Attribute)
+                and isinstance(node.value.func.value, ast.Name)
+                and node.value.func.value.id == "helpers"
+                and node.value.func.attr in append_helper_methods
+            ):
+                bare_append_helper_calls += 1
             if isinstance(node, ast.Assign):
                 if (
                     len(node.targets) == 1
@@ -547,78 +748,145 @@ while stepsLeft > 0 and not parser.IsCompletePrefix(answer):
                     appends_generated = True
                 if (
                     len(node.targets) == 1
-                    and isinstance(node.targets[0], ast.Name)
-                    and node.targets[0].id == "answer"
-                    and isinstance(node.value, ast.BinOp)
-                    and isinstance(node.value.op, ast.Add)
-                    and isinstance(node.value.left, ast.Name)
-                    and node.value.left.id == "answer"
-                    and isinstance(node.value.right, ast.List)
+                    and isinstance(node.targets[0], ast.Tuple)
+                    and isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Attribute)
+                    and isinstance(node.value.func.value, ast.Name)
+                    and node.value.func.value.id == "helpers"
+                    and node.value.func.attr in append_helper_methods
                 ):
-                    appends_answer = True
+                    target_names = {
+                        elt.id
+                        for elt in node.targets[0].elts
+                        if isinstance(elt, ast.Name)
+                    }
+                    if "generated" in target_names:
+                        appends_generated = True
+                    else:
+                        append_helper_wrong_targets.add(node.value.func.attr)
                 for target in node.targets:
-                    if isinstance(target, ast.Name) and target.id not in {"generated", "answer", "stepsLeft", "next_token", "new_steps"}:
+                    if isinstance(target, ast.Name) and target.id not in {
+                        "generated", "stepsLeft", "next_token", "new_steps",
+                    }:
                         extra_state.add(target.id)
             if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                if node.target.id not in {"generated", "answer", "stepsLeft", "next_token", "new_steps"}:
+                if node.target.id not in {"generated", "stepsLeft", "next_token", "new_steps"}:
                     extra_state.add(node.target.id)
-            if isinstance(node, ast.Name) and node.id == "answer":
-                answer_reasoning = True
 
-        if step_calls == 0:
-            return "The body must call helper step methods."
+        if old_api_calls:
+            return (
+                "The body uses the old delimiter-based API which has been replaced. "
+                "Remove these calls: " + ", ".join(sorted(old_api_calls)) + ". "
+                "Prefer helpers.AppendUnconstrainedStep, helpers.AppendConstrainedStep, "
+                "and helpers.AppendLeftDelimiter/helpers.AppendRightDelimiter instead."
+            )
+        if helper_parser_confusions:
+            return (
+                "These names are parser methods, not helper methods: "
+                + ", ".join(sorted(helper_parser_confusions))
+                + ". Call them on `parser` using the grammar suffix, e.g. "
+                  "`parser.IsCompletePrefix(helpers.LongestValidSuffix(generated))` or "
+                  "`parser.ValidContinuationCount(helpers.LongestValidSuffix(generated))`."
+            )
         if unsupported_parser_calls:
             return (
                 "The body calls parser methods that do not exist in the supported synthesis API: "
-                + ", ".join(sorted(unsupported_parser_calls))
-                + "."
+                + ", ".join(sorted(unsupported_parser_calls)) + "."
             )
         if parser_on_generated_methods:
             return (
-                "Do not call parser methods on generated; the parser governs answer, not the free-form output. "
-                "Offending methods: "
-                + ", ".join(sorted(parser_on_generated_methods))
-                + "."
+                "Do not call parser methods directly on 'generated'. "
+                "Use helpers.LongestValidSuffix(generated) first to get the grammar-relevant suffix. "
+                "Offending methods: " + ", ".join(sorted(parser_on_generated_methods)) + "."
             )
-        if constrained_answer_calls == 0:
-            return "The body must use helpers.ConstrainedAnswerStep(...) to build the constrained answer segment."
-        if expressive_calls == 0:
-            return "The body must use helpers.ExpressiveStep(...) for expressive free-form output outside the constrained answer segment."
+        if generated_string_methods:
+            return (
+                "Do not treat 'generated' like a Python string. It is a list of tokens, so string methods like "
+                + ", ".join(sorted(generated_string_methods))
+                + " are invalid here. Track delimiter/phase state explicitly and emit delimiters with "
+                  "`helpers.AppendLeftDelimiter(...)` / `helpers.AppendRightDelimiter(...)` instead."
+            )
+        if suffix_string_methods:
+            return (
+                "Do not treat `helpers.LongestValidSuffix(generated)` like a Python string. It also returns a list of "
+                "tokens, so string methods like "
+                + ", ".join(sorted(suffix_string_methods))
+                + " are invalid here. Use parser predicates on that suffix instead, such as "
+                  "`parser.IsCompletePrefix(helpers.LongestValidSuffix(generated))`."
+            )
         if unsupported_helper_calls:
             return (
                 "The body calls helper methods that do not exist in the supported synthesis API: "
-                + ", ".join(sorted(unsupported_helper_calls))
-                + "."
+                + ", ".join(sorted(unsupported_helper_calls)) + "."
             )
-        if disallowed_calls:
-            return "The strategy still relies on disallowed basic patterns: " + ", ".join(sorted(disallowed_calls)) + "."
+        total_step_calls = constrained_step_calls + forced_token_calls + unconstrained_calls
+        if total_step_calls == 0:
+            return (
+                "The body must call at least one step method "
+                "(AppendConstrainedStep, AppendLeftDelimiter, AppendUnconstrainedStep, "
+                "ConstrainedStep, ForcedTokenStep, UnconstrainedStep, etc.)."
+            )
+        if constrained_step_calls == 0:
+            return (
+                "The body must include at least one constrained step "
+                "(helpers.ConstrainedStep, helpers.SoftConstrainedStep, helpers.TopKConstrainedStep, "
+                "or their Append* wrappers) "
+                "to produce grammar-valid answer content."
+            )
+        if unguarded_constrained_calls:
+            return (
+                "Every constrained helper call must be inside a branch or loop condition that explicitly checks "
+                "`helpers.CanConstrain(generated)` or `parser.IsCompletePrefix(helpers.LongestValidSuffix(generated))`. "
+                "Unguarded calls: " + ", ".join(sorted(unguarded_constrained_calls)) + "."
+            )
+        if not emits_left_delimiter or not emits_right_delimiter:
+            return (
+                "The body must emit both LeftDelimiter and RightDelimiter "
+                "(via helpers.ForcedTokenStep, helpers.AppendForcedToken, helpers.AppendLeftDelimiter, "
+                "or helpers.AppendRightDelimiter) so the evaluator can extract the answer from << ... >> in the output."
+            )
+        for while_node in while_nodes:
+            budget_names = {
+                name.id
+                for name in ast.walk(while_node.test)
+                if isinstance(name, ast.Name)
+            }
+            if "stepsLeft" not in budget_names and "new_steps" not in budget_names:
+                return (
+                    "Every decoding while loop must be budget-bounded, e.g. "
+                    "`while stepsLeft > 0 and ...:`."
+                )
+        if bare_forced_token_calls:
+            return (
+                "helpers.ForcedTokenStep returns (next_token, new_steps) and must not be called as a bare statement. "
+                "Assign its result, append next_token, and update stepsLeft = new_steps."
+            )
+        if bare_append_helper_calls:
+            return (
+                "Append* helper calls return (updated_prefix, remaining_steps) and must not be used as bare statements. "
+                "Assign them back into generated/stepsLeft."
+            )
+        if append_helper_wrong_targets:
+            return (
+                "Append* helper calls return (updated_prefix, remaining_steps) and must be assigned back into "
+                "`generated, stepsLeft`, not token variables like `next_token`. Offending helpers: "
+                + ", ".join(sorted(append_helper_wrong_targets)) + "."
+            )
         if not appends_generated:
-            return "The body must append produced tokens with generated = generated + [next_token]."
-        if not appends_answer:
-            return "The body must append constrained answer tokens with answer = answer + [next_token]."
+            return (
+                "The body must either append produced tokens with generated = generated + [next_token] "
+                "or use an Append* helper that assigns back into generated."
+            )
+        if "# invariant lm.ValidTokensIdsLogits()" not in body:
+            return "The body must include the standard loop invariant `# invariant lm.ValidTokensIdsLogits()`."
+        if "# invariant 0 <= stepsLeft <= maxSteps" not in body:
+            return "The body must include the standard loop invariant `# invariant 0 <= stepsLeft <= maxSteps`."
+        if "# decreases stepsLeft" not in body:
+            return "The body must include the standard decreases clause `# decreases stepsLeft` immediately above a decoding while loop."
         if len(extra_state) < 2:
             return "The body must maintain at least two extra local state variables so the strategy is not a trivial loop."
         if if_count < 2:
-            return "The body needs richer control flow than a single top-level switch."
-        if not answer_reasoning:
-            return "The body must reason explicitly about the constrained answer channel."
-        if len(while_nodes) == 1:
-            while_body = while_nodes[0].body
-            significant = [
-                node for node in while_body
-                if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str))
-            ]
-            if len(significant) <= 4:
-                simple_window_switch = (
-                    len(significant) == 3
-                    and isinstance(significant[0], ast.If)
-                ) or (
-                    len(significant) == 4
-                    and isinstance(significant[0], ast.Assign)
-                    and isinstance(significant[1], ast.If)
-                )
-                if simple_window_switch:
-                    return "The body is still a basic loop/switch pattern; it needs more novel control structure."
+            return "The body needs richer control flow than a single top-level branch."
         return None
 
     def _ensure_nontrivial_strategy(self, strategy_body: str, *, max_repairs: int = 2) -> str:
@@ -684,11 +952,24 @@ while stepsLeft > 0 and not parser.IsCompletePrefix(answer):
         score += 4 * while_count
         score += 3 * bool_complexity
         score += 4 * nested_if
-        if "ExpressiveStep" in helper_calls:
+        if "ConstrainedStep" in helper_calls or "AppendConstrainedStep" in helper_calls:
             score += 10
-        if "ConstrainedAnswerStep" in helper_calls:
+        if {"ForcedTokenStep", "AppendForcedToken", "AppendLeftDelimiter", "AppendRightDelimiter"} & helper_calls:
+            score += 8
+        if "UnconstrainedStep" in helper_calls or "AppendUnconstrainedStep" in helper_calls:
+            score += 6
+        if {
+            "SoftConstrainedStep",
+            "TopKConstrainedStep",
+            "AppendSoftConstrainedStep",
+            "AppendTopKConstrainedStep",
+        } & helper_calls:
+            score += 12
+        if "BudgetAwareStep" in helper_calls or "AppendBudgetAwareStep" in helper_calls:
             score += 10
-        if helper_calls == {"ExpressiveStep", "ConstrainedAnswerStep"}:
+        if "LongestValidSuffix" in helper_calls or "CanConstrain" in helper_calls:
+            score += 6
+        if len(helper_calls) >= 3:
             score += 8
         return score
 

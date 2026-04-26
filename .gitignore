@@ -1,7 +1,5 @@
 .pytest_cache/
 cache/
-outputs/
-evaluations/gsm_symbolic/compiled_csd-py/
 
 # Dafny binary
 dafny/

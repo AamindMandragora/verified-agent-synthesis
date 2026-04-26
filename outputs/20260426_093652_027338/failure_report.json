@@ -1,0 +1,68 @@
+{
+  "task_description": "Generate short symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces a strict arithmetic expression grammar with numeric constants and optional variables. CRITICAL RULES: 1. Pure arithmetic expressions are valid; the final << >> segment may be either a single expression or a single equation. 2. The evaluator computes the numeric value of the final constrained expression, so the model does not need to simplify all the way to a standalone numeral. 3. Use variables only when they genuinely help; pure numeric expressions like 16 * 8.5 + 4 * 10.5 + 13 are allowed. 4. Preserve numeric values exactly from the problem statement. Do not round or truncate decimals like 8.5 into 8. 5. The constrained answer segment should stay short, compact, and mathematically meaningful. 6. Prefer exactly one final << >> answer span; avoid emitting extra delimiter windows after the answer, and do not mention << or >> in the free-form reasoning text. 7. The final constrained segment must be complete before the closing delimiter.",
+  "total_attempts": 2,
+  "timestamp": "2026-04-26T09:41:07.891442",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "strategy_code": "# CSD_RATIONALE_BEGIN\n# Generate short symbolic mathematical expressions while staying within the given grammar constraints. Use variables only when necessary and preserve numeric values exactly. Employ multiple state variables to adaptively control the decoding process.\n# CSD_RATIONALE_END\n\ncurrent_phase = 'free_form'\nallow_variables = False\nbudget_factor = 1.0\n\n# Phase 1: Free-form reasoning\nwhile stepsLeft > 0 and len(generated) < maxSteps:\n    # invariant lm.ValidTokensIdsLogits()\n    # invariant 0 <= stepsLeft <= maxSteps\n    # invariant |generated| + stepsLeft <= maxSteps\n    # decreases stepsLeft\n\n    if current_phase == 'free_form':\n        next_token, stepsLeft = helpers.AppendUnconstrainedStep(prompt, generated, stepsLeft)\n        \n        # Check if we should switch to the constrained phase\n        if helpers.CanConstrain(generated):\n            current_phase = 'constrained'\n    \n    elif current_phase == 'constrained':\n        if helpers.CanConstrain(generated):\n            next_token, stepsLeft = helpers.AppendConstrainedStep(prompt, generated, stepsLeft)\n        else:\n            next_token, stepsLeft = helpers.AppendUnconstrainedStep(prompt, generated, stepsLeft)\n        \n        # Adjust budget factor based on remaining steps\n        if stepsLeft <= maxSteps // 2:\n            budget_factor *= 0.5\n        \n        # Allow variables if we haven't used any yet and there are enough steps left\n        if not allow_variables and parser.ValidContinuationCount(helpers.LongestValidSuffix(generated)) > 1 and stepsLeft > 5:\n            allow_variables = True\n\n# Phase 2: Append LeftDelimiter\ngenerated, stepsLeft = helpers.AppendLeftDelimiter(generated, stepsLeft)\n\n# Phase 3: Constrained generation until complete\nwhile stepsLeft > 0 and not parser.IsCompletePrefix(helpers.LongestValidSuffix(generated)):\n    next_token, stepsLeft = helpers.AppendConstrainedStep(prompt, generated, stepsLeft)\n\n# Ensure we have a complete grammar segment before appending RightDelimiter\nif parser.IsCompletePrefix(helpers.LongestValidSuffix(generated)):\n    generated, stepsLeft = helpers.AppendRightDelimiter(generated, stepsLeft)",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false,
+          "uses_answer_channel": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "# CSD_RATIONALE_BEGIN\n# Generate short symbolic mathematical expressions while staying within the given grammar constraints. Use variables only when necessary and preserve numeric values exactly. Employ multiple state variables to adaptively control the decoding process.\n# CSD_RATIONALE_END\n\ncurrent_phase = 'free_form'\nallow_variables = False\nbudget_factor = 1.0\n\n# Phase 1: Free-form reasoning\nwhile stepsLeft > 0 and len(generated) < maxSteps:\n    # invariant lm.ValidTokensIdsLogits()\n    # invariant 0 <= stepsLeft <= maxSteps\n    # invariant |generated| + stepsLeft <= maxSteps\n    # decreases stepsLeft\n\n    if current_phase == 'free_form':\n        next_token, stepsLeft = helpers.AppendUnconstrainedStep(prompt, generated, stepsLeft)\n        \n        # Check if we should switch to the constrained phase\n        if helpers.CanConstrain(generated):\n            current_phase = 'constrained'\n    \n    elif current_phase == 'constrained':\n        if helpers.CanConstrain(generated):\n            next_token, stepsLeft = helpers.AppendConstrainedStep(prompt, generated, stepsLeft)\n        else:\n            next_token, stepsLeft = helpers.AppendUnconstrainedStep(prompt, generated, stepsLeft)\n        \n        # Adjust budget factor based on remaining steps\n        if stepsLeft <= maxSteps // 2:\n            budget_factor *= 0.5\n        \n        # Allow variables if we haven't used any yet and there are enough steps left\n        if not allow_variables and parser.ValidContinuationCount(helpers.LongestValidSuffix(generated)) > 1 and stepsLeft > 5:\n            allow_variables = True\n\n# Phase 2: Append LeftDelimiter\ngenerated, stepsLeft = helpers.AppendLeftDelimiter(generated, stepsLeft)\n\n# Phase 3: Constrained generation until complete\nwhile stepsLeft > 0 and not parser.IsCompletePrefix(helpers.LongestValidSuffix(generated)):\n    next_token, stepsLeft = helpers.AppendConstrainedStep(prompt, generated, stepsLeft)\n\n# Ensure we have a complete grammar segment before appending RightDelimiter\nif parser.IsCompletePrefix(helpers.LongestValidSuffix(generated)):\n    generated, stepsLeft = helpers.AppendRightDelimiter(generated, stepsLeft)"
+      },
+      "timestamp": "2026-04-26T09:38:52.325221",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 2 error(s):\n\n  (Line 29, Column 8): Error: unresolved identifier: next_token\n  (Line 53, Column 6): Error: unresolved identifier: next_token\n\nFull Dafny output:\nGeneratedCSD.dfy(29,8): Error: unresolved identifier: next_token\n   |\n29 |         next_token, stepsLeft := helpers.AppendUnconstrainedStep(prompt, generated, stepsLeft);\n   |         ^^^^^^^^^^\n\nGeneratedCSD.dfy(53,6): Error: unresolved identifier: next_token\n   |\n53 |       next_token, stepsLeft := helpers.AppendConstrainedStep(prompt, generated, stepsLeft);\n   |       ^^^^^^^^^^\n\n2 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 2
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 2,
+      "strategy_code": "# CSD_RATIONALE_BEGIN\n# Generate short symbolic mathematical expressions while staying within the given grammar constraints. Use variables only when necessary and preserve numeric values exactly. Employ multiple state variables to adaptively control the decoding process.\n# CSD_RATIONALE_END\nnext_token = eosToken\n\ncurrent_phase = 'free_form'\nallow_variables = False\nbudget_factor = 1.0\n\n# Phase 1: Free-form reasoning\nwhile stepsLeft > 0 and len(generated) < maxSteps:\n    # invariant lm.ValidTokensIdsLogits()\n    # invariant 0 <= stepsLeft <= maxSteps\n    # invariant |generated| + stepsLeft <= maxSteps\n    # decreases stepsLeft\n\n    if current_phase == 'free_form':\n        next_token, stepsLeft = helpers.AppendUnconstrainedStep(prompt, generated, stepsLeft)\n        \n        # Check if we should switch to the constrained phase\n        if helpers.CanConstrain(generated):\n            current_phase = 'constrained'\n    \n    elif current_phase == 'constrained':\n        if helpers.CanConstrain(generated):\n            next_token, stepsLeft = helpers.AppendConstrainedStep(prompt, generated, stepsLeft)\n        else:\n            next_token, stepsLeft = helpers.AppendUnconstrainedStep(prompt, generated, stepsLeft)\n        \n        # Adjust budget factor based on remaining steps\n        if stepsLeft <= maxSteps // 2:\n            budget_factor *= 0.5\n        \n        # Allow variables if we haven't used any yet and there are enough steps left\n        if not allow_variables and parser.ValidContinuationCount(helpers.LongestValidSuffix(generated)) > 1 and stepsLeft > 5:\n            allow_variables = True\n\n# Phase 2: Append LeftDelimiter\ngenerated, stepsLeft = helpers.AppendLeftDelimiter(generated, stepsLeft)\n\n# Phase 3: Constrained generation until complete\nwhile stepsLeft > 0 and not parser.IsCompletePrefix(helpers.LongestValidSuffix(generated)):\n    next_token, stepsLeft = helpers.AppendConstrainedStep(prompt, generated, stepsLeft)\n\n# Ensure we have a complete grammar segment before appending RightDelimiter\nif parser.IsCompletePrefix(helpers.LongestValidSuffix(generated)):\n    generated, stepsLeft = helpers.AppendRightDelimiter(generated, stepsLeft)",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false,
+          "uses_answer_channel": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "# CSD_RATIONALE_BEGIN\n# Generate short symbolic mathematical expressions while staying within the given grammar constraints. Use variables only when necessary and preserve numeric values exactly. Employ multiple state variables to adaptively control the decoding process.\n# CSD_RATIONALE_END\nnext_token = eosToken\n\ncurrent_phase = 'free_form'\nallow_variables = False\nbudget_factor = 1.0\n\n# Phase 1: Free-form reasoning\nwhile stepsLeft > 0 and len(generated) < maxSteps:\n    # invariant lm.ValidTokensIdsLogits()\n    # invariant 0 <= stepsLeft <= maxSteps\n    # invariant |generated| + stepsLeft <= maxSteps\n    # decreases stepsLeft\n\n    if current_phase == 'free_form':\n        next_token, stepsLeft = helpers.AppendUnconstrainedStep(prompt, generated, stepsLeft)\n        \n        # Check if we should switch to the constrained phase\n        if helpers.CanConstrain(generated):\n            current_phase = 'constrained'\n    \n    elif current_phase == 'constrained':\n        if helpers.CanConstrain(generated):\n            next_token, stepsLeft = helpers.AppendConstrainedStep(prompt, generated, stepsLeft)\n        else:\n            next_token, stepsLeft = helpers.AppendUnconstrainedStep(prompt, generated, stepsLeft)\n        \n        # Adjust budget factor based on remaining steps\n        if stepsLeft <= maxSteps // 2:\n            budget_factor *= 0.5\n        \n        # Allow variables if we haven't used any yet and there are enough steps left\n        if not allow_variables and parser.ValidContinuationCount(helpers.LongestValidSuffix(generated)) > 1 and stepsLeft > 5:\n            allow_variables = True\n\n# Phase 2: Append LeftDelimiter\ngenerated, stepsLeft = helpers.AppendLeftDelimiter(generated, stepsLeft)\n\n# Phase 3: Constrained generation until complete\nwhile stepsLeft > 0 and not parser.IsCompletePrefix(helpers.LongestValidSuffix(generated)):\n    next_token, stepsLeft = helpers.AppendConstrainedStep(prompt, generated, stepsLeft)\n\n# Ensure we have a complete grammar segment before appending RightDelimiter\nif parser.IsCompletePrefix(helpers.LongestValidSuffix(generated)):\n    generated, stepsLeft = helpers.AppendRightDelimiter(generated, stepsLeft)"
+      },
+      "timestamp": "2026-04-26T09:38:53.568550",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 23, Column 19): Error: RHS (of type Token) not assignable to LHS (of type Prefix) (covariant type parameter would require char <: Token)\n\nFull Dafny output:\nGeneratedCSD.dfy(23,19): Error: RHS (of type Token) not assignable to LHS (of type Prefix) (covariant type parameter would require char <: Token)\n   |\n23 |     var next_token := eosToken;\n   |                    ^^\n\n1 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    }
+  ],
+  "failure_patterns": {
+    "verification_failures": 2,
+    "compilation_failures": 0,
+    "runtime_failures": 0,
+    "common_errors": [
+      {
+        "error": "Type error",
+        "count": 2
+      }
+    ]
+  }
+}

@@ -1,36 +1,35 @@
 #!/bin/bash
 # Make CSD for GSM-Symbolic (math reasoning) using Qwen 7B.
-# Usage: bash synthesis/shell/gsm_symbolic_qwen7b.sh
-set -e
+# Usage: bash synthesis/shell/gsm_symbolic_qwen7b.sh [extra generate_csd args]
+set -euo pipefail
 
-# GSM task description emphasizing SHORT constrained windows with VARIABLES (verbose for Qwen)
-TASK_DESC="Generate short symbolic mathematical expressions for GSM-Symbolic reasoning. \
-The parser enforces a strict arithmetic expression grammar with VARIABLES and numeric constants. \
-CRITICAL RULES: \
-1. Every expression MUST contain at least one variable - pure numeric expressions like '2 * 2' are INVALID. \
-    Variables may appear as letter+digits (n1, x2), split letter/digit tokens (n 1, x 2), or letter-only (n, x, foo). \
-2. Variables represent problem values; numeric constants (12, 100) are for unit conversions and percentages. \
-3. The constrained windows are SHORT (typically 5-20 tokens for expressions like 'n1 + n2 * 12'). \
-4. The grammar is RECURSIVE but depth is BOUNDED in runtime; prefer balanced parentheses and compact expressions. \
-5. The grammar includes the closing delimiter '>>' - expressions must be complete and compact. \
-6. Avoid trivial outputs (e.g., just a single variable) unless the problem truly requires it; include necessary operators."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$REPO_ROOT"
 
-echo "Making GSM CSD (Qwen 7B)..."
-echo "Task: $TASK_DESC"
+DEVICE="${DEVICE:-auto}"
+MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
+TEMPERATURE="${TEMPERATURE:-0.7}"
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
+export HF_DATASETS_OFFLINE="${HF_DATASETS_OFFLINE:-1}"
+export HF_DATASETS_CACHE="${HF_DATASETS_CACHE:-/tmp/hf-datasets-local}"
+export MPLCONFIGDIR="${MPLCONFIGDIR:-/tmp/matplotlib}"
+export CSD_HELPER_REFERENCE_MODE="${CSD_HELPER_REFERENCE_MODE:-curated}"
+mkdir -p "$HF_DATASETS_CACHE" "$MPLCONFIGDIR"
+
+echo "Making GSM-Symbolic CSD (Qwen 7B) from the preset wrapper..."
+echo "The preset allows a final raw arithmetic expression inside << >>; evaluation computes its numeric value."
+echo "Offline defaults: HF_HUB_OFFLINE=$HF_HUB_OFFLINE, TRANSFORMERS_OFFLINE=$TRANSFORMERS_OFFLINE, HF_DATASETS_OFFLINE=$HF_DATASETS_OFFLINE."
+echo "Helper reference mode: $CSD_HELPER_REFERENCE_MODE."
+echo "Tip: set DEVICE=cuda:3 or CUDA_VISIBLE_DEVICES=3 to pin a GPU."
 echo ""
 
-python run_synthesis.py \
-  --task "$TASK_DESC" \
-  --dataset gsm_symbolic \
-  --max-iterations 10 \
-  --model "Qwen/Qwen2.5-Coder-7B-Instruct" \
-  --output-name "gsm_crane_csd" \
-  --temperature 0.7 \
-  --device auto \
-  --min-accuracy 0.3 \
-  --min-format-rate 0.5 \
-  --min-syntax-rate 0.5 \
-  --eval-sample-size 10 \
-  --eval-max-steps 2048
+python -m synthesis.cli.generate_csd gsm_symbolic \
+  --model-preset qwen7b \
+  --max-iterations "$MAX_ITERATIONS" \
+  --temperature "$TEMPERATURE" \
+  --device "$DEVICE" \
+  "$@"
 
-echo "GSM CSD (Qwen 7B) done. Run dir: outputs/ (see latest_run.txt)"
+echo "GSM-Symbolic CSD (Qwen 7B) done. Run dir: outputs/ (see latest_run.txt)"

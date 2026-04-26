@@ -1,34 +1,25 @@
 #!/bin/bash
-# Make CSD for FOLIO (first-order logic) using Qwen 7B.
-# Usage: bash synthesis/shell/folio_qwen7b.sh
-set -e
+# Make CSD for FOLIO using Qwen 7B.
+# Usage: bash synthesis/shell/folio_qwen7b.sh [extra generate_csd args]
+set -euo pipefail
 
-# FOLIO task description for FOL constrained decoding (verbose for Qwen)
-TASK_DESC="Generate first-order logic (FOL) formulas for FOLIO logical reasoning. \
-The parser enforces a strict FOL grammar with quantifiers, predicates, and logical connectives. \
-CRITICAL RULES: \
-1. Use {forall} and {exists} for quantifiers, followed by a single lowercase variable and a formula. \
-2. Predicates start with uppercase (e.g., Dog(x), Likes(john, mary)) with lowercase arguments. \
-3. Single lowercase letters (x, y, z) are variables; multi-character lowercase identifiers are constants. \
-4. Logical connectives: {and}, {or}, {not}, {implies}, {iff}, {xor}. \
-5. The constrained windows contain complete FOL statements — one per premise and one for the conclusion. \
-6. Parentheses are used for grouping; operator precedence is: iff < implies < xor < or < and < not."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$REPO_ROOT"
 
-echo "Making FOLIO CSD (Qwen 7B)..."
-echo "Task: $TASK_DESC"
+DEVICE="${DEVICE:-auto}"
+MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
+TEMPERATURE="${TEMPERATURE:-0.7}"
+
+echo "Making FOLIO CSD (Qwen 7B) from the preset wrapper..."
+echo "Tip: set DEVICE=cuda:3 or CUDA_VISIBLE_DEVICES=3 to pin a GPU."
 echo ""
 
-python run_synthesis.py \
-  --task "$TASK_DESC" \
-  --dataset folio \
-  --max-iterations 10 \
-  --model "Qwen/Qwen2.5-Coder-7B-Instruct" \
-  --output-name "folio_csd" \
-  --temperature 0.7 \
-  --device auto \
-  --min-accuracy 0.5 \
-  --min-format-rate 0.8 \
-  --min-syntax-rate 0.8 \
-  --eval-sample-size 10
+python -m synthesis.cli.generate_csd folio \
+  --model-preset qwen7b \
+  --max-iterations "$MAX_ITERATIONS" \
+  --temperature "$TEMPERATURE" \
+  --device "$DEVICE" \
+  "$@"
 
 echo "FOLIO CSD (Qwen 7B) done. Run dir: outputs/ (see latest_run.txt)"

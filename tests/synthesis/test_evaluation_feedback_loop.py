@@ -40,9 +40,20 @@ def test_evaluator_helpers_match_current_surface():
 
     evaluator = Evaluator(dataset_name="gsm_symbolic")
     assert evaluator._extract_constrained_content("hello <<5+3=8>> world") == ["5+3=8"]
+    assert evaluator._extract_answer_gsm("hello <<5+3>> world") == "8"
     assert evaluator._extract_answer_gsm("hello <<5+3=8>> world") == "8"
     assert evaluator._check_format_validity("hello <<5+3=8>> world")
     assert evaluator._get_grammar_file().name == "gsm.lark"
+
+
+def test_evaluator_gsm_expression_evaluation_uses_final_segment_only():
+    from evaluation.evaluator import Evaluator
+
+    evaluator = Evaluator(dataset_name="gsm_symbolic")
+
+    assert evaluator._extract_answer_gsm("reasoning <<1+1>> trailing <<16 * 8.5 + 4 * 10.5 + 13>>") == "191"
+    assert evaluator._extract_answer_gsm("reasoning <<5+3>> trailing <<not valid>>") is None
+    assert evaluator._answers_match("191", "191.0")
 
 
 def test_failure_stage_and_attempt_record_evaluation_results():
@@ -139,7 +150,7 @@ def test_pipeline_retries_after_evaluation_failure(mock_dafny_compiler):
     mock_verifier.verify = Mock(return_value=VerificationResult(success=True, raw_output="ok"))
 
     mock_runner = Mock()
-    mock_runner.run = Mock(return_value=RuntimeResult(success=True, output=["token"], cost=1))
+    mock_runner.run_python_native = Mock(return_value=RuntimeResult(success=True, output=["token"], cost=1))
 
     mock_evaluator = Mock()
     eval_results = [

@@ -7,9 +7,11 @@ to enable feedback-driven refinement based on actual performance metrics.
 
 from __future__ import annotations
 
+import ast
 import re
 import time
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation, localcontext
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -270,20 +272,29 @@ class Evaluator:
             return None
         try:
             from evaluation.gsm_symbolic.grammar import build_dynamic_grammar
-            from evaluation.common.parser_utils import create_lark_dafny_parser
         except Exception:
             return None
 
         try:
             base_grammar = self._get_grammar_file().read_text()
             dynamic_grammar = build_dynamic_grammar(base_grammar, variables)
-            parser_cls = create_lark_dafny_parser(
-                dynamic_grammar,
-                env["VerifiedDecoderAgent"],
-                env["_dafny"],
-                start="csd_start",
-            )
-            return parser_cls(env["lm"]._Tokens)
+            if env.get("_mode") == "native":
+                from evaluation.common.parser_utils import create_lark_native_parser
+                parser_cls = create_lark_native_parser(
+                    dynamic_grammar,
+                    env["VerifiedAgentSynthesis"],
+                    start="csd_start",
+                )
+                return parser_cls(env["lm"].Tokens)
+            else:
+                from evaluation.common.parser_utils import create_lark_dafny_parser
+                parser_cls = create_lark_dafny_parser(
+                    dynamic_grammar,
+                    env["VerifiedDecoderAgent"],
+                    env["_dafny"],
+                    start="csd_start",
+                )
+                return parser_cls(env["lm"]._Tokens)
         except Exception:
             return None
 
@@ -326,16 +337,35 @@ class Evaluator:
 
         return self._dataset
 
-    def _setup_environment(self, compiled_module_path: Path) -> Dict[str, Any]:
+    def _setup_environment(
+        self,
+        compiled_module_path: Optional[Path] = None,
+        python_source_path: Optional[Path] = None,
+    ) -> Dict[str, Any]:
         """
-        Set up the Dafny environment for evaluation.
+        Set up the evaluation environment.
 
-        Args:
-            compiled_module_path: Path to the compiled CSD module
-
-        Returns:
-            Environment dict with loaded modules
+        When python_source_path is provided, uses Python-native mode (no Dafny runtime).
+        Otherwise falls back to Dafny-compiled mode via compiled_module_path.
         """
+        if python_source_path is not None:
+            from evaluation.common.environment import setup_python_native_environment
+
+            start_rule = "start" if self.dataset_name == "folio" else "csd_start"
+            return setup_python_native_environment(
+                python_source_path=python_source_path,
+                model_name=self.model_name,
+                device=self.device,
+                vocab_size=self.vocab_size,
+                grammar_file=self._get_grammar_file(),
+                start_rule=start_rule,
+                load_in_4bit=self.load_in_4bit,
+                add_gsm_delimiter_tokens=(self.dataset_name == "gsm_symbolic"),
+                add_fol_keyword_tokens=(self.dataset_name == "folio"),
+            )
+
+        # Dafny-compiled mode (original path)
+        assert compiled_module_path is not None
         run_dir = compiled_module_path.parent
         if run_dir.name == "generated_csd":
             run_dir = run_dir.parent
@@ -380,23 +410,105 @@ class Evaluator:
             return re.findall(r"\$\s*([^$%]+?)\s*%", output)
         return re.findall(r"<<\s*([\s\S]+?)\s*>>", output)
 
-    def _extract_answer_gsm(self, output: str) -> Optional[str]:
-        """Extract numeric answer from GSM-Symbolic output within << >> delimiters."""
+    @staticmethod
+    def _normalize_gsm_decimal(value: Decimal) -> str:
+        """Render a Decimal without scientific notation or redundant trailing zeros."""
+        if value == 0:
+            return "0"
+        if value == value.to_integral_value():
+            return str(int(value))
+        text = format(value.normalize(), "f")
+        if "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return "0" if text in {"-0", ""} else text
+
+    def _extract_gsm_numeric_bindings(self, example: Optional[Any]) -> Dict[str, Decimal]:
+        """Best-effort numeric bindings for symbolic GSM expressions, when available."""
+        if example is None:
+            return {}
+
+        bindings: Dict[str, Decimal] = {}
+        for key in ("variable_mapping", "eval_input", "bindings"):
+            raw = self._example_field(example, key, None)
+            if not isinstance(raw, dict):
+                continue
+            for name, value in raw.items():
+                try:
+                    if isinstance(value, bool):
+                        continue
+                    if isinstance(value, (int, float)):
+                        bindings[str(name)] = Decimal(str(value))
+                    elif isinstance(value, str):
+                        numeric = re.search(r"[-+]?\d*\.?\d+", value)
+                        if numeric:
+                            bindings[str(name)] = Decimal(numeric.group())
+                except (InvalidOperation, ValueError):
+                    continue
+        return bindings
+
+    def _safe_eval_gsm_expr(self, expr: str, bindings: Optional[Dict[str, Decimal]] = None) -> Optional[Decimal]:
+        """Safely evaluate a GSM arithmetic expression using a tiny Python AST subset."""
+        bindings = bindings or {}
+        try:
+            tree = ast.parse(expr, mode="eval")
+        except SyntaxError:
+            return None
+
+        def _eval(node: ast.AST) -> Decimal:
+            if isinstance(node, ast.Expression):
+                return _eval(node.body)
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+                return Decimal(str(node.value))
+            if isinstance(node, ast.Name) and node.id in bindings:
+                return bindings[node.id]
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+                value = _eval(node.operand)
+                return value if isinstance(node.op, ast.UAdd) else -value
+            if isinstance(node, ast.BinOp):
+                left = _eval(node.left)
+                right = _eval(node.right)
+                if isinstance(node.op, ast.Add):
+                    return left + right
+                if isinstance(node.op, ast.Sub):
+                    return left - right
+                if isinstance(node.op, ast.Mult):
+                    return left * right
+                if isinstance(node.op, ast.Div):
+                    return left / right
+                if isinstance(node.op, ast.FloorDiv):
+                    return left // right
+                if isinstance(node.op, ast.Mod):
+                    return left % right
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "int"
+                and len(node.args) == 1
+                and not node.keywords
+            ):
+                return Decimal(int(_eval(node.args[0])))
+            raise ValueError(f"Unsupported GSM expression node: {type(node).__name__}")
+
+        try:
+            with localcontext() as ctx:
+                ctx.prec = 50
+                return _eval(tree)
+        except (ArithmeticError, InvalidOperation, ValueError, KeyError, ZeroDivisionError):
+            return None
+
+    def _extract_answer_gsm(self, output: str, example: Optional[Any] = None) -> Optional[str]:
+        """Extract and safely evaluate the final GSM expression/equation within << >> delimiters."""
         matches = self._extract_constrained_content(output)
         if not matches:
             return None
 
-        last_match = matches[-1]
-        if "=" in last_match:
-            answer_part = last_match.split("=")[-1].strip()
-            num_match = re.search(r"[-+]?\d*\.?\d+", answer_part)
-            if num_match:
-                return num_match.group()
-        else:
-            num_match = re.search(r"[-+]?\d*\.?\d+", last_match)
-            if num_match:
-                return num_match.group()
-
+        bindings = self._extract_gsm_numeric_bindings(example)
+        segment = matches[-1]
+        candidate_parts = [part.strip() for part in segment.split("=") if part.strip()]
+        for candidate in reversed(candidate_parts):
+            value = self._safe_eval_gsm_expr(candidate, bindings)
+            if value is not None:
+                return self._normalize_gsm_decimal(value)
         return None
 
     def _extract_answer_folio(self, output: str, example: Optional[Any] = None) -> Optional[str]:
@@ -519,6 +631,12 @@ class Evaluator:
         sent to Prover9 matches the gold conclusion (avoids crediting garbage output)."""
         if actual is None:
             return False
+
+        if self.dataset_name == "gsm_symbolic":
+            try:
+                return Decimal(str(actual).strip()) == Decimal(str(expected).strip())
+            except InvalidOperation:
+                return str(actual).strip() == str(expected).strip()
 
         # SyGuS SLIA: compare generated result against eval_expected
         if self.dataset_name == "sygus_slia":
@@ -667,11 +785,14 @@ class Evaluator:
             return (
                 "Solve the following math problem. You may write free-form reasoning in plain text, "
                 "but the final answer-bearing mathematical expression or equation must appear inside the final << >> segment.\n"
-                "That final constrained segment should be short, mathematically meaningful, and should end with the numeric answer rather than decorative punctuation.\n\n"
+                "That final constrained segment should be short and mathematically meaningful. It does NOT need to simplify to a standalone numeral: "
+                "a final segment like <<5 + 3>> is valid because the evaluator computes the expression's numeric value.\n"
+                "Emit only one final << >> answer segment, do not add extra << >> spans after it, "
+                "and do not mention << or >> literally in the free-form reasoning text.\n\n"
                 "Example:\n"
                 "Q: Amy has 5 apples. She buys 3 more. How many does she have?\n"
                 "A: Amy starts with 5 apples and buys 3 more.\n"
-                "The final constrained answer segment is <<5 + 3 = 8>>.\n"
+                "End with <<5 + 3>>.\n"
                 "The answer is 8.\n\n"
                 f"Q: {question}\nA:"
             )
@@ -777,15 +898,18 @@ class Evaluator:
 
     def evaluate_sample(
         self,
-        compiled_module_path: Path,
+        compiled_module_path: Optional[Path] = None,
         sample_size: Optional[int] = None,
+        python_source_path: Optional[Path] = None,
     ) -> EvaluationResult:
         """
-        Evaluate the compiled CSD on a sample of the dataset.
+        Evaluate the CSD on a sample of the dataset.
 
         Args:
-            compiled_module_path: Path to the compiled GeneratedCSD.py module
-            sample_size: Number of examples to evaluate (overrides init value)
+            compiled_module_path: Path to the compiled GeneratedCSD.py (Dafny mode).
+            sample_size: Number of examples to evaluate (overrides init value).
+            python_source_path: Path to the original Python strategy file (native mode).
+                When provided, skips Dafny runtime and runs the strategy directly.
 
         Returns:
             EvaluationResult with metrics and sample outputs
@@ -801,14 +925,22 @@ class Evaluator:
 
         try:
             dataset = self._load_dataset_sample()
-            env = self._setup_environment(compiled_module_path)
+            env = self._setup_environment(
+                compiled_module_path=compiled_module_path,
+                python_source_path=python_source_path,
+            )
             # CPU fallback is very slow; cap to 1 example so the run finishes in minutes
             if env.get("_eval_cpu_fallback") and len(dataset) > 1:
                 print(f"  Limiting to 1 example (CPU evaluation is slow; had {len(dataset)} requested).")
                 dataset = dataset[:1]
 
-            from evaluation.common.generation import run_crane_csd
-            from evaluation.common.parser_utils import create_folio_wrapper_parser
+            native_mode = env.get("_mode") == "native"
+            if native_mode:
+                from evaluation.common.generation import run_crane_csd_native as _run_csd
+                from evaluation.common.parser_utils import create_folio_native_parser
+            else:
+                from evaluation.common.generation import run_crane_csd as _run_csd
+                from evaluation.common.parser_utils import create_folio_wrapper_parser
 
             num_correct = 0
             num_valid_format = 0
@@ -825,16 +957,24 @@ class Evaluator:
                 try:
                     dynamic_parser = None
                     if self.dataset_name == "folio":
-                        dynamic_parser = create_folio_wrapper_parser(
-                            env["VerifiedDecoderAgent"],
-                            env["_dafny"],
-                            env["parser"],
-                            env["lm"]._Tokens,
-                            env["tokenizer"],
-                        )
+                        if native_mode:
+                            dynamic_parser = create_folio_native_parser(
+                                env["VerifiedAgentSynthesis"],
+                                env["parser"],
+                                env["lm"].Tokens,
+                                env["tokenizer"],
+                            )
+                        else:
+                            dynamic_parser = create_folio_wrapper_parser(
+                                env["VerifiedDecoderAgent"],
+                                env["_dafny"],
+                                env["parser"],
+                                env["lm"]._Tokens,
+                                env["tokenizer"],
+                            )
                     elif self.dataset_name == "gsm_symbolic":
                         dynamic_parser = self._build_dynamic_gsm_parser(env, example)
-                    output_text, token_count, gen_time, _ = run_crane_csd(
+                    output_text, token_count, gen_time, _ = _run_csd(
                         env=env,
                         prompt_text=prompt,
                         max_steps=self.max_steps,
@@ -846,7 +986,7 @@ class Evaluator:
 
                     t0 = time.time()
                     if self.dataset_name == "gsm_symbolic":
-                        actual = self._extract_answer_gsm(output_text)
+                        actual = self._extract_answer_gsm(output_text, example=example)
                     elif self.dataset_name == "sygus_slia":
                         actual = self._extract_answer_sygus_slia(output_text, example)
                     elif self.dataset_name == "pddl":

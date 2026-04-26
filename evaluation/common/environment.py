@@ -2,14 +2,18 @@
 Shared environment setup for CSD evaluation.
 
 Provides resolve_run_dir, load_compiled_modules, verify_critical_tokens,
-and setup_dafny_environment used by both gsm_symbolic and folio.
+setup_dafny_environment, and setup_python_native_environment.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 from typing import Any, Dict
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_VAS_DIR = _PROJECT_ROOT / "generation" / "csd"
 
 try:
     import torch
@@ -134,3 +138,85 @@ def setup_dafny_environment(
     if used_cpu_fallback:
         result["_eval_cpu_fallback"] = True
     return result
+
+
+def setup_python_native_environment(
+    python_source_path: Path,
+    model_name: str,
+    device: str,
+    vocab_size: int,
+    grammar_file: Path,
+    start_rule: str = "start",
+    load_in_4bit: bool = False,
+    load_in_8bit: bool = False,
+    add_gsm_delimiter_tokens: bool = False,
+    add_fol_keyword_tokens: bool = False,
+) -> Dict[str, Any]:
+    """
+    Load model and set up a Python-native (non-Dafny) evaluation environment.
+
+    Instead of loading Dafny-compiled modules, this imports VerifiedAgentSynthesis
+    and the strategy Python file directly, using plain Python types throughout.
+    No _dafny runtime is needed.
+
+    Returns a dict with "strategy_module", "lm", "parser", "tokenizer", "_mode": "native".
+    """
+    # Make VerifiedAgentSynthesis importable
+    vas_dir = str(_VAS_DIR)
+    if vas_dir not in sys.path:
+        sys.path.insert(0, vas_dir)
+    import VerifiedAgentSynthesis as VAS
+
+    # Load the generated strategy module
+    strategy_dir = str(python_source_path.parent)
+    if strategy_dir not in sys.path:
+        sys.path.insert(0, strategy_dir)
+    spec = importlib.util.spec_from_file_location("generated_csd_native", python_source_path)
+    if spec is None or spec.loader is None:
+        raise FileNotFoundError(f"Could not load strategy from {python_source_path}")
+    strategy_module = importlib.util.module_from_spec(spec)
+    sys.modules["generated_csd_native"] = strategy_module
+    spec.loader.exec_module(strategy_module)
+
+    from evaluation.common.model_utils import create_huggingface_lm_native
+    from evaluation.common.parser_utils import create_lark_native_parser
+
+    try:
+        import torch
+        lm = create_huggingface_lm_native(
+            model_name,
+            device,
+            vocab_size,
+            VAS,
+            load_in_4bit=load_in_4bit,
+            load_in_8bit=load_in_8bit,
+            add_gsm_delimiter_tokens=add_gsm_delimiter_tokens,
+        )
+    except RuntimeError as e:
+        if "out of memory" not in str(e).lower():
+            raise
+        import torch as _torch
+        _torch.cuda.empty_cache()
+        print("  Evaluation (native): CUDA OOM, falling back to CPU for model load.")
+        lm = create_huggingface_lm_native(
+            model_name,
+            "cpu",
+            vocab_size,
+            VAS,
+            load_in_4bit=load_in_4bit,
+            load_in_8bit=load_in_8bit,
+            add_gsm_delimiter_tokens=add_gsm_delimiter_tokens,
+        )
+
+    grammar_text = grammar_file.read_text()
+    LarkNativeParser = create_lark_native_parser(grammar_text, VAS, start=start_rule)
+    parser = LarkNativeParser(lm.Tokens)
+
+    return {
+        "strategy_module": strategy_module,
+        "VerifiedAgentSynthesis": VAS,
+        "lm": lm,
+        "parser": parser,
+        "tokenizer": lm.tokenizer,
+        "_mode": "native",
+    }

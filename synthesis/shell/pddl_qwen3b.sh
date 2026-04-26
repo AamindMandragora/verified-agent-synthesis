@@ -1,33 +1,25 @@
 #!/bin/bash
 # Make CSD for PDDL Blocks World using Qwen 3B.
-# Usage: bash synthesis/shell/pddl_qwen3b.sh
-set -e
+# Usage: bash synthesis/shell/pddl_qwen3b.sh [extra generate_csd args]
+set -euo pipefail
 
-TASK_DESC="Generate a PDDL planning strategy for Blocks World problems. \
-The grammar enforces a strict sequence of PDDL action applications: (pick-up X), (put-down X), (stack X Y), (unstack X Y) where X and Y are single lowercase block letters. \
-CRITICAL RULES: \
-1. The constrained window contains one or more actions with no other text. \
-2. Actions must satisfy their preconditions: pick-up requires hand empty and block clear on table; put-down requires holding block; stack requires holding top and bottom is clear; unstack requires hand empty and top is on bottom and top is clear. \
-3. The plan is evaluated by simulation - it must achieve the stated goal from the initial state. \
-4. Use UnconstrainedStep for any reasoning text before <<; use ConstrainedStep only for the action sequence inside << >>. \
-5. Plans are typically short (2-8 actions); prefer correct minimal plans."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+cd "$REPO_ROOT"
 
-echo "Making PDDL CSD (Qwen 3B)..."
-echo "Task: $TASK_DESC"
+DEVICE="${DEVICE:-auto}"
+MAX_ITERATIONS="${MAX_ITERATIONS:-10}"
+TEMPERATURE="${TEMPERATURE:-0.7}"
+
+echo "Making PDDL CSD (Qwen 3B) from the preset wrapper..."
+echo "Tip: set DEVICE=cuda:3 or CUDA_VISIBLE_DEVICES=3 to pin a GPU."
 echo ""
 
-python run_synthesis.py \
-  --task "$TASK_DESC" \
-  --dataset pddl \
-  --max-iterations 10 \
-  --model "Qwen/Qwen2.5-Coder-3B-Instruct" \
-  --output-name "pddl_csd" \
-  --temperature 0.7 \
-  --device auto \
-  --min-accuracy 0.3 \
-  --min-format-rate 0.5 \
-  --min-syntax-rate 0.5 \
-  --eval-sample-size 5 \
-  --eval-max-steps 128
+python -m synthesis.cli.generate_csd pddl \
+  --model-preset qwen3b \
+  --max-iterations "$MAX_ITERATIONS" \
+  --temperature "$TEMPERATURE" \
+  --device "$DEVICE" \
+  "$@"
 
 echo "PDDL CSD (Qwen 3B) done. Run dir: outputs/ (see latest_run.txt)"

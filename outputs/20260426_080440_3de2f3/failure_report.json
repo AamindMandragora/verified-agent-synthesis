@@ -1,0 +1,118 @@
+{
+  "task_description": "Generate short symbolic mathematical expressions for GSM-Symbolic reasoning. The parser enforces a strict arithmetic expression grammar with numeric constants and optional variables. CRITICAL RULES: 1. Pure arithmetic expressions are valid; the final << >> segment may be either a single expression or a single equation. 2. The evaluator computes the numeric value of the final constrained expression, so the model does not need to simplify all the way to a standalone numeral. 3. Use variables only when they genuinely help; pure numeric expressions like 16 * 8.5 + 4 * 10.5 + 13 are allowed. 4. The constrained answer segment should stay short, compact, and mathematically meaningful. 5. Prefer exactly one final << >> answer span; avoid emitting extra delimiter windows after the answer. 6. The final constrained segment must be complete before the closing delimiter.",
+  "total_attempts": 4,
+  "timestamp": "2026-04-26T08:09:00.489604",
+  "attempts": [
+    {
+      "attempt_number": 1,
+      "strategy_code": "# CSD_RATIONALE_BEGIN\n# This strategy starts with unconstrained generation to build context. Once a sufficient amount of context is built, it transitions to a constrained phase using grammar-aware steps. The strategy ensures that the final segment is complete and follows the grammar constraints. It emits the left delimiter, performs constrained steps until the segment is complete, and then emits the right delimiter.\n# CSD_RATIONALE_END\n\n# invariant lm.ValidTokensIdsLogits()\n# invariant 0 <= stepsLeft <= maxSteps\n# invariant len(generated) + stepsLeft <= maxSteps\n# decreases stepsLeft\n\ninitial_reasoning_length = 10\nconstraint_strength = 0.5\nbudget_threshold = 5\n\nif len(generated) < initial_reasoning_length:\n    next_token, stepsLeft = helpers.UnconstrainedStep(prompt, generated, stepsLeft)\nelse:\n    next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n\ngenerated = generated + [next_token]\n\nleft_delimiter_emitted = False\nright_delimiter_emitted = False\n\nwhile not right_delimiter_emitted:\n    if not left_delimiter_emitted:\n        next_token, new_steps = helpers.ForcedTokenStep(prompt, generated, LeftDelimiter, stepsLeft)\n        generated = generated + [next_token]\n        stepsLeft = new_steps\n        left_delimiter_emitted = True\n    else:\n        valid_suffix = helpers.LongestValidSuffix(generated)\n        if len(valid_suffix) > 0 and parser.IsCompletePrefix(valid_suffix):\n            right_delimiter_emitted = True\n        else:\n            next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n            generated = generated + [next_token]\n\n# Ensure the segment is complete before emitting the right delimiter\nif not right_delimiter_emitted:\n    next_token, stepsLeft = helpers.BudgetAwareStep(prompt, generated, stepsLeft, budget_threshold)\n    generated = generated + [next_token]\n\nnext_token, new_steps = helpers.ForcedTokenStep(prompt, generated, RightDelimiter, stepsLeft)\ngenerated = generated + [next_token]\nstepsLeft = new_steps",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false,
+          "uses_answer_channel": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "# CSD_RATIONALE_BEGIN\n# This strategy starts with unconstrained generation to build context. Once a sufficient amount of context is built, it transitions to a constrained phase using grammar-aware steps. The strategy ensures that the final segment is complete and follows the grammar constraints. It emits the left delimiter, performs constrained steps until the segment is complete, and then emits the right delimiter.\n# CSD_RATIONALE_END\n\n# invariant lm.ValidTokensIdsLogits()\n# invariant 0 <= stepsLeft <= maxSteps\n# invariant len(generated) + stepsLeft <= maxSteps\n# decreases stepsLeft\n\ninitial_reasoning_length = 10\nconstraint_strength = 0.5\nbudget_threshold = 5\n\nif len(generated) < initial_reasoning_length:\n    next_token, stepsLeft = helpers.UnconstrainedStep(prompt, generated, stepsLeft)\nelse:\n    next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n\ngenerated = generated + [next_token]\n\nleft_delimiter_emitted = False\nright_delimiter_emitted = False\n\nwhile not right_delimiter_emitted:\n    if not left_delimiter_emitted:\n        next_token, new_steps = helpers.ForcedTokenStep(prompt, generated, LeftDelimiter, stepsLeft)\n        generated = generated + [next_token]\n        stepsLeft = new_steps\n        left_delimiter_emitted = True\n    else:\n        valid_suffix = helpers.LongestValidSuffix(generated)\n        if len(valid_suffix) > 0 and parser.IsCompletePrefix(valid_suffix):\n            right_delimiter_emitted = True\n        else:\n            next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n            generated = generated + [next_token]\n\n# Ensure the segment is complete before emitting the right delimiter\nif not right_delimiter_emitted:\n    next_token, stepsLeft = helpers.BudgetAwareStep(prompt, generated, stepsLeft, budget_threshold)\n    generated = generated + [next_token]\n\nnext_token, new_steps = helpers.ForcedTokenStep(prompt, generated, RightDelimiter, stepsLeft)\ngenerated = generated + [next_token]\nstepsLeft = new_steps"
+      },
+      "timestamp": "2026-04-26T08:06:36.183836",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 4 error(s):\n\n  (Line 38, Column 20): Error: unresolved identifier: new_steps\n  (Line 40, Column 21): Error: unresolved identifier: new_steps\n  (Line 56, Column 16): Error: unresolved identifier: new_steps\n  (Line 58, Column 17): Error: unresolved identifier: new_steps\n\nFull Dafny output:\nGeneratedCSD.dfy(38,20): Error: unresolved identifier: new_steps\n   |\n38 |         next_token, new_steps := helpers.ForcedTokenStep(prompt, generated, LeftDelimiter, stepsLeft);\n   |                     ^^^^^^^^^\n\nGeneratedCSD.dfy(40,21): Error: unresolved identifier: new_steps\n   |\n40 |         stepsLeft := new_steps;\n   |                      ^^^^^^^^^\n\nGeneratedCSD.dfy(56,16): Error: unresolved identifier: new_steps\n   |\n56 |     next_token, new_steps := helpers.ForcedTokenStep(prompt, generated, RightDelimiter, stepsLeft);\n   |                 ^^^^^^^^^\n\nGeneratedCSD.dfy(58,17): Error: unresolved identifier: new_steps\n   |\n58 |     stepsLeft := new_steps;\n   |                  ^^^^^^^^^\n\n4 resolution/type errors detected in GeneratedCSD.dfy",
+      "verification": {
+        "success": false,
+        "error_count": 4
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 2,
+      "strategy_code": "# CSD_RATIONALE_BEGIN\n# This strategy starts with unconstrained generation to build context. Once a sufficient amount of context is built, it transitions to a constrained phase using grammar-aware steps. The strategy ensures that the final segment is complete and follows the grammar constraints. It emits the left delim, performs constrained steps until the segment is complete, and then emits the right delim.\n# CSD_RATIONALE_END\nnew_steps = stepsLeft\n\n# invariant lm.ValidTokensIdsLogits()\n# invariant 0 <= stepsLeft <= maxSteps\n# invariant |generated| + stepsLeft <= maxSteps\n# decreases stepsLeft\n\ninitial_reasoning_length = 10\nconstraint_strength = 0.5\nbudget_threshold = 5\n\nif len(generated) < initial_reasoning_length:\n    next_token, stepsLeft = helpers.UnconstrainedStep(prompt, generated, stepsLeft)\nelse:\n    next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n\ngenerated = generated + [next_token]\n\nleft_delimiter_emitted = False\nright_delimiter_emitted = False\n\nwhile not right_delimiter_emitted:\n    if not left_delimiter_emitted:\n        next_token, new_steps = helpers.ForcedTokenStep(prompt, generated, LeftDelimiter, stepsLeft)\n        generated = generated + [next_token]\n        stepsLeft = new_steps\n        left_delimiter_emitted = True\n    else:\n        valid_suffix = helpers.LongestValidSuffix(generated)\n        if len(valid_suffix) > 0 and parser.IsCompletePrefix(valid_suffix):\n            right_delimiter_emitted = True\n        else:\n            next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n            generated = generated + [next_token]\n\n# Ensure the segment is complete before emitting the right delim\nif not right_delimiter_emitted:\n    next_token, stepsLeft = helpers.BudgetAwareStep(prompt, generated, stepsLeft, budget_threshold)\n    generated = generated + [next_token]\n\nnext_token, new_steps = helpers.ForcedTokenStep(prompt, generated, RightDelimiter, stepsLeft)\ngenerated = generated + [next_token]\nstepsLeft = new_steps",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false,
+          "uses_answer_channel": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "# CSD_RATIONALE_BEGIN\n# This strategy starts with unconstrained generation to build context. Once a sufficient amount of context is built, it transitions to a constrained phase using grammar-aware steps. The strategy ensures that the final segment is complete and follows the grammar constraints. It emits the left delim, performs constrained steps until the segment is complete, and then emits the right delim.\n# CSD_RATIONALE_END\nnew_steps = stepsLeft\n\n# invariant lm.ValidTokensIdsLogits()\n# invariant 0 <= stepsLeft <= maxSteps\n# invariant |generated| + stepsLeft <= maxSteps\n# decreases stepsLeft\n\ninitial_reasoning_length = 10\nconstraint_strength = 0.5\nbudget_threshold = 5\n\nif len(generated) < initial_reasoning_length:\n    next_token, stepsLeft = helpers.UnconstrainedStep(prompt, generated, stepsLeft)\nelse:\n    next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n\ngenerated = generated + [next_token]\n\nleft_delimiter_emitted = False\nright_delimiter_emitted = False\n\nwhile not right_delimiter_emitted:\n    if not left_delimiter_emitted:\n        next_token, new_steps = helpers.ForcedTokenStep(prompt, generated, LeftDelimiter, stepsLeft)\n        generated = generated + [next_token]\n        stepsLeft = new_steps\n        left_delimiter_emitted = True\n    else:\n        valid_suffix = helpers.LongestValidSuffix(generated)\n        if len(valid_suffix) > 0 and parser.IsCompletePrefix(valid_suffix):\n            right_delimiter_emitted = True\n        else:\n            next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n            generated = generated + [next_token]\n\n# Ensure the segment is complete before emitting the right delim\nif not right_delimiter_emitted:\n    next_token, stepsLeft = helpers.BudgetAwareStep(prompt, generated, stepsLeft, budget_threshold)\n    generated = generated + [next_token]\n\nnext_token, new_steps = helpers.ForcedTokenStep(prompt, generated, RightDelimiter, stepsLeft)\ngenerated = generated + [next_token]\nstepsLeft = new_steps"
+      },
+      "timestamp": "2026-04-26T08:06:37.361186",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 36, Column 4): Error: cannot prove termination; try supplying a decreases clause for the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(36,4): Error: cannot prove termination; try supplying a decreases clause for the loop\n   |\n36 |     while !right_delimiter_emitted\n   |     ^^^^^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 3,
+      "strategy_code": "# CSD_RATIONALE_BEGIN\n# This strategy starts with unconstrained generation to build context. Once a sufficient amount of context is built, it transitions to a constrained phase using grammar-aware steps. The strategy ensures that the final segment is complete and follows the grammar constraints. It emits the left delim, performs constrained steps until the segment is complete, and then emits the right delim.\n# CSD_RATIONALE_END\n\nnew_steps = stepsLeft\n\n# invariant lm.ValidTokensIdsLogits()\n# invariant 0 <= stepsLeft <= maxSteps\n# invariant |generated| + stepsLeft <= maxSteps\n# decreases stepsLeft\n\ninitial_reasoning_length = 10\nconstraint_strength = 0.5\nbudget_threshold = 5\n\nif len(generated) < initial_reasoning_length:\n    next_token, stepsLeft = helpers.UnconstrainedStep(prompt, generated, stepsLeft)\nelse:\n    next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n\ngenerated = generated + [next_token]\n\nleft_delimiter_emitted = False\nright_delimiter_emitted = False\n\nwhile not right_delimiter_emitted:\n    if not left_delimiter_emitted:\n        next_token, new_steps = helpers.ForcedTokenStep(prompt, generated, LeftDelimiter, stepsLeft)\n        generated = generated + [next_token]\n        stepsLeft = new_steps\n        left_delimiter_emitted = True\n    else:\n        valid_suffix = helpers.LongestValidSuffix(generated)\n        if len(valid_suffix) > 0 and parser.IsCompletePrefix(valid_suffix):\n            right_delimiter_emitted = True\n        else:\n            next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n            generated = generated + [next_token]\n\n# Ensure the segment is complete before emitting the right delim\nif not right_delimiter_emitted:\n    next_token, stepsLeft = helpers.BudgetAwareStep(prompt, generated, stepsLeft, budget_threshold)\n    generated = generated + [next_token]\n\nnext_token, new_steps = helpers.ForcedTokenStep(prompt, generated, RightDelimiter, stepsLeft)\ngenerated = generated + [next_token]\nstepsLeft = new_steps",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false,
+          "uses_answer_channel": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "# CSD_RATIONALE_BEGIN\n# This strategy starts with unconstrained generation to build context. Once a sufficient amount of context is built, it transitions to a constrained phase using grammar-aware steps. The strategy ensures that the final segment is complete and follows the grammar constraints. It emits the left delim, performs constrained steps until the segment is complete, and then emits the right delim.\n# CSD_RATIONALE_END\n\nnew_steps = stepsLeft\n\n# invariant lm.ValidTokensIdsLogits()\n# invariant 0 <= stepsLeft <= maxSteps\n# invariant |generated| + stepsLeft <= maxSteps\n# decreases stepsLeft\n\ninitial_reasoning_length = 10\nconstraint_strength = 0.5\nbudget_threshold = 5\n\nif len(generated) < initial_reasoning_length:\n    next_token, stepsLeft = helpers.UnconstrainedStep(prompt, generated, stepsLeft)\nelse:\n    next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n\ngenerated = generated + [next_token]\n\nleft_delimiter_emitted = False\nright_delimiter_emitted = False\n\nwhile not right_delimiter_emitted:\n    if not left_delimiter_emitted:\n        next_token, new_steps = helpers.ForcedTokenStep(prompt, generated, LeftDelimiter, stepsLeft)\n        generated = generated + [next_token]\n        stepsLeft = new_steps\n        left_delimiter_emitted = True\n    else:\n        valid_suffix = helpers.LongestValidSuffix(generated)\n        if len(valid_suffix) > 0 and parser.IsCompletePrefix(valid_suffix):\n            right_delimiter_emitted = True\n        else:\n            next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n            generated = generated + [next_token]\n\n# Ensure the segment is complete before emitting the right delim\nif not right_delimiter_emitted:\n    next_token, stepsLeft = helpers.BudgetAwareStep(prompt, generated, stepsLeft, budget_threshold)\n    generated = generated + [next_token]\n\nnext_token, new_steps = helpers.ForcedTokenStep(prompt, generated, RightDelimiter, stepsLeft)\ngenerated = generated + [next_token]\nstepsLeft = new_steps"
+      },
+      "timestamp": "2026-04-26T08:07:20.728670",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 36, Column 4): Error: cannot prove termination; try supplying a decreases clause for the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(36,4): Error: cannot prove termination; try supplying a decreases clause for the loop\n   |\n36 |     while !right_delimiter_emitted\n   |     ^^^^^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    },
+    {
+      "attempt_number": 4,
+      "strategy_code": "# CSD_RATIONALE_BEGIN\n# This strategy starts with unconstrained generation to build context. Once a sufficient amount of context is built, it transitions to a constrained phase using grammar-aware steps. The strategy ensures that the final segment is complete and follows the grammar constraints. It emits the left delim, performs constrained steps until the segment is complete, and then emits the right delim.\n# CSD_RATIONALE_END\n\nnew_steps = stepsLeft\n\n# invariant lm.ValidTokensIdsLogits()\n# invariant 0 <= stepsLeft <= maxSteps\n# invariant |generated| + stepsLeft <= maxSteps\n# decreases stepsLeft\n\ninitial_reasoning_length = 10\nconstraint_strength = 0.5\nbudget_threshold = 5\n\nif len(generated) < initial_reasoning_length:\n    next_token, stepsLeft = helpers.UnconstrainedStep(prompt, generated, stepsLeft)\nelse:\n    next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n\ngenerated = generated + [next_token]\n\nleft_delimiter_emitted = False\nright_delimiter_emitted = False\n\nwhile not right_delimiter_emitted:\n    if not left_delimiter_emitted:\n        next_token, new_steps = helpers.ForcedTokenStep(prompt, generated, LeftDelimiter, stepsLeft)\n        generated = generated + [next_token]\n        stepsLeft = new_steps\n        left_delimiter_emitted = True\n    else:\n        valid_suffix = helpers.LongestValidSuffix(generated)\n        if len(valid_suffix) > 0 and parser.IsCompletePrefix(valid_suffix):\n            right_delimiter_emitted = True\n        else:\n            next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n            generated = generated + [next_token]\n\n# Ensure the segment is complete before emitting the right delim\nif not right_delimiter_emitted:\n    next_token, stepsLeft = helpers.BudgetAwareStep(prompt, generated, stepsLeft, budget_threshold)\n    generated = generated + [next_token]\n\nnext_token, new_steps = helpers.ForcedTokenStep(prompt, generated, RightDelimiter, stepsLeft)\ngenerated = generated + [next_token]\nstepsLeft = new_steps",
+      "strategy_analysis": {
+        "strategy_name": "CustomLoop",
+        "parameters": {
+          "uses_rollback": false,
+          "uses_answer_channel": false
+        },
+        "category": "interleaved",
+        "comparable_to": "N/A",
+        "raw_code": "# CSD_RATIONALE_BEGIN\n# This strategy starts with unconstrained generation to build context. Once a sufficient amount of context is built, it transitions to a constrained phase using grammar-aware steps. The strategy ensures that the final segment is complete and follows the grammar constraints. It emits the left delim, performs constrained steps until the segment is complete, and then emits the right delim.\n# CSD_RATIONALE_END\n\nnew_steps = stepsLeft\n\n# invariant lm.ValidTokensIdsLogits()\n# invariant 0 <= stepsLeft <= maxSteps\n# invariant |generated| + stepsLeft <= maxSteps\n# decreases stepsLeft\n\ninitial_reasoning_length = 10\nconstraint_strength = 0.5\nbudget_threshold = 5\n\nif len(generated) < initial_reasoning_length:\n    next_token, stepsLeft = helpers.UnconstrainedStep(prompt, generated, stepsLeft)\nelse:\n    next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n\ngenerated = generated + [next_token]\n\nleft_delimiter_emitted = False\nright_delimiter_emitted = False\n\nwhile not right_delimiter_emitted:\n    if not left_delimiter_emitted:\n        next_token, new_steps = helpers.ForcedTokenStep(prompt, generated, LeftDelimiter, stepsLeft)\n        generated = generated + [next_token]\n        stepsLeft = new_steps\n        left_delimiter_emitted = True\n    else:\n        valid_suffix = helpers.LongestValidSuffix(generated)\n        if len(valid_suffix) > 0 and parser.IsCompletePrefix(valid_suffix):\n            right_delimiter_emitted = True\n        else:\n            next_token, stepsLeft = helpers.SoftConstrainedStep(prompt, generated, constraint_strength, stepsLeft)\n            generated = generated + [next_token]\n\n# Ensure the segment is complete before emitting the right delim\nif not right_delimiter_emitted:\n    next_token, stepsLeft = helpers.BudgetAwareStep(prompt, generated, stepsLeft, budget_threshold)\n    generated = generated + [next_token]\n\nnext_token, new_steps = helpers.ForcedTokenStep(prompt, generated, RightDelimiter, stepsLeft)\ngenerated = generated + [next_token]\nstepsLeft = new_steps"
+      },
+      "timestamp": "2026-04-26T08:08:04.436554",
+      "succeeded": false,
+      "failed_at": "verification",
+      "error_summary": "Dafny verification failed with 1 error(s):\n\n  (Line 36, Column 4): Error: cannot prove termination; try supplying a decreases clause for the loop\n\nFull Dafny output:\nGeneratedCSD.dfy(36,4): Error: cannot prove termination; try supplying a decreases clause for the loop\n   |\n36 |     while !right_delimiter_emitted\n   |     ^^^^^\n\n\nDafny program verifier finished with 1 verified, 1 error",
+      "verification": {
+        "success": false,
+        "error_count": 1
+      },
+      "compilation": null,
+      "runtime": null,
+      "evaluation": null
+    }
+  ],
+  "failure_patterns": {
+    "verification_failures": 4,
+    "compilation_failures": 0,
+    "runtime_failures": 0,
+    "common_errors": [
+      {
+        "error": "Type error",
+        "count": 1
+      }
+    ]
+  }
+}
