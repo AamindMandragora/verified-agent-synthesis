@@ -10,7 +10,7 @@ from typing import Any
 
 from synthesis.evaluate.baseline_store import save_minimal_baseline_json
 from synthesis.evaluate.evaluator import Evaluator
-from synthesis.run_constants import SPLIT_FILE_BY_DATASET
+from synthesis.run_constants import EVAL_EARLY_STOP_ON_ANSWER, SPLIT_FILE_BY_DATASET
 
 
 def build_reevaluation_provenance(args: argparse.Namespace, compiled: Path) -> dict[str, Any]:
@@ -162,6 +162,9 @@ def main() -> None:
         vllm_max_model_len=args.vllm_max_model_len,
         vllm_enforce_eager=True,
         max_seconds_per_example=args.max_seconds_per_example,
+        # Parity with the in-synthesis evaluator (run_synthesis.py): held-out
+        # reeval must use the same answer-stopping semantics as training eval.
+        early_stop_on_answer=EVAL_EARLY_STOP_ON_ANSWER,
     )
     if args.dataset == "gsm_symbolic":
         evaluator_kwargs["gsm_split_file"] = str(gsm_split_file)
