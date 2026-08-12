@@ -2226,8 +2226,9 @@ def main() -> None:
     )
     parser.add_argument("--gsm-split-file", type=str, default=None,
                         help="Optional GSM train/eval split manifest JSON")
-    parser.add_argument("--gsm-split-name", type=str, choices=["train", "eval"], default="eval",
-                        help="Which split from --gsm-split-file to use (default: eval)")
+    parser.add_argument("--gsm-split-name", type=str, choices=["train", "test"], default="test",
+                        help="Which split from --gsm-split-file to use (default: test). "
+                             "GSM's held-out side is named 'test'; the 'eval' alias was removed 2026-07-17.")
     parser.add_argument("--spider-split-file", type=str, default=None,
                         help="Optional Spider train/test split manifest JSON")
     parser.add_argument("--spider-split-name", type=str, choices=["train", "test", "eval"], default="eval",
