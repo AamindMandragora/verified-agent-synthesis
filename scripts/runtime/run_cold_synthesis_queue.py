@@ -403,9 +403,11 @@ def validate_corrected_launch(
 
 
 def validate_corrected_gpu_scope(gpus: tuple[int, ...] | None) -> None:
-    if gpus != (0, 2, 3):
+    # (0,1,2,3) allowed since 2026-08-14: GPU 1's external workload ended and
+    # the user approved adding it to the queue.
+    if gpus not in ((0, 2, 3), (0, 1, 2, 3)):
         raise ConfigError(
-            "full-baseline-corrected-20260805 requires exactly GPUs 0,2,3"
+            "full-baseline-corrected-20260805 requires exactly GPUs 0,2,3 or 0,1,2,3"
         )
 
 
@@ -614,7 +616,14 @@ def synthesis_environment(
         }
     )
     if job["dataset"] in POOLABLE_DATASETS:
-        env["CSD_EVAL_GPU_SLOTS"] = gpu_list
+        # Two pooled eval workers per GPU when two engines fit on one 40GB
+        # card (reservations are already padded); 7B-class cells stay at one
+        # worker per GPU because 2x22000 MiB does not fit.
+        slots = list(gpus)
+        reservation = int(job.get("memory_reservation_mib") or 0)
+        if reservation and 2 * reservation + 2048 <= 40960:
+            slots = [gpu for gpu in gpus for _ in range(2)]
+        env["CSD_EVAL_GPU_SLOTS"] = ",".join(str(gpu) for gpu in slots)
     if job["dataset"] == "smiles":
         # Unique-valid / diversity need span sampling; default argmax collapses
         # every example to the same tiny SMILES (zero unique-valid).

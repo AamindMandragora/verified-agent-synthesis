@@ -242,9 +242,11 @@ def test_synthesis_environment_names_the_isolated_cold_output():
     gpus = tuple(range(queue.POOLABLE_GPU_COUNT))
     env = queue.synthesis_environment(_job(), gpus, {"PATH": "/bin"}, Path("/repo"))
     joined = ",".join(str(gpu) for gpu in gpus)
+    doubled = ",".join(str(gpu) for gpu in gpus for _ in range(2))
 
     assert env["CUDA_VISIBLE_DEVICES"] == joined
-    assert env["CSD_EVAL_GPU_SLOTS"] == joined
+    # 16384 MiB reservation: two engines fit on one 40GB card -> 2 workers/GPU.
+    assert env["CSD_EVAL_GPU_SLOTS"] == doubled
     assert env["CSD_OUTPUT_NAME"] == "coldq_gsm-qwen35-2b_0719"
     assert env["CSD_OUTPUT_DIR"] == "/repo/outputs/generated/coldq_gsm-qwen35-2b_0719"
 
@@ -262,8 +264,20 @@ def test_poolable_synthesis_environment_uses_the_reserved_gpu_bundle():
     gpus = tuple(range(3, 3 - queue.POOLABLE_GPU_COUNT, -1))
     env = queue.synthesis_environment(_job(), gpus, {"PATH": "/bin"}, Path("/repo"))
     joined = ",".join(str(gpu) for gpu in gpus)
+    doubled = ",".join(str(gpu) for gpu in gpus for _ in range(2))
 
     assert env["CUDA_VISIBLE_DEVICES"] == joined
+    assert env["CSD_EVAL_GPU_SLOTS"] == doubled
+
+
+def test_poolable_synthesis_environment_keeps_one_worker_per_gpu_for_big_models():
+    """A 22000 MiB reservation cannot host two engines on one 40GB card."""
+    job = _job()
+    job["memory_reservation_mib"] = 22000
+    gpus = tuple(range(queue.POOLABLE_GPU_COUNT))
+    env = queue.synthesis_environment(job, gpus, {"PATH": "/bin"}, Path("/repo"))
+    joined = ",".join(str(gpu) for gpu in gpus)
+
     assert env["CSD_EVAL_GPU_SLOTS"] == joined
 
 
@@ -807,15 +821,16 @@ def test_corrected_launch_guard_requires_an_independent_approval(
 
 @pytest.mark.parametrize(
     "gpus",
-    [None, (0, 2), (0, 1, 2, 3), (1,)],
+    [None, (0, 2), (1,), (2, 3, 0), (1, 2, 3)],
 )
-def test_corrected_campaign_rejects_any_gpu_scope_except_zero_two_three(gpus):
+def test_corrected_campaign_rejects_any_gpu_scope_except_approved(gpus):
     with pytest.raises(queue.ConfigError, match="exactly GPUs 0,2,3"):
         queue.validate_corrected_gpu_scope(gpus)
 
 
-def test_corrected_campaign_accepts_only_gpu_scope_zero_two_three():
+def test_corrected_campaign_accepts_only_approved_gpu_scopes():
     queue.validate_corrected_gpu_scope((0, 2, 3))
+    queue.validate_corrected_gpu_scope((0, 1, 2, 3))
 
 
 def test_recovery_exhaustion_counts_restored_and_remaining_attempts():

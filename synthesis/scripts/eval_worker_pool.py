@@ -62,7 +62,7 @@ LOG = "[sharded-eval]"
 # has 4 A100s; leave one slot of headroom for the generator model / other
 # jobs sharing the box. Raise this only if you also re-check the box's real
 # GPU count.
-MAX_POOL_WORKERS = 3
+MAX_POOL_WORKERS = 4
 
 # Config knobs for GPU-slot detection, matching sharded_eval_core's defaults
 # (same "idle" definition used by the standalone reevaluate_sharded CLI).
@@ -84,7 +84,7 @@ def _queue_gpu_slots() -> list[int] | None:
         raise RuntimeError(
             f"CSD_EVAL_GPU_SLOTS must contain numeric physical GPU IDs: {raw!r}"
         ) from exc
-    if not slots or any(gpu < 0 for gpu in slots) or len(set(slots)) != len(slots):
+    if not slots or any(gpu < 0 for gpu in slots):
         raise RuntimeError(f"invalid CSD_EVAL_GPU_SLOTS bundle: {raw!r}")
     if len(slots) > MAX_POOL_WORKERS:
         raise RuntimeError(
