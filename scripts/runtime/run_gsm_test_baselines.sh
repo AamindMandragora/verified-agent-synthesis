@@ -50,4 +50,7 @@ done
 for strat in unconstrained gcd crane itergen; do
   run_one "Qwen/Qwen3.5-4B" qwen35-4b 0.45 "$strat"
 done
+for strat in unconstrained gcd crane itergen; do
+  run_one "Qwen/Qwen3.5-2B" qwen35-2b 0.40 "$strat"
+done
 echo "[gsm-test-baselines] ALL DONE $(date -u +%H:%M:%S)"
