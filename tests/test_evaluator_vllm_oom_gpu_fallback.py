@@ -178,3 +178,28 @@ def test_non_memory_error_is_raised(monkeypatch, tmp_path, evaluator):
     with pytest.raises(RuntimeError, match="unrelated failure"):
         evaluator._setup_environment(tmp_path / "generated_csd" / "module.py")
     assert narrowed_calls == []
+
+
+def test_explicit_memory_cap_blocks_upward_retry(monkeypatch, tmp_path, evaluator):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1")
+    monkeypatch.setenv("CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX", "0.6")
+    monkeypatch.setenv("CSD_VLLM_STARTUP_WAIT_S", "0")
+    narrowed_calls = []
+    _patch_common(monkeypatch, narrowed_calls)
+    attempted = []
+
+    def fake_setup(**kwargs):
+        util = kwargs["vllm_gpu_memory_utilization"]
+        attempted.append(util)
+        if util <= 0.6:
+            raise STARTUP_OOM
+        return {"unsafe": util}
+
+    monkeypatch.setattr(spider_env, "setup_dafny_environment", fake_setup)
+
+    with pytest.raises(ValueError, match="Free memory on device"):
+        evaluator._setup_environment(tmp_path / "generated_csd" / "module.py")
+
+    assert attempted
+    assert max(attempted) <= 0.6
+    assert narrowed_calls == []

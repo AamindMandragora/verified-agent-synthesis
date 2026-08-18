@@ -1949,6 +1949,9 @@ class Evaluator:
         if run_dir.name in {"generated_csd", "python"}:
             run_dir = run_dir.parent
 
+        memory_utilization_max_raw = os.environ.get(
+            "CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX", ""
+        ).strip()
         env_cache_key = (
             str(run_dir.resolve()),
             self.dataset_name,
@@ -1962,6 +1965,7 @@ class Evaluator:
             self.vllm_gpu_memory_utilization,
             self.vllm_max_model_len,
             self.vllm_enforce_eager,
+            memory_utilization_max_raw,
         )
         if self._env is not None and self._env_cache_key == env_cache_key:
             return self._env
@@ -2023,7 +2027,12 @@ class Evaluator:
             if candidate >= 1 and candidate not in tp_candidates:
                 tp_candidates.append(candidate)
 
-        util_candidates = vllm_util_retry_candidates(self.vllm_gpu_memory_utilization)
+        memory_utilization_max = (
+            float(memory_utilization_max_raw) if memory_utilization_max_raw else None
+        )
+        util_candidates = vllm_util_retry_candidates(
+            self.vllm_gpu_memory_utilization, maximum=memory_utilization_max
+        )
 
         def _narrow_to_freest_gpu(reason: str) -> None:
             best_idx = pick_cuda_device_index_with_most_free_memory()

@@ -45,7 +45,9 @@ _LOWER_STEP_DOWN = 0.15
 _UPPER_STEP_UP = 0.1
 
 
-def vllm_util_retry_candidates(requested: float | None) -> list[float]:
+def vllm_util_retry_candidates(
+    requested: float | None, *, maximum: float | None = None
+) -> list[float]:
     """Build the list of gpu_memory_utilization values to try, in order.
 
     The first entry is always exactly the requested value (or a sensible
@@ -59,6 +61,12 @@ def vllm_util_retry_candidates(requested: float | None) -> list[float]:
     KV cache).
     """
     first = requested if requested is not None else _DEFAULT_REQUESTED_UTILIZATION
+
+    if maximum is not None:
+        if not 0.0 < maximum < 1.0:
+            raise ValueError("maximum gpu_memory_utilization must be between 0 and 1")
+        if first > maximum:
+            raise ValueError("requested gpu_memory_utilization exceeds its maximum")
 
     candidates: list[float] = [first]
 
@@ -75,6 +83,8 @@ def vllm_util_retry_candidates(requested: float | None) -> list[float]:
         higher = round(higher + _UPPER_STEP_UP, 2)
         if higher >= _MAX_UTILIZATION:
             break
+        if maximum is not None and higher > maximum:
+            break
         if higher not in candidates:
             candidates.append(higher)
 
@@ -84,7 +94,11 @@ def vllm_util_retry_candidates(requested: float | None) -> list[float]:
         # safe values so the caller still gets a real ladder to retry on.
         for fallback in (_MIN_UTILIZATION + 0.1, _MAX_UTILIZATION - 0.1):
             fallback = round(fallback, 2)
-            if fallback not in candidates and 0.0 < fallback < 1.0:
+            if (
+                fallback not in candidates
+                and 0.0 < fallback < 1.0
+                and (maximum is None or fallback <= maximum)
+            ):
                 candidates.append(fallback)
 
     print(f"[vllm] gpu_memory_utilization retry ladder: {candidates}")

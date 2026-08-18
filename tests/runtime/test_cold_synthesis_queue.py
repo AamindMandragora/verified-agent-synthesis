@@ -247,6 +247,7 @@ def test_synthesis_environment_names_the_isolated_cold_output():
     assert env["CUDA_VISIBLE_DEVICES"] == joined
     # 16384 MiB reservation: two engines fit on one 40GB card -> 2 workers/GPU.
     assert env["CSD_EVAL_GPU_SLOTS"] == doubled
+    assert env["CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX"] == "0.8"
     assert env["CSD_OUTPUT_NAME"] == "coldq_gsm-qwen35-2b_0719"
     assert env["CSD_OUTPUT_DIR"] == "/repo/outputs/generated/coldq_gsm-qwen35-2b_0719"
 
@@ -850,6 +851,19 @@ def test_corrected_campaign_accepts_only_approved_gpu_scopes():
     queue.validate_corrected_gpu_scope((0, 1, 2, 3))
 
 
+def test_spider_only_resume_requires_exact_prefixes_and_gpu_scope():
+    queue.validate_corrected_resume_scope((0, 2, 3), ["gsm-", "smiles-"])
+
+    with pytest.raises(queue.ConfigError, match="requires exactly GPUs 0,2,3"):
+        queue.validate_corrected_resume_scope(
+            (0, 1, 2, 3), ["gsm-", "smiles-"]
+        )
+    with pytest.raises(queue.ConfigError, match="requires exactly exclusions"):
+        queue.validate_corrected_resume_scope((0, 2, 3), ["gsm-"])
+    with pytest.raises(queue.ConfigError, match="requires exactly exclusions"):
+        queue.validate_corrected_resume_scope((0, 2, 3), ["spider-"])
+
+
 def test_corrected_campaign_filters_only_after_full_launch_validation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -861,7 +875,9 @@ def test_corrected_campaign_filters_only_after_full_launch_validation(
         {"cell_id": "gsm-qwen25-1p5b"},
         {"cell_id": "smiles-acrylates-qwen25-1p5b"},
         {"cell_id": "spider-qwen25-1p5b"},
+        {"cell_id": "spider-qwen25-7b"},
         {"cell_id": "spider-qwen35-2b"},
+        {"cell_id": "spider-qwen35-4b"},
     ]
 
     def validate_launch(repo, manifest, approval):
@@ -917,9 +933,11 @@ def test_corrected_campaign_filters_only_after_full_launch_validation(
         assert queue.main() == 0
 
     assert [event[0] for event in events] == ["validate", "load"]
-    assert "remaining=2" in caplog.text
+    assert "remaining=4" in caplog.text
     assert "dry-run cell=spider-qwen25-1p5b" in caplog.text
+    assert "dry-run cell=spider-qwen25-7b" in caplog.text
     assert "dry-run cell=spider-qwen35-2b" in caplog.text
+    assert "dry-run cell=spider-qwen35-4b" in caplog.text
     assert "dry-run cell=gsm-" not in caplog.text
     assert "dry-run cell=smiles-" not in caplog.text
 

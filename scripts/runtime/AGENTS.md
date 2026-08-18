@@ -12,6 +12,9 @@ Cold-queue and babysitter runtime scripts. Repo-wide rules live in `../../AGENTS
 - Always forward the job's `gpu_mem_util` via
   `CSD_VLLM_GPU_MEMORY_UTILIZATION` (consumed by `synthesis.run_synthesis`).
   Do not hard-code the global `VLLM_GPU_MEMORY_UTILIZATION` for cold jobs.
+  Also set `CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX` to the same admitted value;
+  a pooled worker must not retry above the memory budget the queue reserved
+  while sharing focal with other users.
 - Do not put strategy coaching into `--task` strings (Critical Prompting Rule).
 - Claude Code synthesis queue commands use the fixed `claude-opus-5` model ID;
   direct Anthropic and Bedrock model IDs are separate routes and should not be

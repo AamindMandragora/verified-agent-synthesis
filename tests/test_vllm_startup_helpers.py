@@ -108,6 +108,16 @@ def test_every_candidate_is_a_usable_fraction(requested):
     assert len(ladder) > 1, "A ladder with one rung is not a retry ladder."
 
 
+def test_retry_ladder_respects_an_explicit_upper_limit():
+    candidates, _ = _helpers()
+
+    ladder = candidates(0.35, maximum=0.35)
+
+    assert ladder[0] == pytest.approx(0.35)
+    assert all(value <= 0.35 for value in ladder)
+    assert any(value < 0.35 for value in ladder)
+
+
 def test_a_missing_setting_still_produces_a_usable_ladder():
     """`self.vllm_gpu_memory_utilization` can be None; the caller does not
     guard for it, so the ladder must."""

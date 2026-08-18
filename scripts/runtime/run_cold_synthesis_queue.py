@@ -411,6 +411,22 @@ def validate_corrected_gpu_scope(gpus: tuple[int, ...] | None) -> None:
         )
 
 
+def validate_corrected_resume_scope(
+    gpus: tuple[int, ...] | None, prefixes: list[str]
+) -> None:
+    """Bind the approved Spider-only resume to its exact GPU and cell scope."""
+    normalized = [str(prefix) for prefix in prefixes if str(prefix)]
+    if not normalized:
+        return
+    if gpus != (0, 2, 3):
+        raise ConfigError("Spider-only resume requires exactly GPUs 0,2,3")
+    expected = {"gsm-", "smiles-"}
+    if len(normalized) != len(expected) or set(normalized) != expected:
+        raise ConfigError(
+            "Spider-only resume requires exactly exclusions gsm- and smiles-"
+        )
+
+
 def _is_pinned_code_path(path: str) -> bool:
     return any(
         path == root or path.startswith(f"{root}/") for root in PINNED_CODE_PATHS
@@ -604,6 +620,7 @@ def synthesis_environment(
     env = dict(inherited)
     env.pop("CSD_EVAL_POOL_SIZE", None)
     env.pop("CSD_EVAL_GPU_SLOTS", None)
+    env.pop("CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX", None)
     env.update(
         {
             "CUDA_VISIBLE_DEVICES": gpu_list,
@@ -623,6 +640,7 @@ def synthesis_environment(
             # Per-job vLLM budget; without this run_synthesis falls back to the
             # global 0.81 and pooled eval workers OOM on shared GPUs.
             "CSD_VLLM_GPU_MEMORY_UTILIZATION": str(job["gpu_mem_util"]),
+            "CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX": str(job["gpu_mem_util"]),
         }
     )
     if job["dataset"] in POOLABLE_DATASETS:
@@ -647,6 +665,7 @@ def author_free_environment(
     }
     clean.pop("CSD_EVAL_GPU_SLOTS", None)
     clean.pop("CSD_EVAL_POOL_SIZE", None)
+    clean.pop("CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX", None)
     clean["CUDA_VISIBLE_DEVICES"] = str(gpu)
     if dataset == "smiles":
         clean["CSD_CONSTRAINED_TEMPERATURE"] = "0.7"
@@ -1623,6 +1642,9 @@ def main() -> int:
     try:
         if args.campaign_profile == "full-baseline-corrected-20260805":
             validate_corrected_gpu_scope(args.gpus)
+            validate_corrected_resume_scope(
+                args.gpus, list(args.exclude_cell_prefix)
+            )
 
             def launch_guard() -> None:
                 validate_corrected_launch(
@@ -1673,6 +1695,14 @@ def main() -> int:
                 ",".join(excluded),
                 len(jobs),
             )
+            if args.campaign_profile == "full-baseline-corrected-20260805":
+                expected_spider = {
+                    cell
+                    for cell, expected in EXPECTED_CELLS.items()
+                    if expected["dataset"] == "spider"
+                }
+                if {str(job["cell_id"]) for job in jobs} != expected_spider:
+                    raise ConfigError("Spider-only resume requires exactly four Spider cells")
             if not jobs:
                 raise ConfigError("all cells excluded; nothing to dispatch")
         args.lock_file.parent.mkdir(parents=True, exist_ok=True)
