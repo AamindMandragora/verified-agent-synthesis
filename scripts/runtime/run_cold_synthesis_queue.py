@@ -582,6 +582,16 @@ def synthesis_command(job: dict[str, Any], python: Path) -> list[str]:
     return command
 
 
+def eval_workers_per_gpu(job: dict[str, Any]) -> int:
+    """Return the number of vLLM workers started on each physical GPU."""
+    if job["dataset"] not in POOLABLE_DATASETS:
+        return 1
+    reservation = int(job.get("memory_reservation_mib") or 0)
+    if reservation and 2 * reservation + GPU_SAFETY_MIB <= 40_960:
+        return 2
+    return 1
+
+
 def synthesis_environment(
     job: dict[str, Any], gpus: tuple[int, ...], inherited: dict[str, str], repo: Path
 ) -> dict[str, str]:
@@ -617,12 +627,8 @@ def synthesis_environment(
     )
     if job["dataset"] in POOLABLE_DATASETS:
         # Two pooled eval workers per GPU when two engines fit on one 40GB
-        # card (reservations are already padded); 7B-class cells stay at one
-        # worker per GPU because 2x22000 MiB does not fit.
-        slots = list(gpus)
-        reservation = int(job.get("memory_reservation_mib") or 0)
-        if reservation and 2 * reservation + 2048 <= 40960:
-            slots = [gpu for gpu in gpus for _ in range(2)]
+        # card; 7B-class cells stay at one worker per GPU.
+        slots = [gpu for gpu in gpus for _ in range(eval_workers_per_gpu(job))]
         env["CSD_EVAL_GPU_SLOTS"] = ",".join(str(gpu) for gpu in slots)
     if job["dataset"] == "smiles":
         # Unique-valid / diversity need span sampling; default argmax collapses
@@ -648,17 +654,13 @@ def author_free_environment(
 
 
 def synthesis_required_memory_mib(job: dict[str, Any], gpu_total_mib: int) -> int:
-    """Reserve as much memory as this job's own worker will actually demand.
+    """Reserve the memory all workers on one physical GPU will demand.
 
-    vLLM will not start unless the free memory on the card is at least its
-    gpu_memory_utilization times the card's total size, and
-    synthesis_environment always exports this job's own gpu_mem_util as
-    CSD_VLLM_GPU_MEMORY_UTILIZATION for the worker to read. So the job's own
-    gpu_mem_util is the number that decides whether the worker can start, and
-    reserving anything else (like the shared module-wide default) either
-    under- or over-reserves compared to what will really happen.
+    Poolable small-model jobs start two vLLM workers on each selected GPU.
+    Count both budgets so the allocator cannot place them beside another
+    user's process when their combined memory would not fit.
     """
-    return required_memory_mib(job, gpu_total_mib)
+    return required_memory_mib(job, gpu_total_mib) * eval_workers_per_gpu(job)
 
 
 def required_gpu_count(job: dict[str, Any]) -> int:
@@ -1394,23 +1396,24 @@ def run_job(
         tee = _CombinedLogWriter(log, combined_log)
         if csd is None:
             previous_run_dir = current_run_dir(repo, output_name)
+            eval_workers = len(gpus) * eval_workers_per_gpu(job)
             logger.warning(
                 "[coldq] synthesis start cell=%s gpus=%s workers=%d output=%s",
                 cell,
                 gpu_list,
-                len(gpus),
+                eval_workers,
                 output_name,
             )
             tee.write(
                 f"COLDQ_SYNTHESIS_START cell={cell} gpus={gpu_list} "
-                f"workers={len(gpus)} commit={job['git_commit']}\n"
+                f"workers={eval_workers} commit={job['git_commit']}\n"
             )
             tee.flush()
             _human_log_emit(
                 repo,
                 cell,
                 "COLDQ_SYNTHESIS_START",
-                f"gpus={gpu_list} workers={len(gpus)}",
+                f"gpus={gpu_list} workers={eval_workers}",
             )
             status = _run_command_teeing_stdout(
                 synthesis_command(job, python),
@@ -1534,11 +1537,12 @@ def dispatch(
                         reservations[gpu][cell] = synthesis_required_memory_mib(
                             job, snapshots[gpu]["total_mib"]
                         )
+                    eval_workers = len(gpus) * eval_workers_per_gpu(job)
                     logger.warning(
                         "[coldq] dispatch cell=%s gpus=%s workers=%d",
                         cell,
                         ",".join(str(gpu) for gpu in gpus),
-                        len(gpus),
+                        eval_workers,
                     )
                     running[executor.submit(worker, job, gpus)] = (gpus, cell, phase)
                     pending.pop(index)

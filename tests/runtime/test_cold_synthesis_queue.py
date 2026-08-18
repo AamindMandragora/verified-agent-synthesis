@@ -364,6 +364,7 @@ def test_bundle_allocator_runs_poolable_cells_without_gpu_overlap():
     baseline = {gpu: dict(snapshot) for gpu, snapshot in snapshots.items()}
     reservations = {gpu: {} for gpu in snapshots}
     job = _job()
+    job["gpu_mem_util"] = 0.4
 
     handed_out: list[int] = []
     for cell in range(4 // width):
@@ -490,25 +491,41 @@ def test_dispatch_finishes_one_queue_phase_before_starting_the_next():
     assert second_started.is_set()
 
 
-def test_synthesis_reservation_matches_what_the_worker_will_actually_take():
-    """Reserve the job's own vLLM budget, not the module-wide default.
+def test_synthesis_reservation_matches_what_all_workers_will_actually_take():
+    """Reserve every pooled worker's vLLM budget, not just one worker.
 
-    vLLM refuses to start unless free memory is at least its
-    gpu_memory_utilization times the card's total, and synthesis_environment
-    always exports the job's own value as CSD_VLLM_GPU_MEMORY_UTILIZATION
-    (asserted in the two synthesis_environment tests above), so the job's value
-    is what the process will really demand. Reserving the larger module default
-    instead just makes cards look too full to use.
+    synthesis_environment starts two workers per physical GPU for small
+    poolable models. The allocator must reserve both workers before placing
+    the job beside another user's process.
     """
     job = _job()
     job["gpu_mem_util"] = 0.4
 
-    # max(memory_reservation_mib=16384, ceil(0.4 * 48000)=19200)
-    assert queue.synthesis_required_memory_mib(job, 48_000) == 19_200
+    # Two workers, each max(16384, ceil(0.4 * 48000)=19200).
+    assert queue.synthesis_required_memory_mib(job, 48_000) == 38_400
 
-    # The floor still wins when the fraction lands under it.
+    # The per-worker floor still wins when the fraction lands under it.
     job["gpu_mem_util"] = 0.1
-    assert queue.synthesis_required_memory_mib(job, 48_000) == 16_384
+    assert queue.synthesis_required_memory_mib(job, 48_000) == 32_768
+
+
+def test_poolable_double_workers_reject_a_partly_occupied_gpu():
+    job = _job("spider")
+    job["gpu_mem_util"] = 0.35
+    total = 40_960
+    snapshots = {
+        0: {"used_mib": 14_900, "free_mib": 26_060, "total_mib": total},
+        2: {"used_mib": 0, "free_mib": total, "total_mib": total},
+    }
+    baseline = {gpu: dict(snapshot) for gpu, snapshot in snapshots.items()}
+    reservations = {gpu: {} for gpu in snapshots}
+
+    env = queue.synthesis_environment(job, (0, 2), {}, Path("/repo"))
+    assert env["CSD_EVAL_GPU_SLOTS"] == "0,0,2,2"
+    assert queue.synthesis_required_memory_mib(job, total) == 32_768
+    assert (
+        queue.choose_gpu_bundle(job, snapshots, reservations, baseline) is None
+    )
 
 
 def test_two_cells_share_one_card_without_overfilling_it():
@@ -1550,6 +1567,7 @@ def test_choose_gpu_bundle_stays_inside_the_allowed_gpu_set():
     baseline = {gpu: dict(snapshot) for gpu, snapshot in snapshots.items()}
     reservations = {gpu: {} for gpu in snapshots}
     job = _job()
+    job["gpu_mem_util"] = 0.4
 
     # Allow exactly the GPUs one cell needs, taken from the high end so a
     # bundle drawn from anywhere else stands out.
