@@ -37,11 +37,10 @@ Cold-queue and babysitter runtime scripts. Repo-wide rules live in `../../AGENTS
 
 - The `full-baseline-corrected-20260805` profile must contain the exact approved
   20 cells and exactly 675 remaining author calls. Validate that full manifest
-  and its independent approval before applying any cell exclusions. Exclusions
-  are allowed only for an explicitly approved resume subset; the 2026-08-18
-  Spider-only resume excludes `gsm-` and `smiles-` after validation.
-  Require an explicitly approved physical GPU scope before reading the queue.
-  The Spider-only resume uses `--gpus 0,2,3` and must leave GPU `1` free.
+  and its independent approval before applying exclusions. This profile is now
+  bound to the approved Spider-only resume: require both `gsm-` and `smiles-`
+  exclusions after validation, require exactly `--gpus 0,2,3`, and require
+  exactly the four Spider cells to remain. GPU `1` must stay free.
 - Dispatch phases are strict: ten fresh changed-target cells, two exclusive-GPU
   memory retries, two remaining-call recoveries, three unchanged cells that
   never started, then three held-out-only jobs.

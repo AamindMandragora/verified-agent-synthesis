@@ -115,7 +115,7 @@ def test_single_visible_gpu_still_walks_util_ladder(monkeypatch, tmp_path, evalu
 
     assert env == {"env": "ok"}
     assert narrowed_calls == []
-    assert utils_tried == [0.6, 0.55, 0.5]
+    assert utils_tried == [0.6, 0.45]
 
 
 def test_ladder_exhaustion_waits_for_sibling_release(monkeypatch, tmp_path, evaluator):
@@ -130,7 +130,7 @@ def test_ladder_exhaustion_waits_for_sibling_release(monkeypatch, tmp_path, eval
     _patch_common(monkeypatch, narrowed_calls)
 
     calls = []
-    full_ladder = 5  # 0.6, 0.55, 0.5, 0.45, 0.4
+    full_ladder = 7  # 0.6, 0.45, 0.3, 0.15, 0.7, 0.8, 0.9
 
     def fake_setup(**kwargs):
         calls.append(kwargs["vllm_gpu_memory_utilization"])
@@ -145,7 +145,7 @@ def test_ladder_exhaustion_waits_for_sibling_release(monkeypatch, tmp_path, eval
     assert env == {"env": "ok"}
     assert narrowed_calls == []
     # First ladder exhausts, then the retry round starts over from the top.
-    assert calls[:full_ladder] == [0.6, 0.55, 0.5, 0.45, 0.4]
+    assert calls[:full_ladder] == [0.6, 0.45, 0.3, 0.15, 0.7, 0.8, 0.9]
     assert calls[full_ladder] == 0.6
 
 

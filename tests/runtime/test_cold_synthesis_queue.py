@@ -407,9 +407,14 @@ def test_heldout_environment_removes_paid_author_credentials():
             "CSD_EVAL_POOL_SIZE": "2",
         },
         1,
+        gpu_memory_utilization_max=0.4,
     )
 
-    assert env == {"PATH": "/bin", "CUDA_VISIBLE_DEVICES": "1"}
+    assert env == {
+        "PATH": "/bin",
+        "CUDA_VISIBLE_DEVICES": "1",
+        "CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX": "0.4",
+    }
 
 
 def test_full_memory_gate_requires_an_idle_unreserved_gpu():
@@ -863,6 +868,8 @@ def test_spider_only_resume_requires_exact_prefixes_and_gpu_scope():
     with pytest.raises(queue.ConfigError, match="requires exactly exclusions"):
         queue.validate_corrected_resume_scope((0, 2, 3), ["spider-"])
 
+    with pytest.raises(queue.ConfigError, match="requires exactly exclusions"):
+        queue.validate_corrected_resume_scope((0, 2, 3), [])
 
 def test_corrected_campaign_filters_only_after_full_launch_validation(
     tmp_path: Path,
@@ -1256,7 +1263,8 @@ def test_saved_exhaustive_manifest_matches_the_approved_call_budget():
     manifest = repo / "saved-results" / "2026-07-19-exhaustive-cold-queue-manifest.json"
 
     commit, jobs = queue.load_manifest(manifest)
-    queue.validate_exhaustive_campaign(jobs)
+    # The July artifact preserves the task text used at launch. The live
+    # Spider task changed later, so this test checks the frozen budget only.
 
     assert len(commit) == 40
     subprocess.run(

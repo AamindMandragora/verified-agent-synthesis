@@ -416,8 +416,6 @@ def validate_corrected_resume_scope(
 ) -> None:
     """Bind the approved Spider-only resume to its exact GPU and cell scope."""
     normalized = [str(prefix) for prefix in prefixes if str(prefix)]
-    if not normalized:
-        return
     if gpus != (0, 2, 3):
         raise ConfigError("Spider-only resume requires exactly GPUs 0,2,3")
     expected = {"gsm-", "smiles-"}
@@ -656,7 +654,11 @@ def synthesis_environment(
 
 
 def author_free_environment(
-    inherited: dict[str, str], gpu: int, *, dataset: str | None = None
+    inherited: dict[str, str],
+    gpu: int,
+    *,
+    dataset: str | None = None,
+    gpu_memory_utilization_max: float | None = None,
 ) -> dict[str, str]:
     clean = {
         key: value
@@ -667,6 +669,10 @@ def author_free_environment(
     clean.pop("CSD_EVAL_POOL_SIZE", None)
     clean.pop("CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX", None)
     clean["CUDA_VISIBLE_DEVICES"] = str(gpu)
+    if gpu_memory_utilization_max is not None:
+        clean["CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX"] = str(
+            gpu_memory_utilization_max
+        )
     if dataset == "smiles":
         clean["CSD_CONSTRAINED_TEMPERATURE"] = "0.7"
     return clean
@@ -1490,7 +1496,10 @@ def run_job(
             heldout_command(job, python, csd),
             cwd=repo,
             env=author_free_environment(
-                os.environ, primary_gpu, dataset=str(job["dataset"])
+                os.environ,
+                primary_gpu,
+                dataset=str(job["dataset"]),
+                gpu_memory_utilization_max=float(job["gpu_mem_util"]),
             ),
             streams=(log, combined_log),
         )
