@@ -1619,10 +1619,6 @@ def main() -> int:
     try:
         if args.campaign_profile == "full-baseline-corrected-20260805":
             validate_corrected_gpu_scope(args.gpus)
-            if args.exclude_cell_prefix:
-                raise ConfigError(
-                    "corrected campaign does not allow partial cell exclusions"
-                )
 
             def launch_guard() -> None:
                 validate_corrected_launch(

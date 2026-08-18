@@ -833,6 +833,80 @@ def test_corrected_campaign_accepts_only_approved_gpu_scopes():
     queue.validate_corrected_gpu_scope((0, 1, 2, 3))
 
 
+def test_corrected_campaign_filters_only_after_full_launch_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    commit = "f" * 40
+    events = []
+    jobs = [
+        {"cell_id": "gsm-qwen25-1p5b"},
+        {"cell_id": "smiles-acrylates-qwen25-1p5b"},
+        {"cell_id": "spider-qwen25-1p5b"},
+        {"cell_id": "spider-qwen35-2b"},
+    ]
+
+    def validate_launch(repo, manifest, approval):
+        events.append(("validate", repo, manifest, approval))
+
+    def load_manifest(path):
+        events.append(("load", path))
+        return commit, [dict(job) for job in jobs]
+
+    monkeypatch.setattr(queue, "validate_corrected_launch", validate_launch)
+    monkeypatch.setattr(queue, "load_manifest", load_manifest)
+    monkeypatch.setattr(
+        queue,
+        "verify_repo_version",
+        lambda _repo, _commit, _attestation: commit,
+    )
+    monkeypatch.setattr(queue, "required_gpu_count", lambda _job: 2)
+    monkeypatch.setattr(
+        queue,
+        "synthesis_command",
+        lambda job, python: [str(python), job["cell_id"]],
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_cold_synthesis_queue.py",
+            "--repo",
+            str(tmp_path),
+            "--manifest",
+            str(tmp_path / "manifest.json"),
+            "--python",
+            sys.executable,
+            "--lock-file",
+            str(tmp_path / "controller.lock"),
+            "--state-dir",
+            str(tmp_path / "state"),
+            "--corrected-approval",
+            str(tmp_path / "approval.json"),
+            "--campaign-profile",
+            "full-baseline-corrected-20260805",
+            "--gpus",
+            "0,2,3",
+            "--exclude-cell-prefix",
+            "gsm-",
+            "--exclude-cell-prefix",
+            "smiles-",
+            "--dry-run",
+        ],
+    )
+
+    with caplog.at_level("WARNING"):
+        assert queue.main() == 0
+
+    assert [event[0] for event in events] == ["validate", "load"]
+    assert "remaining=2" in caplog.text
+    assert "dry-run cell=spider-qwen25-1p5b" in caplog.text
+    assert "dry-run cell=spider-qwen35-2b" in caplog.text
+    assert "dry-run cell=gsm-" not in caplog.text
+    assert "dry-run cell=smiles-" not in caplog.text
+
+
 def test_recovery_exhaustion_counts_restored_and_remaining_attempts():
     job = _job()
     job.update(
