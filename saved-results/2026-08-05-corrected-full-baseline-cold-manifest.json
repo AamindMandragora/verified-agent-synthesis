@@ -1,6 +1,6 @@
 {
   "campaign": "full-baseline-corrected-20260805",
-  "git_commit": "6766ebd397f4bcdbd4cc3332e1051a9efd6258a6",
+  "git_commit": "189a647061e40bdaffdd312fc34e9e89999a5e29",
   "corrected_evidence_path": "saved-results/2026-08-05-corrected-full-baseline-evidence.json",
   "approved_author_call_cap": 675,
   "planned_author_calls": 675,
@@ -155,7 +155,7 @@
       "heldout_split_name": "test",
       "heldout_output_json": "outputs/reeval/full_baseline_corrected_20260805/spider-qwen25-1p5b.json",
       "claude_config_dir": "/home/aadivyar/.claude-csd-synthesis",
-      "claude_expected_account": "aadivya@fermi.ai",
+      "claude_expected_account": "ssdear@gmail.com",
       "heldout_split_file": "environment/benchmark_splits/spider_dev_proportional_300x300_seed334.json",
       "queue_phase": 4,
       "run_mode": "unchanged_never_started"
@@ -184,7 +184,7 @@
       "heldout_split_name": "test",
       "heldout_output_json": "outputs/reeval/full_baseline_corrected_20260805/spider-qwen25-7b.json",
       "claude_config_dir": "/home/aadivyar/.claude-csd-synthesis",
-      "claude_expected_account": "aadivya@fermi.ai",
+      "claude_expected_account": "ssdear@gmail.com",
       "heldout_split_file": "environment/benchmark_splits/spider_dev_proportional_300x300_seed334.json",
       "queue_phase": 4,
       "run_mode": "unchanged_never_started"
@@ -213,7 +213,7 @@
       "heldout_split_name": "test",
       "heldout_output_json": "outputs/reeval/full_baseline_corrected_20260805/spider-qwen35-2b.json",
       "claude_config_dir": "/home/aadivyar/.claude-csd-synthesis",
-      "claude_expected_account": "aadivya@fermi.ai",
+      "claude_expected_account": "ssdear@gmail.com",
       "heldout_split_file": "environment/benchmark_splits/spider_dev_proportional_300x300_seed334.json",
       "queue_phase": 1,
       "run_mode": "fresh_changed_target"
@@ -242,7 +242,7 @@
       "heldout_split_name": "test",
       "heldout_output_json": "outputs/reeval/full_baseline_corrected_20260805/spider-qwen35-4b.json",
       "claude_config_dir": "/home/aadivyar/.claude-csd-synthesis",
-      "claude_expected_account": "aadivya@fermi.ai",
+      "claude_expected_account": "ssdear@gmail.com",
       "heldout_split_file": "environment/benchmark_splits/spider_dev_proportional_300x300_seed334.json",
       "queue_phase": 4,
       "run_mode": "unchanged_never_started"

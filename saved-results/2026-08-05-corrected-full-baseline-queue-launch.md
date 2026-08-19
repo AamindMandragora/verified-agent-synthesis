@@ -52,3 +52,53 @@ The independently approved corrected synthesis queue is running on focal.
 The controller may share an approved GPU when its memory reservations fit; the
 queue never considers GPU `1`. Later phases remain blocked by the strict phase
 barrier until every earlier-phase job has reached a terminal state.
+
+## Spider GPU 1 replacement — 2026-08-19
+
+### Purpose
+
+Allow the Spider-only controller to consider GPU `1` without weakening the
+shared-memory checks that protect other users' jobs.
+
+### Result
+
+- Replacement launch time: `08:37:03 UTC`.
+- Controller PID: `1663018`.
+- Pinned code commit: `189a647061e40bdaffdd312fc34e9e89999a5e29`.
+- Exact GPU scope: `0,1,2,3`.
+- Exact exclusions: `gsm-` and `smiles-`; four Spider cells remain.
+- Controller log: `logs/spider-only-relaunch-20260819-gpu1-controller.log`.
+- State directory: `.context/full-baseline-corrected-20260805-cold-state`.
+- Lock and PID directory: `.context/spider-only-relaunch-20260819-gpu1/`.
+- Queue manifest SHA-256:
+  `06c285b2c948c16d9d09b3473ed34ed08ff12ac7efd81bbaaf767d53a0a4d05c`.
+- Approval SHA-256:
+  `3b3c26bb62edccf6fa056098fd17e6c9e97f74f009e54043222b179044708a2c`.
+- Independent `gpt-5.6-sol` verdict: pass for the exact commit, manifest,
+  approval, GPU scope, and preserved memory gate.
+
+The old PID `2919913` was confirmed to have no children, stopped with
+`SIGTERM`, and confirmed absent before the replacement launched. Its log and
+the shared state directory were preserved. The replacement's first poll found
+no safe two-GPU bundle and waited 30 seconds; it did not dispatch or report an
+error. At that poll, used memory was GPU 0=`37274 MiB`, GPU 1=`32403 MiB`, GPU
+2=`29938 MiB`, and GPU 3=`27601 MiB`.
+
+### Verification
+
+- Red tests: the new four-GPU scope tests first failed twice against the old
+  `0,2,3` validator.
+- Green tests: `68 passed` in `tests/runtime/test_cold_synthesis_queue.py`.
+- Full runtime tests: `224 passed`.
+- Candidate approval validation: campaign name matched, all `20` jobs were
+  present, and the manifest commit matched `189a6470`.
+- Live check: exactly one controller, exact `--gpus 0,1,2,3`, old PID absent,
+  four Spider jobs remaining, and no immediate launch error.
+
+### Reuse
+
+Check the current process and log before relying on this point-in-time result:
+
+```bash
+ssh aadivyar@focal "bash -lc 'ps -fp 1663018; tail -n 30 /home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/logs/spider-only-relaunch-20260819-gpu1-controller.log'"
+```

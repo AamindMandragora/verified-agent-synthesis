@@ -1,12 +1,42 @@
 {
   "decision": "approved",
   "reviewer_model": "gpt-5.6-sol",
-  "git_commit": "6766ebd397f4bcdbd4cc3332e1051a9efd6258a6",
+  "git_commit": "189a647061e40bdaffdd312fc34e9e89999a5e29",
   "corrected_evidence_sha256": "57392e149cea23efe6f596b921c6cd3d74ae7519e7c286393adadc9bdb579ab7",
-  "queue_manifest_sha256": "745d47bfbe5d2a07f1eac61f3a21f8e08cc22bdc735228a4ace9e40bd513b26b",
+  "queue_manifest_sha256": "06c285b2c948c16d9d09b3473ed34ed08ff12ac7efd81bbaaf767d53a0a4d05c",
   "spider_bare_task_update": {
     "date": "2026-08-10",
     "new_task": "Generate a single valid SQL query using only the provided schema context. Only output the SQL query.",
     "reason": "align author task with token-0 bare SQL eval surface (drop << >>)"
+  },
+  "author_account_update": {
+    "date": "2026-08-11",
+    "change": "spider jobs claude_expected_account aadivya@fermi.ai -> ssdear@gmail.com",
+    "reason": "weekly limit on aadivya@fermi.ai (resets Aug 12 2pm UTC); user authorized spending on ssdear@gmail.com",
+    "repin_commit": "ae16be791532f01d87b02e01971f89ef28561a07"
+  },
+  "gpu1_and_dual_worker_update": {
+    "date": "2026-08-14",
+    "change": "gpu scope may include GPU 1; two eval workers per GPU when memory fits",
+    "reason": "GPU 1 freed; user asked to use it and to double shards",
+    "repin_commit": "f34e1a732f596434339fc657c2d362f8eb1e20f4"
+  },
+  "spider_only_filter_update": {
+    "date": "2026-08-18",
+    "change": "allow approved corrected campaigns to exclude completed cell prefixes after full launch validation",
+    "reason": "relaunch only the four incomplete Spider cells while preserving full-manifest approval checks",
+    "repin_commit": "842c50f1bb59e8a9e2f0319f81d681a0de973b11"
+  },
+  "spider_gpu_safety_update": {
+    "date": "2026-08-18",
+    "change": "reserve every eval worker, cap synthesis and held-out retries, and require the exact Spider-only GPU and cell scope",
+    "reason": "protect other users' GPU memory and make the approved resume command mandatory",
+    "repin_commit": "842c50f1bb59e8a9e2f0319f81d681a0de973b11"
+  },
+  "spider_gpu1_scope_update": {
+    "date": "2026-08-19",
+    "change": "require the Spider-only controller to poll exactly GPUs 0,1,2,3",
+    "reason": "user authorized GPU 1; the live memory gate still protects every shared GPU",
+    "repin_commit": "189a647061e40bdaffdd312fc34e9e89999a5e29"
   }
 }
