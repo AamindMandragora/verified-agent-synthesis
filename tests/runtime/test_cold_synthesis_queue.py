@@ -857,19 +857,18 @@ def test_corrected_campaign_accepts_only_approved_gpu_scopes():
 
 
 def test_spider_only_resume_requires_exact_prefixes_and_gpu_scope():
-    queue.validate_corrected_resume_scope((0, 2, 3), ["gsm-", "smiles-"])
+    queue.validate_corrected_resume_scope((0, 1, 2, 3), ["gsm-", "smiles-"])
 
-    with pytest.raises(queue.ConfigError, match="requires exactly GPUs 0,2,3"):
-        queue.validate_corrected_resume_scope(
-            (0, 1, 2, 3), ["gsm-", "smiles-"]
-        )
+    with pytest.raises(queue.ConfigError, match="requires exactly GPUs 0,1,2,3"):
+        queue.validate_corrected_resume_scope((0, 2, 3), ["gsm-", "smiles-"])
     with pytest.raises(queue.ConfigError, match="requires exactly exclusions"):
-        queue.validate_corrected_resume_scope((0, 2, 3), ["gsm-"])
+        queue.validate_corrected_resume_scope((0, 1, 2, 3), ["gsm-"])
     with pytest.raises(queue.ConfigError, match="requires exactly exclusions"):
-        queue.validate_corrected_resume_scope((0, 2, 3), ["spider-"])
+        queue.validate_corrected_resume_scope((0, 1, 2, 3), ["spider-"])
 
     with pytest.raises(queue.ConfigError, match="requires exactly exclusions"):
-        queue.validate_corrected_resume_scope((0, 2, 3), [])
+        queue.validate_corrected_resume_scope((0, 1, 2, 3), [])
+
 
 def test_corrected_campaign_filters_only_after_full_launch_validation(
     tmp_path: Path,
@@ -927,7 +926,7 @@ def test_corrected_campaign_filters_only_after_full_launch_validation(
             "--campaign-profile",
             "full-baseline-corrected-20260805",
             "--gpus",
-            "0,2,3",
+            "0,1,2,3",
             "--exclude-cell-prefix",
             "gsm-",
             "--exclude-cell-prefix",

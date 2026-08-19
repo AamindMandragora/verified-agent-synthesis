@@ -403,8 +403,8 @@ def validate_corrected_launch(
 
 
 def validate_corrected_gpu_scope(gpus: tuple[int, ...] | None) -> None:
-    # (0,1,2,3) allowed since 2026-08-14: GPU 1's external workload ended and
-    # the user approved adding it to the queue.
+    # GPU 1 is approved for this queue. The allocator still admits it only
+    # when the live memory snapshot can safely fit every planned worker.
     if gpus not in ((0, 2, 3), (0, 1, 2, 3)):
         raise ConfigError(
             "full-baseline-corrected-20260805 requires exactly GPUs 0,2,3 or 0,1,2,3"
@@ -416,8 +416,8 @@ def validate_corrected_resume_scope(
 ) -> None:
     """Bind the approved Spider-only resume to its exact GPU and cell scope."""
     normalized = [str(prefix) for prefix in prefixes if str(prefix)]
-    if gpus != (0, 2, 3):
-        raise ConfigError("Spider-only resume requires exactly GPUs 0,2,3")
+    if gpus != (0, 1, 2, 3):
+        raise ConfigError("Spider-only resume requires exactly GPUs 0,1,2,3")
     expected = {"gsm-", "smiles-"}
     if len(normalized) != len(expected) or set(normalized) != expected:
         raise ConfigError(
