@@ -2433,6 +2433,7 @@ class Evaluator:
         expected = self._get_expected_answer(example)
         benchmark_aux: Optional[dict[str, Any]] = None
         tokenizer = env.get("tokenizer")
+        generation_token_evidence: Optional[dict[str, Any]] = None
 
         try:
             print(f"  [EVAL]   Running CSD strategy (max_steps={self.max_steps})...", flush=True)
@@ -2471,6 +2472,9 @@ class Evaluator:
                     dynamic_parser=dynamic_parser,
                     early_stop_on_answer=self.early_stop_on_answer,
                 )
+            generation_token_evidence = getattr(
+                env.get("lm"), "_last_generation_evidence", None
+            )
             example_time = time.time() - example_start
             print(f"  [EVAL]   Generated {token_count} tokens in {example_time:.2f}s", flush=True)
             # region agent log
@@ -2492,7 +2496,8 @@ class Evaluator:
 
             from synthesis.evaluate.completion_text import completion_for_scoring
 
-            completion = completion_for_scoring(prompt, output_text)
+            scoring_prompt = str(prompt) if self.dataset_name == "spider" else prompt
+            completion = completion_for_scoring(scoring_prompt, output_text)
             _print_realtime_completion(i + 1, dataset_len, completion)
             scored_output = (
                 self._truncate_gsm_output(completion)
@@ -2505,35 +2510,41 @@ class Evaluator:
             # same per-example timer so a wedged example times out and
             # is recorded as a failure instead of hanging the run
             # (2+ hour wedge observed 2026-06-10 on GSM-1.5B).
-            with _PerExampleTimer(self.max_seconds_per_example):
-                actual, answer_source, benchmark_aux = self._extract_actual_for_example(scored_output, example)
-                is_correct = self._is_correct_for_example(
-                    actual,
-                    expected,
-                    example,
-                    benchmark_aux,
-                    scored_output,
-                )
+            if self.dataset_name == "spider":
+                self._active_generation_token_evidence = generation_token_evidence
+            try:
+                with _PerExampleTimer(self.max_seconds_per_example):
+                    actual, answer_source, benchmark_aux = self._extract_actual_for_example(scored_output, example)
+            finally:
+                if self.dataset_name == "spider":
+                    self._active_generation_token_evidence = None
+            is_correct = self._is_correct_for_example(
+                actual,
+                expected,
+                example,
+                benchmark_aux,
+                scored_output,
+            )
 
-                visible_delimiters = self._contains_delimiters(scored_output)
-                used_hidden_chunk = bool(constrained_segments) or any(
-                    event.get("helper") in EvaluationResult._CONSTRAINED_HELPERS
-                    for event in (helper_trace or [])
-                )
-                contains_delimiters = used_hidden_chunk if self._uses_hidden_chunks() else visible_delimiters
+            visible_delimiters = self._contains_delimiters(scored_output)
+            used_hidden_chunk = bool(constrained_segments) or any(
+                event.get("helper") in EvaluationResult._CONSTRAINED_HELPERS
+                for event in (helper_trace or [])
+            )
+            contains_delimiters = used_hidden_chunk if self._uses_hidden_chunks() else visible_delimiters
 
-                all_valid_syntax, segments = self._check_syntax_validity(scored_output, example=example)
-                # Per-example syntax pass:
-                # - GSM: visible <<...>> chunks must exist and parse.
-                # - SMILES: the full output is the generated molecule string.
-                # - Spider: chunks are internal/hidden; visible delimiter tokens are not
-                #   part of the answer contract, so count parser-governed chunk usage.
-                example_syntax_pass = self._example_syntax_pass(
-                    all_valid_syntax,
-                    segments,
-                    used_hidden_chunk,
-                    benchmark_aux,
-                )
+            all_valid_syntax, segments = self._check_syntax_validity(scored_output, example=example)
+            # Per-example syntax pass:
+            # - GSM: visible <<...>> chunks must exist and parse.
+            # - SMILES: the full output is the generated molecule string.
+            # - Spider: chunks are internal/hidden; visible delimiter tokens are not
+            #   part of the answer contract, so count parser-governed chunk usage.
+            example_syntax_pass = self._example_syntax_pass(
+                all_valid_syntax,
+                segments,
+                used_hidden_chunk,
+                benchmark_aux,
+            )
             if self.dataset_name == "smiles" and os.environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
                 _update_smiles_rolling_suffix(
                     example,
@@ -2572,11 +2583,11 @@ class Evaluator:
                 "question": q_str,
                 "question_full": q_full,
                 "expected": expected,
-                "actual": actual or completion[:100],
+                "actual": actual if self.dataset_name == "spider" else actual or completion[:100],
                 "full_output": completion,
                 "scored_output": scored_output,
                 "answer_source": answer_source,
-                "has_extracted_answer": actual is not None or answer_source == "text_fallback",
+                "has_extracted_answer": actual is not None if self.dataset_name == "spider" else actual is not None or answer_source == "text_fallback",
                 "is_correct": is_correct,
                 "accuracy_applicable": accuracy_applicable,
                 "contains_delimiters": contains_delimiters,
@@ -2598,8 +2609,26 @@ class Evaluator:
                 ),
                 "timed_out": False,
                 "helper_trace": helper_trace,
+                "generation_token_evidence": (
+                    generation_token_evidence if self.dataset_name == "spider" else None
+                ),
+                "removed_terminal_token_count": (
+                    benchmark_aux.get("removed_terminal_token_count")
+                    if self.dataset_name == "spider" and benchmark_aux
+                    else None
+                ),
                 "task_guidance": getattr(env.get("lm"), "task_guidance", None),
                 "smiles_eval": benchmark_aux if self.dataset_name == "smiles" else None,
+                "output_contract_valid": (
+                    benchmark_aux.get("output_contract_valid")
+                    if self.dataset_name == "spider" and benchmark_aux
+                    else None
+                ),
+                "output_rejection_reason": (
+                    benchmark_aux.get("output_rejection_reason")
+                    if self.dataset_name == "spider" and benchmark_aux
+                    else None
+                ),
             }
             if self.dataset_name == "smiles":
                 sample["smiles_eval"] = benchmark_aux
@@ -2691,6 +2720,18 @@ class Evaluator:
                     self.max_seconds_per_example is not None
                     and elapsed > self.max_seconds_per_example
                 ),
+                "generation_token_evidence": (
+                    getattr(env.get("lm"), "_last_generation_evidence", None)
+                    if self.dataset_name == "spider"
+                    else None
+                ),
+                "removed_terminal_token_count": (
+                    len((generation_token_evidence or {}).get("removed_terminal_token_ids", ()))
+                    if self.dataset_name == "spider"
+                    else None
+                ),
+                "output_contract_valid": False if self.dataset_name == "spider" else None,
+                "output_rejection_reason": "generation_error" if self.dataset_name == "spider" else None,
                 "timed_out": timed_out,
                 "error": str(e),
                 "helper_trace": [],

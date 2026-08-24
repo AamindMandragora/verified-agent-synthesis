@@ -31,6 +31,7 @@ import torch
 # OPT-IN diagnostic only; with the env var unset this block is a no-op and behaviour
 # (masks, scoring, decode) is byte-identical to before.
 _GROUNDING_LOG = logging.getLogger("csd.grounding")
+_SPIDER_CONTRACT_LOG = logging.getLogger("csd.spider_output_contract")
 if os.environ.get("CSD_GROUNDING_LOG"):
     _grounding_handler = logging.StreamHandler()
     _grounding_handler.setFormatter(logging.Formatter("%(message)s"))
@@ -741,16 +742,6 @@ class _TaskGuidanceState:
     def reset(self) -> None:
         self.accepted_guidance = None
 
-    def append(self, instruction_text: str, guidance: object) -> str:
-        if self.accepted_guidance is not None:
-            return instruction_text
-        text = self._coerce_guidance(guidance)
-        if not text:
-            return instruction_text
-        self.accepted_guidance = text
-        separator = "\n" if instruction_text.endswith("\n") else "\n\n"
-        return f"{instruction_text}{separator}{self.HEADER}\n{text}\n"
-
     def _coerce_guidance(self, guidance: object) -> str:
         text = str(guidance).strip()
         if not text:
@@ -815,6 +806,8 @@ class _TensorizedLMBase:
         self.tokenizer = tokenizer
         self._Tokens = tokens
         self._token_ids = tids
+        self._structured_prompt = None
+        self.model_name: str | None = None
         self.instruction_text = ""
         self._task_guidance = _TaskGuidanceState()
         # Chat-template scaffolding so AppendTaskGuidance can inject the
@@ -846,6 +839,7 @@ class _TensorizedLMBase:
         self._answer_early_stop_enabled: bool = False
         self._early_stop_tokens: list[str] | None = None
 
+        self._last_generation_evidence: dict[str, Any] | None = None
         # Prefix-cache short-circuit state.
         self._last_full_prompt: str | None = None
         self._logits_dirty: bool = False
@@ -952,7 +946,19 @@ class _TensorizedLMBase:
         return ids
 
     def ResetTaskGuidance(self):
+        """Clear accepted guidance and every per-example prompt/rebuild cache."""
         self._task_guidance.reset()
+        self._structured_prompt = None
+        self._chat_messages = None
+        self.model_name = None
+        self.instruction_text = ""
+        self._last_generation_evidence = None
+        self._last_full_prompt = None
+        self._tried_token_penalties.clear()
+        self._penalty_instruction_key = None
+        self._grounding_cache_key = None
+        self._grounding_cache_val = set()
+        self._logits_dirty = True
 
     def _maybe_reset_penalties(self) -> None:
         """Drop the tried-token penalty map when the example (instruction_text)
@@ -1133,89 +1139,135 @@ class _TensorizedLMBase:
         )
 
     def _apply_recurrence_penalty(self, full_prompt: str) -> None:
-        """Re-apply the persistent tried-token down-weight to the freshly
-        generated constrained-subset logits. No-op (and byte-identical) when no
-        token was ever penalized at this prefix."""
+        """Re-apply persistent tried-token down-weight at a fresh prefix."""
         factor = self._recurrence_penalty
         if factor >= 1.0:
             return
         bucket = self._tried_token_penalties.get(full_prompt)
         if not bucket:
             return
-        log_factor = math.log(factor)  # negative => reduces the log-prob
+        log_factor = math.log(factor)
         n = self._logits_tensor.numel()
         for idx, count in bucket.items():
             if 0 <= idx < n:
-                # Flat (IterGen-faithful): ln(factor) once per distinct token,
-                # regardless of retry count. Cumulative (default): ln(factor)*count.
                 weight = 1 if self._recurrence_flat else count
                 self._logits_tensor[idx] += log_factor * weight
 
     def set_chat_messages(self, chat_messages: list[dict]) -> None:
-        """Record the chat_messages used to build instruction_text.
+        """Register chat messages for safe last-user-turn guidance rebuilding."""
+        self._chat_messages = [dict(message) for message in chat_messages]
+        self._structured_prompt = None
 
-        Called by benchmark generation drivers right after they assemble the
-        chat-templated instruction_text. Enables AppendTaskGuidance to
-        re-template with the guidance injected into the user message rather
-        than appending it after the assistant generation marker.
-        """
-        self._chat_messages = [dict(m) for m in chat_messages]
+    def set_structured_prompt(self, prompt, *, model_name: str | None = None) -> None:
+        """Register immutable benchmark prompt parts for safe guidance rebuilding."""
+        self._structured_prompt = prompt
+        self.model_name = model_name or getattr(prompt, "model_name", None)
+        self._chat_messages = None
 
     def AppendTaskGuidance(self, guidance):
-        """Inject CSD-authored guidance into the eval prompt.
-
-        First non-empty call wins. The guidance is appended to the END of the
-        last user message and the chat template is re-applied — so the
-        guidance lands INSIDE the user turn (where the model reads it as
-        instructions before answering), not after `<|im_start|>assistant`
-        (where the model would read it as the start of its own output).
-
-        Falls back to the legacy "append-after-template" behavior only when
-        no chat_messages have been registered (older code paths that haven't
-        adopted set_chat_messages yet).
-        """
+        """Rebuild the active prompt with first-call guidance before decoding."""
         if self._task_guidance.accepted_guidance is not None:
             return
         text = self._task_guidance._coerce_guidance(self._to_str(guidance))
         if not text:
             return
-        self._task_guidance.accepted_guidance = text
-
-        if self._chat_messages is not None:
-            messages = [dict(m) for m in self._chat_messages]
-            last_user_idx = None
-            for i in range(len(messages) - 1, -1, -1):
-                if messages[i].get("role") == "user":
-                    last_user_idx = i
-                    break
-            if last_user_idx is not None:
-                existing = messages[last_user_idx].get("content", "") or ""
-                messages[last_user_idx] = dict(messages[last_user_idx])
-                messages[last_user_idx]["content"] = (
-                    f"{existing}\n\n"
-                    f"{self._task_guidance.HEADER}\n{text}"
+        if self._structured_prompt is not None:
+            candidate = self._structured_prompt.with_guidance(text)
+            try:
+                rendered = candidate.render_for_model(
+                    self.tokenizer,
+                    model_name=self.model_name,
                 )
-                try:
+            except Exception as exc:
+                _GROUNDING_LOG.error(
+                    "[guidance] structured prompt rebuild failed type=%s",
+                    type(exc).__name__,
+                )
+                raise RuntimeError(
+                    "Task guidance could not rebuild the registered structured prompt"
+                ) from exc
+            self._structured_prompt = candidate
+            self.instruction_text = rendered
+            self._task_guidance.accepted_guidance = text
+            _GROUNDING_LOG.info(
+                "[spider-prompt] guidance_rebuild mode=structured model_family=%s "
+                "guidance_chars=%d rendered_chars=%d",
+                self.model_name or "unknown",
+                len(text),
+                len(rendered),
+            )
+            return
+        if self._chat_messages is not None:
+            messages = [dict(message) for message in self._chat_messages]
+            last_user_idx = next(
+                (
+                    index
+                    for index in range(len(messages) - 1, -1, -1)
+                    if messages[index].get("role") == "user"
+                ),
+                None,
+            )
+            if last_user_idx is None:
+                _GROUNDING_LOG.error(
+                    "[guidance] registered chat prompt has no user message"
+                )
+                raise RuntimeError(
+                    "Task guidance requires a user message in the registered chat prompt"
+                )
+            existing = messages[last_user_idx].get("content", "") or ""
+            messages[last_user_idx] = dict(messages[last_user_idx])
+            messages[last_user_idx]["content"] = (
+                f"{existing}\n\n{self._task_guidance.HEADER}\n{text}"
+            )
+            identity = (
+                self.model_name or ""
+            ).lower().replace("-", "_").replace(".", "_")
+            try:
+                if "qwen3_5" in identity or "qwen35" in identity:
+                    rendered = self.tokenizer.apply_chat_template(
+                        messages,
+                        tokenize=False,
+                        add_generation_prompt=True,
+                        enable_thinking=False,
+                    )
+                else:
                     try:
-                        self.instruction_text = self.tokenizer.apply_chat_template(
-                            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+                        rendered = self.tokenizer.apply_chat_template(
+                            messages,
+                            tokenize=False,
+                            add_generation_prompt=True,
+                            enable_thinking=False,
                         )
                     except TypeError:
-                        self.instruction_text = self.tokenizer.apply_chat_template(
-                            messages, tokenize=False, add_generation_prompt=True
+                        rendered = self.tokenizer.apply_chat_template(
+                            messages,
+                            tokenize=False,
+                            add_generation_prompt=True,
                         )
-                    return
-                except Exception:
-                    # If re-templating fails for any tokenizer-specific reason,
-                    # fall through to the legacy append path rather than break
-                    # eval entirely.
-                    pass
-
-        # Legacy fallback: append to the end of instruction_text.
-        separator = "\n" if self.instruction_text.endswith("\n") else "\n\n"
-        self.instruction_text = (
-            f"{self.instruction_text}{separator}"
-            f"{self._task_guidance.HEADER}\n{text}\n"
+            except Exception as exc:
+                _GROUNDING_LOG.error(
+                    "[guidance] chat prompt rebuild failed type=%s",
+                    type(exc).__name__,
+                )
+                raise RuntimeError(
+                    "Task guidance could not rebuild the registered chat prompt"
+                ) from exc
+            self._chat_messages = messages
+            self.instruction_text = rendered
+            self._task_guidance.accepted_guidance = text
+            _GROUNDING_LOG.info(
+                "[spider-prompt] guidance_rebuild mode=chat model_family=%s "
+                "guidance_chars=%d rendered_chars=%d",
+                self.model_name or "unknown",
+                len(text),
+                len(rendered),
+            )
+            return
+        _GROUNDING_LOG.error(
+            "[guidance] no registered prompt state; refusing to apply task guidance"
+        )
+        raise RuntimeError(
+            "Task guidance requires a registered structured or chat prompt"
         )
 
     @property
@@ -1276,16 +1328,16 @@ class _TensorizedLMBase:
         return (found, idx)
 
     def _grounding_support_set(self) -> set:
-        """Schema identifier support set for the CURRENT example, cached per
-        instruction_text so it is parsed once per example, not once per token."""
-        it = self.instruction_text or ""
-        if getattr(self, "_grounding_cache_key", None) == it:
+        """Return schema identifiers cached for the current instruction text."""
+        instruction = self.instruction_text or ""
+        if getattr(self, "_grounding_cache_key", None) == instruction:
             return self._grounding_cache_val
-        support = _parse_schema_support(it)
-        self._grounding_cache_key = it
+        support = _parse_schema_support(instruction)
+        self._grounding_cache_key = instruction
         self._grounding_cache_val = support
         _GROUNDING_LOG.info(
-            "[grounding] parsed %d support identifiers for current example", len(support)
+            "[grounding] parsed %d support identifiers for current example",
+            len(support),
         )
         return support
 
@@ -1298,7 +1350,9 @@ class _TensorizedLMBase:
         return cached
 
     def _dafny_prefix_from_token_strs(self, token_strs: list[str]):
-        return self._dafny.SeqWithoutIsStrInference([self._dafny.Seq(token) for token in token_strs])
+        return self._dafny.SeqWithoutIsStrInference(
+            [self._dafny.Seq(token) for token in token_strs]
+        )
 
     def _token_strs_from_text(self, text: str) -> list[str]:
         if not text:
@@ -1306,10 +1360,40 @@ class _TensorizedLMBase:
         token_ids = self.tokenizer.encode(text, add_special_tokens=False)
         return [self._token_str_from_id(token_id) for token_id in token_ids]
 
+    def _prepare_generated_token_ids(self, token_ids) -> list[int]:
+        """Strip only terminal tokenizer-declared IDs and retain decode evidence."""
+        from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
+            generation_token_evidence,
+        )
+
+        evidence = generation_token_evidence(token_ids, self.tokenizer)
+        self._last_generation_evidence = evidence
+        removed_count = len(evidence["removed_terminal_token_ids"])
+        if removed_count:
+            return evidence["raw_token_ids"][:-removed_count]
+        return list(evidence["raw_token_ids"])
+
     def _build_unconstrained_chunk_result(self, token_ids, open_span_token, eos_token, max_new_tokens: int):
+        from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
+
+        spider_contract_active = isinstance(
+            getattr(self, "_structured_prompt", None), SpiderPromptParts
+        )
+        if spider_contract_active:
+            token_ids = self._prepare_generated_token_ids(token_ids)
+            _SPIDER_CONTRACT_LOG.info(
+                "[spider-output-contract] token-boundary generated_ids=%d "
+                "removed_terminal_token_count=%d",
+                len(self._last_generation_evidence["raw_token_ids"]),
+                len(self._last_generation_evidence["removed_terminal_token_ids"]),
+            )
+        else:
+            # GSM, SMILES, and other legacy unconstrained surfaces must see the
+            # exact generated IDs, including EOS, so their stop flags stay intact.
+            self._last_generation_evidence = None
+            token_ids = list(token_ids)
         if max_new_tokens <= 0:
             return self._dafny_prefix_from_token_strs([]), False, False, 0
-
         open_span_str = self._to_str(open_span_token)
         eos_str = self._to_str(eos_token)
         chunk_tokens: list[str] = []

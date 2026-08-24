@@ -8,9 +8,17 @@
 
 - Respect path overrides (`SPIDER_*` env vars) documented in root **`README.md`**; keep DB and table metadata loading robust.
 - Execution accuracy and SQL syntax validity belong here or in delegated helpers, not in **`evaluator.py`** as one-off branches.
-- Keep Qwen3.5 fixed-IterGen chat rendering limited to generation with thinking
-  disabled. The original flattened prompt remains the scoring and evidence
-  surface, and other model/dataset prompt behavior stays unchanged.
+- Keep `SpiderPromptParts` in `prompts.py` as the source of truth for token-0
+  evaluator and fixed-IterGen delivery. Qwen3.5 uses one user turn with
+  `enable_thinking=False`; Qwen2.5 receives the composed raw prompt.
+- Register Spider prompt state before CSD guidance arrives. The first non-empty
+  guidance block is rebuilt before the final `SQL:` cue; missing state fails
+  closed with a descriptive error, and guidance is never appended after the
+  answer cue.
+- Token-0 Spider scoring accepts only one parser-valid bare SQL statement and
+  records a stable rejection reason plus generated-token boundary evidence.
+  Preserve `SPIDER_TOKEN0_CONSTRAINED=0` as the explicit legacy visible-span
+  mode.
 
 ## See also
 

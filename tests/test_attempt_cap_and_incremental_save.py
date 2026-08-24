@@ -46,6 +46,8 @@ class FakeGenerator:
 
     def set_synthesis_context(self, *args, **kwargs):
         pass
+    def set_task_description(self, task_description):
+        self.task_description = task_description
 
     def generate_initial(
         self, task_description, allowed_helpers=None, start_inside_constrained=False
@@ -136,6 +138,9 @@ class FakeEvaluator:
         self.dataset_name = "fake_dataset"
         self.max_steps = 1
         self.step_token_budget = 1
+
+    def split_provenance(self, bar_split_name):
+        return {"bar_split_name": bar_split_name}
 
     def evaluate_sample(
         self,
@@ -342,3 +347,29 @@ def test_timed_out_attempt_keeps_partial_records(tmp_path):
         data = json.load(f)
     on_disk_samples = data["attempts"][0]["evaluation"]["sample_outputs"]
     assert len(on_disk_samples) == len(timed_out_attempt.eval_result.sample_outputs)
+
+
+def test_timeout_restart_preserves_active_surface(monkeypatch, tmp_path):
+    from synthesis.evaluate import feedback_loop as feedback_loop_module
+
+    class RecordingGenerator(FakeGenerator):
+        def generate_initial(self, task_description, allowed_helpers=None, start_inside_constrained=False):
+            self.seen_start_inside_constrained = start_inside_constrained
+            return super().generate_initial(task_description, allowed_helpers, start_inside_constrained)
+
+    evaluator = FakeEvaluator(seconds_per_example=0.0, num_examples=1)
+    pipeline = make_pipeline(tmp_path, evaluator, max_attempt_seconds=1.0, max_iterations=1)
+    pipeline.generator = RecordingGenerator()
+    attempt = feedback_loop_module.SynthesisAttempt(
+        attempt_number=1,
+        strategy_code="STRATEGY",
+        full_dafny_code="// dafny",
+        timestamp="now",
+    )
+
+    monkeypatch.setattr(pipeline, "_start_inside_constrained", lambda: True)
+    pipeline._handle_attempt_timeout(
+        attempt, [], 1.1, "dummy task", "dummy", tmp_path
+    )
+
+    assert pipeline.generator.seen_start_inside_constrained is True

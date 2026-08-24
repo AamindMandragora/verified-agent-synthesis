@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+import logging
 from typing import Any
 
 from synthesis.evaluate.benchmarks.common import benchmark_defaults as defaults
 from synthesis.evaluate.benchmarks.common.delimited_output import extract_sql_scored_output
 from synthesis.evaluate.benchmarks.sql_spider.prompts import (
+    SpiderPromptParts,
     format_spider_itergen_aligned_prompt,
     format_spider_messages,
     format_spider_prompt,
 )
+from synthesis.evaluate.benchmarks.sql_spider.output_contract import validate_bare_sql
 
+
+_CONTRACT_LOG = logging.getLogger(__name__)
 
 def _token0_enabled() -> bool:
     """Spider no-delimiter / token-0-constrained mode. DEFAULT ON (2026-06-22):
@@ -89,7 +94,14 @@ def load_dataset_sample(evaluator: Any) -> list[dict[str, Any]]:
     return list(ds)
 
 
-def format_prompt(evaluator: Any, example: dict[str, Any]) -> str:
+def _structured_or_compat(evaluator: Any, prompt: SpiderPromptParts) -> str | SpiderPromptParts:
+    """Bind model identity while retaining plain-string compatibility for callers."""
+    bound = prompt.with_model_name(getattr(evaluator, "model_name", None))
+    if evaluator is None or not hasattr(evaluator, "model_name"):
+        return str(bound)
+    return bound
+
+def format_prompt(evaluator: Any, example: dict[str, Any]) -> str | SpiderPromptParts:
     # Flattened few-shot format for synthesis: concise output keeps step budget
     # well within limits so constrained <<SQL>> spans can complete.
     # The inline few-shot example is LOAD-BEARING: a zero-shot IterGen-aligned
@@ -113,7 +125,7 @@ def format_prompt(evaluator: Any, example: dict[str, Any]) -> str:
         return format_prompt_expression_only(evaluator, example)
 
     if _token0_enabled() or os.environ.get("SPIDER_ALIGNED_PROMPT") == "1":
-        return format_spider_itergen_aligned_prompt(example)
+        return _structured_or_compat(evaluator, format_spider_itergen_aligned_prompt(example))
 
     # CRANE baseline (SPIDER_CRANE_COT=1, legacy visible-<<>> path): CRANE is
     # reasoning-based, so it gets the chain-of-thought prompt (reason step by
@@ -121,26 +133,28 @@ def format_prompt(evaluator: Any, example: dict[str, Any]) -> str:
     if os.environ.get("SPIDER_CRANE_COT") == "1":
         return format_prompt_chain_of_thought(evaluator, example)
 
-    return format_spider_prompt(
+    return str(format_spider_prompt(
         example,
         instruction=(
             "Write ONE SQL query using ONLY tables and columns shown in the schema.\n\n"
             "Return exactly one line: `SQL: <<YOUR QUERY>>`."
         ),
         few_shot_answer_line="SQL: <<SELECT count(*) FROM singer>>",
-    )
+    ))
 
 
-def format_prompt_expression_only(evaluator: Any, example: dict[str, Any]) -> str:
+def format_prompt_expression_only(evaluator: Any, example: dict[str, Any]) -> str | SpiderPromptParts:
     """Hard-mask / constrained decoders: emit only ``SQL: <<query>>``."""
-    return format_spider_prompt(
+    if _token0_enabled():
+        return _structured_or_compat(evaluator, format_spider_itergen_aligned_prompt(example))
+    return str(format_spider_prompt(
         example,
         instruction=(
             "Write ONE SQL query using ONLY tables and columns shown in the schema.\n\n"
             "Return exactly one line: `SQL: <<YOUR QUERY>>`."
         ),
         few_shot_answer_line="SQL: <<SELECT count(*) FROM singer>>",
-    )
+    ))
 
 
 def format_prompt_chain_of_thought(evaluator: Any, example: dict[str, Any]) -> list[dict]:
@@ -169,23 +183,38 @@ def build_dynamic_parser(evaluator: Any, env: dict[str, Any], example: dict[str,
     return None
 
 
+def _active_removed_terminal_token_count(evaluator: Any) -> int:
+    evidence = getattr(evaluator, "_active_generation_token_evidence", None)
+    if not isinstance(evidence, dict):
+        return 0
+    return len(evidence.get("removed_terminal_token_ids", ()))
+
+
 def extract_actual(evaluator: Any, scored_output: str, example: dict[str, Any]) -> tuple[str | None, str, dict[str, Any] | None]:
-    actual, source = extract_sql_scored_output(scored_output)
     if not _token0_enabled():
+        actual, source = extract_sql_scored_output(scored_output)
         return actual, source, None
-    # Token-0 mode: the syntax metric has no << >> spans to parse, so compute
-    # grammar validity here over the EXTRACTED SQL and stash it in aux (the same
-    # pattern SMILES uses). Reuses the evaluator's cached sql.lark parser; does
-    # NOT modify the grammar file or the correctness grader (prediction_matches_gold).
-    syntax_valid = False
-    if actual:
-        try:
-            parser = evaluator._get_syntax_parser(example)
-            parser.parse(actual.strip())
-            syntax_valid = True
-        except Exception:
-            syntax_valid = False
-    return actual, source, {"syntax_valid": syntax_valid}
+    parser = evaluator._get_syntax_parser(example) if hasattr(evaluator, "_get_syntax_parser") else None
+    result = validate_bare_sql(scored_output, parser=parser)
+    removed_terminal_token_count = _active_removed_terminal_token_count(evaluator)
+    _CONTRACT_LOG.info(
+        "[spider-output-contract] contract_valid=%s rejection_reason=%s "
+        "raw_chars=%d candidate_chars=%d removed_terminal_token_count=%d",
+        result.accepted,
+        result.rejection_reason,
+        len(result.raw_output),
+        len(result.sql or ""),
+        removed_terminal_token_count,
+    )
+    aux = {
+        "syntax_valid": result.accepted,
+        "removed_terminal_token_count": removed_terminal_token_count,
+        "output_contract_valid": result.accepted,
+        "output_rejection_reason": result.rejection_reason,
+    }
+    if result.accepted:
+        return result.sql, "bare_sql", aux
+    return None, "spider_output_contract_rejected", aux
 
 
 def is_correct(
@@ -209,13 +238,8 @@ def get_generation_runner():
     if _token0_enabled():
         # Begin inside a constrained chunk from token 0 (no leading << forced, no
         # visible delimiters) — the IterGen-style decoding surface.
-        # completion_mode=True keeps the generated SQL surface delimiter-free.
-        # Fixed IterGen tokenizes the raw string for other models; its Qwen3.5
-        # adapter pre-renders the same string with the chat template and thinking
-        # disabled before generation. Both paths still emit bare SQL completions.
         def _token0_runner(*args, **kwargs):
             kwargs.setdefault("start_inside_constrained", True)
-            kwargs.setdefault("completion_mode", True)
             return run_crane_csd(*args, **kwargs)
 
         return _token0_runner

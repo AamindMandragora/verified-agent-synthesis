@@ -53,6 +53,9 @@ It provides an end-to-end loop that produces candidate CSD strategies, proves co
   - Runtime environment setup, benchmark evaluation, parser integration, and feedback-loop orchestration.
   - Captures CSD-authored `AppendTaskGuidance` prompt guidance in evaluation
     feedback so refinement can compare guidance choices against metrics.
+  - The Spider token-0 prompt/output contract is shared across benchmark
+    prompting, runtime guidance rebuilding, evaluator records, and fixed
+    IterGen delivery; the legacy visible-span mode remains explicit.
 
 ## Canonical Stage Flow
 

@@ -11,6 +11,11 @@
 - **`evaluator.py`** should delegate; avoid growing monolithic if/else by benchmark.
 - Keep CSD-authored prompt guidance capture generic: `AppendTaskGuidance`
   belongs in shared runtime/evaluation plumbing, not benchmark-specific scoring.
+- Preserve registered prompt state across the evaluator, CSD runner, and fixed
+  IterGen adapter. For Spider token-0 runs, rebuild the shared structured prompt
+  before its final answer cue; do not force generic `completion_mode` or append
+  guidance as an unregistered suffix. Missing state must raise a descriptive
+  error.
 - Attempt outcome ledgers must remain empirical: metrics, measured deltas,
   rationale-claim summaries, and observed failure-location counts. Include all
   small failure-location buckets rather than top-k truncating them.
@@ -33,6 +38,10 @@
 - Spider IterGen must render Qwen3.5 prompts through the model chat template
   with `enable_thinking=False`; other model and dataset prompt surfaces remain
   unchanged.
+- Spider token-0 output validation belongs in the Spider benchmark module: accept
+  one full-string parser-valid bare SQL statement, reject outer labels/wrappers
+  and extra statements with stable reasons, and retain raw/generated token
+  evidence while removing only tokenizer-declared terminal special IDs.
 - SMILES CRANE samples at temperature 0.7, permits neutral reasoning before
   `<<`, constrains only the final SMILES inside `<< >>`, stops at `>>`, and
   scores only that inner span. Keep molecule examples, chemistry hints, and

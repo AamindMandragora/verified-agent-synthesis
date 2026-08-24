@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from synthesis.evaluate.completion_text import completion_for_scoring, strip_prompt_prefix
+from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
 
 
 LOGGER = logging.getLogger(__name__)
@@ -167,7 +168,12 @@ def _baseline_row_question(dataset: str, example: dict[str, Any], fallback: str)
     return str(example.get("question") or example.get("prompt") or fallback)
 
 
-def _legacy_benchmark_prompt(logic: Any, evaluator: Any, example: dict[str, Any], profile: str) -> str:
+def _legacy_benchmark_prompt(
+    logic: Any,
+    evaluator: Any,
+    example: dict[str, Any],
+    profile: str,
+) -> str | SpiderPromptParts:
     """User-message text for legacy fixed strategies (not used by metadecode).
 
     profile:
@@ -175,9 +181,9 @@ def _legacy_benchmark_prompt(logic: Any, evaluator: Any, example: dict[str, Any]
       - ``chain_of_thought``: explicit reasoning then answer; used by CRANE adaptive SMILES.
         NOTE: for Spider, ``format_prompt_chain_of_thought`` returns a list[dict] (multi-turn
         chat messages) — do NOT use this profile for Spider; use ``evaluator_default`` instead.
-      - ``evaluator_default``: ``logic.format_prompt``; for Spider this returns the flat
-        few-shot string (the production format) and is the correct profile for all Spider
-        legacy adapters.
+      - ``evaluator_default``: ``logic.format_prompt``; for token-0 Spider this
+        returns shared structured prompt parts. Fixed IterGen renders those parts;
+        other legacy adapters stringify them at their existing raw-text boundary.
     """
     if profile == "evaluator_default":
         return logic.format_prompt(evaluator, example)
@@ -901,6 +907,8 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
             example,
             _cars_prompt_profile(dataset),
         )
+        if dataset == "spider":
+            prompt = str(prompt)
         gen_started = time.perf_counter()
         steps = _cars_sampler_steps(
             cars_model,
@@ -1078,6 +1086,8 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
                 example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
 
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "expression_only")
+        if dataset == "spider":
+            prompt = str(prompt)
         gen_started = time.perf_counter()
         gcd_prompt = _gcd_prompt(prompt)
         completions = sc.infer(gcd_prompt, stop_words=_gcd_stop_words(dataset))
@@ -1232,6 +1242,45 @@ def _itergen_generate(iter_gen: Any, prompt: Any) -> str:
     return str(generated)
 
 
+def _itergen_generation_token_evidence(iter_gen: Any) -> dict[str, Any] | None:
+    """Capture only generated IterGen IDs, excluding prompt/session prefix IDs."""
+    session_tokens = getattr(iter_gen, "session_tokens", None)
+    start_from = getattr(iter_gen, "start_from", None)
+    tokenizer = getattr(iter_gen, "tokenizer", None)
+    if session_tokens is None or start_from is None or tokenizer is None:
+        return None
+    try:
+        generated_tokens = session_tokens[..., int(start_from):]
+    except (IndexError, TypeError, ValueError):
+        try:
+            generated_tokens = session_tokens[int(start_from):]
+        except (IndexError, TypeError, ValueError):
+            return None
+    if hasattr(generated_tokens, "detach"):
+        generated_tokens = generated_tokens.detach().cpu()
+    if hasattr(generated_tokens, "tolist"):
+        generated_tokens = generated_tokens.tolist()
+    while (
+        isinstance(generated_tokens, list)
+        and len(generated_tokens) == 1
+        and isinstance(generated_tokens[0], list)
+    ):
+        generated_tokens = generated_tokens[0]
+    if not isinstance(generated_tokens, list):
+        return None
+    from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
+        generation_token_evidence,
+    )
+
+    evidence = generation_token_evidence(generated_tokens, tokenizer)
+    LOGGER.info(
+        "[legacy-itergen-spider] token-boundary generated_ids=%d removed_terminal_ids=%d",
+        len(evidence["raw_token_ids"]),
+        len(evidence["removed_terminal_token_ids"]),
+    )
+    return evidence
+
+
 def _legacy_fixed_max_new_tokens(
     dataset: str,
     eval_max_steps: int,
@@ -1273,42 +1322,6 @@ def _itergen_generation_kwargs(
         # changing the deterministic baseline into sampling.
         kwargs["recurrence_penalty"] = 0.3
     return kwargs
-
-
-def _itergen_render_prompt_for_model(
-    iter_gen: Any,
-    prompt: str,
-    *,
-    dataset: str,
-) -> str:
-    """Use Qwen3.5 chat formatting for Spider without enabling thinking tokens."""
-    if dataset != "spider":
-        return prompt
-
-    config = getattr(getattr(iter_gen, "model", None), "config", None)
-    model_type = (
-        str(getattr(config, "model_type", ""))
-        .lower()
-        .replace("-", "_")
-        .replace(".", "_")
-    )
-    if model_type not in {"qwen3_5", "qwen3_5_text"}:
-        return prompt
-
-    rendered = iter_gen.tokenizer.apply_chat_template(
-        [{"role": "user", "content": prompt}],
-        add_generation_prompt=True,
-        tokenize=False,
-        enable_thinking=False,
-    )
-    if not isinstance(rendered, str):
-        raise TypeError("Qwen3.5 IterGen chat template must return text when tokenize=False")
-    LOGGER.debug(
-        "[legacy-itergen-spider] rendered Qwen3.5 prompt chars=%d thinking=%s",
-        len(rendered),
-        False,
-    )
-    return rendered
 
 
 def _itergen_spider_schema(example: dict[str, Any]) -> dict[str, set[str]]:
@@ -1568,11 +1581,13 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
         if dataset == "gsm_symbolic":
             prompt = prompt.rstrip() + "<<"
 
-        generation_prompt = _itergen_render_prompt_for_model(
-            iter_gen,
-            prompt,
-            dataset=dataset,
-        )
+        if dataset == "spider":
+            generation_prompt = prompt.render_for_model(
+                iter_gen.tokenizer,
+                model_name=args.eval_model,
+            )
+        else:
+            generation_prompt = prompt
         gen_started = time.perf_counter()
         raw_completion, _timed_out = _itergen_generate_with_timeout(
             iter_gen,
@@ -1586,42 +1601,71 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
                 f"{_ITERGEN_PER_EXAMPLE_TIMEOUT_SECONDS:g}s on {dataset} example "
                 f"{example.get('class_name', example.get('id', '?'))} -- scoring as non-answer"
             )
+        generation_token_evidence = (
+            _itergen_generation_token_evidence(iter_gen)
+            if dataset == "spider"
+            else None
+        )
+        if dataset == "spider" and generation_token_evidence is not None:
+            raw_completion = generation_token_evidence["decoded_text"]
         if dataset == "gsm_symbolic":
             raw_completion = _gsm_symbolic_completion_to_delimited(
                 raw_completion, example, eval_runtime, logic
             )
         gen_seconds = time.perf_counter() - gen_started
-        completion = completion_for_scoring(prompt, raw_completion)
+        prompt_for_scoring = str(prompt) if dataset == "spider" else prompt
+        completion = completion_for_scoring(prompt_for_scoring, raw_completion)
         scored_output = (
             eval_runtime._truncate_gsm_output(completion)
             if dataset == "gsm_symbolic"
             else completion
         )
         expected = logic.expected_answer(eval_runtime, example)
-        actual, _answer_source, aux = logic.extract_actual(eval_runtime, scored_output, example)
-        is_correct = bool(logic.is_correct(eval_runtime, actual, expected, example, aux, scored_output))
-
-        syntax_valid, _segments = eval_runtime._check_syntax_validity(scored_output, example=example)
+        actual, answer_source, aux = logic.extract_actual(eval_runtime, scored_output, example)
         if dataset == "spider":
-            syntax_valid = bool(actual and re.search(r"\bselect\b", actual, flags=re.IGNORECASE))
+            removed_terminal_token_count = len(
+                (generation_token_evidence or {}).get("removed_terminal_token_ids", [])
+            )
+            LOGGER.info(
+                "[spider-output-contract] contract_valid=%s rejection_reason=%s "
+                "raw_chars=%d candidate_chars=%d removed_terminal_token_count=%d",
+                bool(aux and aux.get("output_contract_valid")),
+                aux.get("output_rejection_reason") if aux else None,
+                len(str(scored_output)),
+                len(str(actual or "")),
+                removed_terminal_token_count,
+            )
+            if aux is not None:
+                aux["removed_terminal_token_count"] = removed_terminal_token_count
+        is_correct = bool(logic.is_correct(eval_runtime, actual, expected, example, aux, scored_output))
+        syntax_valid, _segments = eval_runtime._check_syntax_validity(scored_output, example=example)
+        if dataset == "spider" and aux is not None:
+            syntax_valid = bool(aux.get("syntax_valid", aux.get("output_contract_valid", False)))
         if dataset == "smiles":
             syntax_valid = bool(aux and aux.get("syntax_valid"))
             if syntax_valid and actual:
                 cls = str(example.get("class_name", ""))
                 if __import__("os").environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
                     smiles_prompt_suffix[cls] = _cap_suffix(smiles_prompt_suffix.get(cls, "") + f" {actual}\nMolecule:")
-
         question = _baseline_row_question(dataset, example, expected)
-        rows.append(
-            {
-                "question": question,
-                "llm_response": completion,
-                "prompt_used": prompt,
-                "correct": bool(is_correct),
-                "syntax_valid": bool(syntax_valid),
-                "generation_seconds": gen_seconds,
-            }
-        )
+        row_out = {
+            "question": question,
+            "llm_response": completion,
+            "prompt_used": prompt_for_scoring,
+            "correct": bool(is_correct),
+            "syntax_valid": bool(syntax_valid),
+            "generation_seconds": gen_seconds,
+        }
+        if dataset == "spider":
+            row_out.update(
+                actual=actual,
+                answer_source=answer_source,
+                output_contract_valid=(aux.get("output_contract_valid") if aux is not None else None),
+                output_rejection_reason=aux.get("output_rejection_reason") if aux else None,
+                generation_token_evidence=generation_token_evidence,
+                removed_terminal_token_count=removed_terminal_token_count,
+            )
+        rows.append(row_out)
 
     _build_minimal_json(
         rows,
@@ -1814,6 +1858,8 @@ def run_unconstrained_spider_adapter(args: argparse.Namespace) -> int:
 
     for example in examples:
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "evaluator_default")
+        if not isinstance(prompt, str):
+            prompt = str(prompt)
         num_toks: int | None = None
         if args.eval_backend == "vllm":
             from vllm import SamplingParams as _SP
@@ -2035,6 +2081,8 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
                 example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
 
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "evaluator_default")
+        if dataset == "spider":
+            prompt = str(prompt)
         prompt = _crane_prompt_for_generation(dataset, prompt)
         gen_started = time.perf_counter()
         completions = sc.infer(prompt, stop_words=_crane_stop_words(dataset))

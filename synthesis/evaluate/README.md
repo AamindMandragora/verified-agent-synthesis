@@ -35,8 +35,12 @@ The evaluate stage executes compiled strategies on benchmark tasks and returns s
 - The parser path depends on Syncode DFA-mask caching for practical performance.
 - Evaluation backends currently support runtime modes that provide token-level control (`huggingface`, `vllm`).
 - Runtime LM wrappers support `AppendTaskGuidance`: the first non-empty CSD
-  guidance block is appended to the evaluator prompt for that example, later
-  calls are ignored, and accepted guidance is surfaced in evaluation feedback.
+  guidance block is rebuilt into the registered structured/chat prompt before
+  the assistant-generation cue, later calls are ignored, and accepted guidance
+  is surfaced in evaluation feedback. Missing prompt state fails closed with a
+  descriptive error; guidance is never appended as an unregistered suffix.
+- Spider prompt rendering is shared by evaluator and fixed IterGen paths; Qwen3.5
+  disables thinking in its chat template, while Qwen2.5 receives the raw prompt.
 - Output artifacts from this stage are saved under per-run `results/` folders in `outputs/generated/`.
 - Evaluation refinement prompts include a compact attempt outcome ledger once
   multiple evaluated attempts exist. The ledger lists the best result, recent

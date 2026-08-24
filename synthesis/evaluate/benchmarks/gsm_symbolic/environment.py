@@ -815,6 +815,7 @@ def setup_dafny_environment(
         "parser": parser,
         "tokenizer": tok,
         "csd_trace": trace_state,
+        "model_name": model_name,
     }
 
 

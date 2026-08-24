@@ -18,12 +18,11 @@ This module evaluates synthesized CSD strategies on text-to-SQL tasks using the 
 - `executor.py`: execution-accuracy scoring against SQLite databases.
 - `metrics.py`: aggregate metrics and reporting helpers.
 
-## Constraint mode
+## Prompt and output contract
 
-The evaluator exposes two prompt surfaces. `format_prompt_expression_only` renders the flattened string prompt used by hard-mask / constrained decoders, while `format_prompt_chain_of_thought` returns the chat-style legacy CRANE prompt. Both paths instruct the model to wrap its SQL query in `<< >>` delimiters — CRANE can reason before emitting `<<SELECT ...>>`, while GCD constrains from token 1. The evaluator extracts the answer from `<< >>` when present and falls back to the raw first paragraph for unconstrained baselines.
-Fixed IterGen pre-renders the flattened prompt through the Qwen3.5 chat
-template with thinking disabled for that model only. Scoring and evidence keep
-the original flattened prompt.
+`SpiderPromptParts` is the shared prompt value used by evaluator and fixed IterGen paths. It preserves the raw user text, places CSD guidance before the final SQL cue, and renders Qwen3.5 with `apply_chat_template(..., enable_thinking=False)`. Qwen2.5 model names use the raw prompt. The legacy `SPIDER_TOKEN0_CONSTRAINED=0` switch remains available for the visible-delimiter path.
+
+Token-0 Spider scoring accepts one bare SQL statement only. Labels, prose wrappers, delimiters, multiple statements, and trailing code are rejected; markers inside parser-supported SQL strings and line comments remain valid. Each Spider row records `output_contract_valid` and `output_rejection_reason` consistently. Generated-token evidence records the generated IDs and decoded text before and after removing only a terminal suffix declared by the tokenizer as special.
 
 ## Runtime Notes
 

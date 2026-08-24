@@ -115,23 +115,31 @@ def run_crane_csd(
     GeneratedCSD = env["GeneratedCSD"]
     lm = env["lm"]
     parser = dynamic_parser if dynamic_parser is not None else env["parser"]
+    if hasattr(lm, "_last_generation_evidence"):
+        lm._last_generation_evidence = None
 
-    if completion_mode:
-        # Base (non-instruction-tuned) completion models: feed the prompt as a
-        # raw continuation with NO chat template. The model continues directly
-        # from prompt_text (full_prompt = instruction_text + generated prefix),
-        # matching how IterGen drives the base Coder model. Chat scaffolding is
-        # intentionally left unset so no ChatML markers leak into the prompt.
-        if not isinstance(prompt_text, str):
-            raise ValueError("completion_mode requires prompt_text to be a string")
-        lm.instruction_text = prompt_text
+    if hasattr(prompt_text, "render_for_model"):
         if hasattr(lm, "ResetTaskGuidance"):
             lm.ResetTaskGuidance()
+        model_name = env.get("model_name") or getattr(lm, "model_name", None)
+        if not model_name:
+            model_config = getattr(getattr(lm, "model", None), "config", None)
+            model_name = getattr(model_config, "model_type", None)
+        if hasattr(lm, "set_structured_prompt"):
+            lm.set_structured_prompt(prompt_text, model_name=model_name)
+        lm.instruction_text = prompt_text.render_for_model(
+            lm.tokenizer, model_name=model_name
+        )
+    elif completion_mode:
+        if not isinstance(prompt_text, str):
+            raise ValueError("completion_mode requires prompt_text to be a string")
+        if hasattr(lm, "ResetTaskGuidance"):
+            lm.ResetTaskGuidance()
+        lm.instruction_text = prompt_text
     else:
-        if isinstance(prompt_text, list):
-            chat_messages = prompt_text
-        else:
-            chat_messages = [{"role": "user", "content": prompt_text}]
+        if hasattr(lm, "ResetTaskGuidance"):
+            lm.ResetTaskGuidance()
+        chat_messages = prompt_text if isinstance(prompt_text, list) else [{"role": "user", "content": prompt_text}]
         try:
             lm.instruction_text = lm.tokenizer.apply_chat_template(
                 chat_messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
@@ -140,15 +148,8 @@ def run_crane_csd(
             lm.instruction_text = lm.tokenizer.apply_chat_template(
                 chat_messages, tokenize=False, add_generation_prompt=True
             )
-        # Register chat_messages on the LM so AppendTaskGuidance (if the CSD
-        # calls it) can re-template with guidance injected INSIDE the last user
-        # message — instead of appending it after the assistant generation
-        # marker (which previously landed guidance in the model's output space
-        # and crashed accuracy by 18-22pp on this cell).
         if hasattr(lm, "set_chat_messages"):
             lm.set_chat_messages(chat_messages)
-        if hasattr(lm, "ResetTaskGuidance"):
-            lm.ResetTaskGuidance()
     start_time = time.time()
     runtime_deadline = None
     if max_seconds is not None:

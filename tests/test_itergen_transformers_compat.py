@@ -5,12 +5,13 @@ import types
 import pytest
 
 from synthesis.evaluate import run_legacy_fixed_strategy as legacy_runner
+from synthesis.evaluate.benchmarks.sql_spider import eval_logic as sql_eval_logic
+from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
 from synthesis.evaluate.run_legacy_fixed_strategy import (
     _crane_adaptive_surface,
     _crane_stop_words,
     _itergen_generation_kwargs,
     _itergen_generate_spider,
-    _itergen_render_prompt_for_model,
     _install_itergen_transformers_compat,
     _legacy_fixed_max_new_tokens,
 )
@@ -241,8 +242,8 @@ def test_spider_itergen_advances_by_schema_units_and_backtracks_invalid_names():
     assert result == "SELECT name FROM singer"
 
 
-@pytest.mark.parametrize("model_type", ["qwen3_5", "qwen3_5_text"])
-def test_spider_qwen35_itergen_renders_chat_template_without_thinking(model_type):
+
+def test_spider_qwen35_itergen_renders_chat_template_without_thinking():
     calls = []
 
     class Tokenizer:
@@ -250,22 +251,9 @@ def test_spider_qwen35_itergen_renders_chat_template_without_thinking(model_type
             calls.append((messages, kwargs))
             return "<|user|>SQL prompt<|assistant|>"
 
-    class Config:
-        pass
-
-    Config.model_type = model_type
-
-    class Model:
-        config = Config()
-
-    class FakeIterGen:
-        tokenizer = Tokenizer()
-        model = Model()
-
-    rendered = _itergen_render_prompt_for_model(
-        FakeIterGen(),
-        "SQL prompt",
-        dataset="spider",
+    rendered = SpiderPromptParts("SQL prompt", answer_cue="").render_for_model(
+        Tokenizer(),
+        model_name="Qwen/Qwen3.5-2B",
     )
 
     assert rendered == "<|user|>SQL prompt<|assistant|>"
@@ -282,34 +270,31 @@ def test_spider_qwen35_itergen_renders_chat_template_without_thinking(model_type
 
 
 @pytest.mark.parametrize(
-    ("dataset", "model_type"),
-    [("smiles", "qwen3_5"), ("spider", "qwen2")],
+    "model_name",
+    [
+        "Qwen/Qwen2.5-1.5B-Instruct",
+        "Qwen/Qwen2.5-7B-Instruct",
+        "Qwen/Qwen3.5-2B",
+        "Qwen/Qwen3.5-4B",
+    ],
 )
-def test_itergen_chat_rendering_leaves_other_inputs_unchanged(dataset, model_type):
+def test_spider_renderer_uses_exact_manifest_model_names(model_name):
+    calls = []
+
     class Tokenizer:
         def apply_chat_template(self, messages, **kwargs):
-            raise AssertionError("chat template must not run")
+            calls.append((messages, kwargs))
+            return "rendered"
 
-    class Config:
-        pass
+    prompt = SpiderPromptParts("raw prompt", answer_cue="")
+    rendered = prompt.render_for_model(Tokenizer(), model_name=model_name)
+    if "Qwen3.5" in model_name:
+        assert rendered == "rendered"
+        assert calls[0][1]["enable_thinking"] is False
+    else:
+        assert rendered == "raw prompt"
+        assert calls == []
 
-    Config.model_type = model_type
-
-    class Model:
-        config = Config()
-
-    class FakeIterGen:
-        tokenizer = Tokenizer()
-        model = Model()
-
-    assert (
-        _itergen_render_prompt_for_model(
-            FakeIterGen(),
-            "raw prompt",
-            dataset=dataset,
-        )
-        == "raw prompt"
-    )
 
 
 def test_crane_uses_the_closing_delimiter_as_its_stop_word():
@@ -326,9 +311,15 @@ def test_qwen35_spider_adapter_keeps_raw_prompt_for_scoring_and_evidence(
     written = {}
 
     class Tokenizer:
+        all_special_ids = (2, 99)
+
         def apply_chat_template(self, messages, **kwargs):
             observed["template_call"] = (messages, kwargs)
             return "<|user|>RAW SPIDER PROMPT<|assistant|>"
+
+        def decode(self, token_ids, skip_special_tokens=False):
+            pieces = {10: "SQL: ", 11: "SELECT name FROM singer", 99: "<special>", 2: "<eos>"}
+            return "".join(pieces[int(token_id)] for token_id in token_ids)
 
     class Config:
         model_type = "qwen3_5"
@@ -336,11 +327,18 @@ def test_qwen35_spider_adapter_keeps_raw_prompt_for_scoring_and_evidence(
     class Model:
         config = Config()
 
+    class SessionTokens:
+        def __getitem__(self, key):
+            observed["session_slice"] = key
+            return [10, 11, 99, 2]
+
     class FakeIterGen:
         def __init__(self, **kwargs):
             observed["constructor_kwargs"] = kwargs
             self.model = Model()
             self.tokenizer = Tokenizer()
+            self.session_tokens = SessionTokens()
+            self.start_from = 3
             self.steps = 0
 
         def start(self, prompt):
@@ -351,7 +349,7 @@ def test_qwen35_spider_adapter_keeps_raw_prompt_for_scoring_and_evidence(
 
         def forward(self, **kwargs):
             self.steps += 1
-            return ["SELECT name FROM singer"]
+            return ["SQL: SELECT name FROM singer"]
 
         def view(self, unit):
             return {
@@ -383,7 +381,11 @@ def test_qwen35_spider_adapter_keeps_raw_prompt_for_scoring_and_evidence(
             return example["query"]
 
         def extract_actual(self, evaluator, scored_output, example):
-            return scored_output, "completion", {}
+            return (
+                None,
+                "spider_output_contract_rejected",
+                {"output_contract_valid": False, "output_rejection_reason": "prompt_or_wrapper"},
+            )
 
         def is_correct(self, evaluator, actual, expected, example, aux, scored_output):
             return actual == expected
@@ -407,10 +409,11 @@ def test_qwen35_spider_adapter_keeps_raw_prompt_for_scoring_and_evidence(
     monkeypatch.setattr(
         legacy_runner,
         "_legacy_benchmark_prompt",
-        lambda *args: "RAW SPIDER PROMPT",
+        lambda *args: SpiderPromptParts("RAW SPIDER PROMPT", answer_cue=""),
     )
     monkeypatch.setattr(legacy_runner, "_baseline_row_question", lambda *args: "question")
     monkeypatch.setattr(legacy_runner, "_ITERGEN_PER_EXAMPLE_TIMEOUT_SECONDS", 0)
+    monkeypatch.setattr(legacy_runner.Path, "exists", lambda self: True)
 
     def score_completion(prompt, raw_completion):
         observed["scoring_prompt"] = prompt
@@ -445,7 +448,16 @@ def test_qwen35_spider_adapter_keeps_raw_prompt_for_scoring_and_evidence(
     assert observed["generation_prompt"] == "<|user|>RAW SPIDER PROMPT<|assistant|>"
     assert observed["scoring_prompt"] == "RAW SPIDER PROMPT"
     assert written["rows"][0]["prompt_used"] == "RAW SPIDER PROMPT"
-    assert written["rows"][0]["llm_response"] == "SELECT name FROM singer"
+    assert written["rows"][0]["llm_response"] == "SQL: SELECT name FROM singer"
+    assert written["rows"][0]["actual"] is None
+    assert written["rows"][0]["answer_source"] == "spider_output_contract_rejected"
+    assert written["rows"][0]["output_contract_valid"] is False
+    evidence = written["rows"][0]["generation_token_evidence"]
+    assert observed["session_slice"] == (Ellipsis, slice(3, None))
+    assert evidence["raw_token_ids"] == [10, 11, 99, 2]
+    assert evidence["removed_terminal_token_ids"] == [99, 2]
+    assert evidence["raw_decoded_text"] == "SQL: SELECT name FROM singer<special><eos>"
+    assert evidence["decoded_text"] == "SQL: SELECT name FROM singer"
 
 
 @pytest.mark.parametrize("strategy", ["gcd", "itergen"])
@@ -554,3 +566,15 @@ def test_crane_smiles_samples_with_neutral_reasoning_and_scores_only_inner_span(
     assert observed["extract_input"] == "C=CC(=O)OCC"
     assert observed["syntax_input"] == "C=CC(=O)OCC"
     assert written["rows"][0]["llm_response"] == "C=CC(=O)OCC"
+
+
+def test_spider_qwen35_prompt_state_is_shared_with_the_csd_entry():
+    evaluator = type("PromptEvaluator", (), {"model_name": "Qwen/Qwen3.5-2B"})()
+    prompt = sql_eval_logic.format_prompt(evaluator, {
+        "db_id": "concert_singer",
+        "db_info": "# singer ( singer_id , name )",
+        "question": "How many singers do we have?",
+    })
+
+    assert callable(getattr(prompt, "render_for_model", None))
+    assert prompt.raw_text == str(prompt)

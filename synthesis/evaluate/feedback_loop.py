@@ -2779,7 +2779,11 @@ class SynthesisPipeline:
         if next_helper_status:
             print(f"  Helper policy: {next_helper_status}")
         print("  Restarting with fresh generation after timeout...")
-        return self.generator.generate_initial(task_description, allowed_helpers=next_allowed_helpers)
+        return self.generator.generate_initial(
+            task_description,
+            allowed_helpers=next_allowed_helpers,
+            start_inside_constrained=self._start_inside_constrained(),
+        )
 
     def _save_failure_report(
         self,
