@@ -503,6 +503,97 @@ def test_evaluator_does_not_strip_raw_spider_prompt_echo(monkeypatch):
     assert sample["has_extracted_answer"] is False
 
 
+def _guidance_test_lm(tokenizer):
+    from synthesis.evaluate.benchmarks.common.model_utils import _TensorizedLMBase
+
+    class Dafny:
+        @staticmethod
+        def Seq(value):
+            return value
+
+        @staticmethod
+        def SeqWithoutIsStrInference(values):
+            return list(values)
+
+    return _TensorizedLMBase(Dafny(), tokenizer, ["token"], [1])
+
+
+def _run_guidance_failure_at_evaluator_boundary(lm):
+    from synthesis.evaluate.evaluator import Evaluator
+
+    evaluator = Evaluator(
+        dataset_name="spider",
+        model_name="Qwen/Qwen3.5-2B",
+        backend="huggingface",
+        device="cpu",
+        sample_size=1,
+        max_steps=8,
+    )
+    evaluator._base_grammar_text = _GRAMMAR_PATH.read_text()
+
+    def fake_run(**kwargs):
+        lm.AppendTaskGuidance("Use only names from the schema.")
+        return "SELECT name FROM singer", 4, 0.01, [], []
+
+    return evaluator._evaluate_one_example(
+        0,
+        _example(),
+        1,
+        {"lm": lm, "tokenizer": lm.tokenizer},
+        sql_eval_logic,
+        fake_run,
+        {},
+    )
+
+
+def test_real_append_guidance_render_failure_propagates_typed_spider_error():
+    from synthesis.evaluate.benchmarks.sql_spider.prompts import (
+        SpiderPromptParts,
+        SpiderPromptRenderError,
+    )
+
+    class Tokenizer:
+        all_special_ids = {2}
+        eos_token_id = 2
+        eos_token = "<eos>"
+
+        def decode(self, token_ids, skip_special_tokens=False):
+            return "token"
+
+        def encode(self, text, add_special_tokens=False):
+            return [1]
+
+        def apply_chat_template(self, messages, **kwargs):
+            raise ValueError("second prompt render failed")
+
+    lm = _guidance_test_lm(Tokenizer())
+    prompt = SpiderPromptParts("task", answer_cue="", model_name="Qwen/Qwen3.5-2B")
+    lm.set_structured_prompt(prompt, model_name="Qwen/Qwen3.5-2B")
+
+    with pytest.raises(SpiderPromptRenderError, match="Qwen3.5"):
+        _run_guidance_failure_at_evaluator_boundary(lm)
+
+
+def test_real_append_guidance_missing_state_propagates_typed_spider_error():
+    from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptRenderError
+
+    class Tokenizer:
+        all_special_ids = {2}
+        eos_token_id = 2
+        eos_token = "<eos>"
+
+        def decode(self, token_ids, skip_special_tokens=False):
+            return "token"
+
+        def encode(self, text, add_special_tokens=False):
+            return [1]
+
+    lm = _guidance_test_lm(Tokenizer())
+
+    with pytest.raises(SpiderPromptRenderError, match="registered"):
+        _run_guidance_failure_at_evaluator_boundary(lm)
+
+
 def test_spider_prompt_renderer_failure_propagates_as_harness_error(monkeypatch):
     from synthesis.evaluate.evaluator import Evaluator
 
@@ -570,6 +661,120 @@ def test_generation_boundary_removes_only_actual_stop_ids():
     assert result.rejection_reason == "prompt_or_wrapper"
 
 
+def _recording_spider_lm(token_ids, token_texts):
+    from synthesis.evaluate.benchmarks.common.model_utils import _TensorizedLMBase
+    from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
+
+    class Dafny:
+        @staticmethod
+        def Seq(value):
+            return value
+
+        @staticmethod
+        def SeqWithoutIsStrInference(values):
+            return list(values)
+
+    class Tokenizer:
+        eos_token = "<eos>"
+        eos_token_id = 2
+        all_special_ids = {2}
+
+        def decode(self, values, skip_special_tokens=False):
+            return "".join(token_texts[int(value)] for value in values)
+
+        def encode(self, text, add_special_tokens=False):
+            exact = {
+                "SELECT ": [10],
+                "SELECT name ": [10, 11],
+                "SELECT name FROM singer": [10, 11, 12],
+            }
+            if text in exact:
+                return exact[text]
+            return [token_id for token_id in token_ids if token_texts[token_id] == text]
+
+    lm = _TensorizedLMBase(
+        Dafny(),
+        Tokenizer(),
+        [token_texts[token_id] for token_id in token_ids],
+        token_ids,
+    )
+    lm._structured_prompt = SpiderPromptParts(
+        "db_id: x\nquestion: q\n",
+        model_name="Qwen/Qwen2.5-1.5B-Instruct",
+    )
+    return lm
+
+
+def test_spider_unconstrained_recorder_discards_post_marker_unused_ids():
+    lm = _recording_spider_lm(
+        [10, 11, 13, 14, 2],
+        {
+            10: "SELECT ",
+            11: "name ",
+            13: "<<",
+            14: "unused-after-marker",
+            2: "<eos>",
+        },
+    )
+
+    result = lm._build_unconstrained_chunk_result([10, 11, 13, 14, 2], "<<", "<eos>", 10)
+
+    assert result[0] == ["SELECT ", "name ", "<<"]
+    assert result[1:] == (True, False, 3)
+    assert lm._last_generation_evidence["raw_token_ids"] == [10, 11, 13]
+    assert lm._last_generation_evidence["removed_terminal_token_ids"] == []
+    assert lm._last_generation_evidence["decoded_text"] == "SELECT name <<"
+
+
+def test_spider_rejected_unconstrained_retry_discards_speculative_id():
+    import types
+    import torch
+
+    lm = _recording_spider_lm(
+        [1, 2, 3],
+        {1: "invented", 2: "name", 3: "<eos>"},
+    )
+    lm._generation_stop_token_ids = {3}
+    lm._full_logits = torch.tensor([0.0, 5.0, 4.0, -1.0])
+    lm.ChooseNextTokenUnconstrained()
+    lm._oracle_node = types.SimpleNamespace(log_theta=torch.zeros(1, 4), raw_logprob=None)
+    lm._oracle_depth = 0
+    lm._oracle_context_ids = []
+    lm._oracle_pending_reject_id = None
+    lm._decode_trace_token_ids = set()
+    lm.RejectLastInTrie()
+    lm._full_logits = torch.tensor([0.0, -1.0, 5.0, -1.0])
+    lm.ChooseNextTokenUnconstrained()
+
+    evidence = lm._finalize_generation_evidence()
+    assert evidence["raw_token_ids"] == [2]
+    assert evidence["decoded_text"] == "name"
+
+
+def test_spider_constrained_rollback_discards_committed_token():
+    import torch
+
+    lm = _recording_spider_lm(
+        [1, 2, 3],
+        {1: "invented", 2: "name", 3: "<eos>"},
+    )
+    lm._generation_stop_token_ids = {3}
+    lm._logits_tensor = torch.tensor([0.0, 5.0, 4.0, -1.0])
+    lm.ChooseNextToken()
+    lm._oracle_node.log_theta = torch.zeros(1, 4)
+    lm._oracle_pending_reject_id = None
+    lm._oracle_context_ids = [1]
+    lm._last_unconstrained_token_id = None
+    lm.RejectLastInTrie()
+    lm._logits_tensor = torch.tensor([0.0, -1.0, 5.0, -1.0])
+    lm.ChooseNextToken()
+
+    evidence = lm._finalize_generation_evidence()
+    assert evidence["raw_token_ids"] == [2, 3]
+    assert evidence["removed_terminal_token_ids"] == [3]
+    assert evidence["decoded_text"] == "name"
+
+
 def _run_fake_spider_csd_with_ids(tmp_path, token_ids, token_texts):
     from synthesis.evaluate.benchmarks.gsm_symbolic.generation import run_crane_csd
     from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
@@ -602,8 +807,22 @@ def _run_fake_spider_csd_with_ids(tmp_path, token_ids, token_texts):
             self.tokenizer = Tokenizer()
             self.model_name = "Qwen/Qwen2.5-1.5B-Instruct"
             self._last_generation_evidence = None
-            self._generation_token_ids = []
+            self._committed_token_ids = []
+            self._generation_stop_token_ids = {2}
             self.task_guidance = None
+
+        def _record_generated_token_ids(self, token_ids):
+            self._committed_token_ids.extend(int(token_id) for token_id in token_ids)
+
+        def _finalize_generation_evidence(self):
+            from synthesis.evaluate.benchmarks.sql_spider.output_contract import generation_token_evidence
+
+            self._last_generation_evidence = generation_token_evidence(
+                self._committed_token_ids,
+                self.tokenizer,
+                terminal_stop_token_ids=self._generation_stop_token_ids,
+            )
+            return self._last_generation_evidence
 
         def ResetTaskGuidance(self):
             pass
@@ -632,7 +851,7 @@ def _run_fake_spider_csd_with_ids(tmp_path, token_ids, token_texts):
             step_budget,
             eos_token,
         ):
-            lm_arg._generation_token_ids = list(token_ids)
+            lm_arg._record_generated_token_ids(token_ids)
             return (
                 FakeSeq([token_texts[int(value)] for value in token_ids if int(value) != 2]),
                 False,

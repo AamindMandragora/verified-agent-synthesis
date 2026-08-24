@@ -1097,16 +1097,23 @@ class _TensorizedLMBase:
 
     def RejectLastInTrie(self) -> None:
         reject_id = self._oracle_pending_reject_id
+        discard_recorded_token = False
         # CARS generation_failed eliminates generated_tokens[-1] (the bad token).
         # After CarsTrieStep samples an invalid next, pending is unset and
         # context_ids still ends at the prior valid prefix — prefer the just-
         # sampled unconstrained id so the trie matches CARS.
         if reject_id is None:
             reject_id = getattr(self, "_last_unconstrained_token_id", None)
+            discard_recorded_token = reject_id is not None
+            if discard_recorded_token:
+                self._last_unconstrained_token_id = None
         if reject_id is None and self._oracle_context_ids:
             reject_id = self._oracle_context_ids[-1]
+            discard_recorded_token = True
         if reject_id is None:
             return
+        if discard_recorded_token:
+            self._discard_last_generated_token_id(reject_id)
         node = self._oracle_node
         if node.log_theta is None:
             width = node.raw_logprob.shape[1] if node.raw_logprob is not None else 1
@@ -1186,6 +1193,8 @@ class _TensorizedLMBase:
 
     def AppendTaskGuidance(self, guidance):
         """Rebuild the active prompt with first-call guidance before decoding."""
+        from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptRenderError
+
         if self._task_guidance.accepted_guidance is not None:
             return
         text = self._task_guidance._coerce_guidance(self._to_str(guidance))
@@ -1198,12 +1207,14 @@ class _TensorizedLMBase:
                     self.tokenizer,
                     model_name=self.model_name,
                 )
+            except SpiderPromptRenderError:
+                raise
             except Exception as exc:
                 _GROUNDING_LOG.error(
                     "[guidance] structured prompt rebuild failed type=%s",
                     type(exc).__name__,
                 )
-                raise RuntimeError(
+                raise SpiderPromptRenderError(
                     "Task guidance could not rebuild the registered structured prompt"
                 ) from exc
             self._structured_prompt = candidate
@@ -1231,7 +1242,7 @@ class _TensorizedLMBase:
                 _GROUNDING_LOG.error(
                     "[guidance] registered chat prompt has no user message"
                 )
-                raise RuntimeError(
+                raise SpiderPromptRenderError(
                     "Task guidance requires a user message in the registered chat prompt"
                 )
             existing = messages[last_user_idx].get("content", "") or ""
@@ -1264,12 +1275,14 @@ class _TensorizedLMBase:
                             tokenize=False,
                             add_generation_prompt=True,
                         )
+            except SpiderPromptRenderError:
+                raise
             except Exception as exc:
                 _GROUNDING_LOG.error(
                     "[guidance] chat prompt rebuild failed type=%s",
                     type(exc).__name__,
                 )
-                raise RuntimeError(
+                raise SpiderPromptRenderError(
                     "Task guidance could not rebuild the registered chat prompt"
                 ) from exc
             self._chat_messages = messages
@@ -1286,7 +1299,7 @@ class _TensorizedLMBase:
         _GROUNDING_LOG.error(
             "[guidance] no registered prompt state; refusing to apply task guidance"
         )
-        raise RuntimeError(
+        raise SpiderPromptRenderError(
             "Task guidance requires a registered structured or chat prompt"
         )
 
@@ -1387,6 +1400,17 @@ class _TensorizedLMBase:
             self._generation_token_ids = []
         self._generation_token_ids.extend(int(token_id) for token_id in token_ids)
 
+    def _discard_last_generated_token_id(self, token_id: int) -> None:
+        """Undo one speculative token when CARS rejects or rolls it back."""
+        generated = getattr(self, "_generation_token_ids", None)
+        if not generated or int(generated[-1]) != int(token_id):
+            return
+        generated.pop()
+        _SPIDER_CONTRACT_LOG.info(
+            "[spider-output-contract] discarded_speculative_token committed_count=%d",
+            len(generated),
+        )
+
     def _generation_stop_ids(self) -> frozenset[int]:
         return _coerce_token_id_set(
             getattr(
@@ -1434,43 +1458,36 @@ class _TensorizedLMBase:
         spider_contract_active = isinstance(
             getattr(self, "_structured_prompt", None), SpiderPromptParts
         )
-        removed_terminal_count = 0
-        if spider_contract_active:
-            token_ids = [int(token_id) for token_id in token_ids]
-            self._record_generated_token_ids(token_ids)
-            token_ids = self._prepare_generated_token_ids(token_ids)
-            removed_terminal_count = len(
-                self._last_generation_evidence["removed_terminal_token_ids"]
-            )
-            _SPIDER_CONTRACT_LOG.info(
-                "[spider-output-contract] token-boundary generated_ids=%d "
-                "removed_terminal_token_count=%d",
-                len(self._last_generation_evidence["raw_token_ids"]),
-                len(self._last_generation_evidence["removed_terminal_token_ids"]),
-            )
-        else:
+        token_ids = [int(token_id) for token_id in token_ids]
+        if not spider_contract_active:
             # GSM, SMILES, and other legacy unconstrained surfaces must see the
             # exact generated IDs, including EOS, so their stop flags stay intact.
             self._last_generation_evidence = None
-            token_ids = list(token_ids)
         if max_new_tokens <= 0:
+            if spider_contract_active:
+                self._finalize_generation_evidence()
             return self._dafny_prefix_from_token_strs([]), False, False, 0
+
         open_span_str = self._to_str(open_span_token)
         eos_str = self._to_str(eos_token)
         chunk_tokens: list[str] = []
         chunk_text = ""
         steps_used = 0
         stopped_on_open = False
-        stopped_on_eos = bool(removed_terminal_count)
-
+        stopped_on_eos = False
         stop_ids = self._generation_stop_ids() if spider_contract_active else frozenset()
+
         for raw_token_id in token_ids:
             if steps_used >= max_new_tokens:
                 break
-            if int(raw_token_id) in stop_ids:
+            if spider_contract_active and raw_token_id in stop_ids:
+                # A declared generation stop is committed, then removed only
+                # from the final scored decode by generation_token_evidence.
+                self._record_generated_token_ids([raw_token_id])
                 stopped_on_eos = True
                 break
-            token_str = self._token_str_from_id(int(raw_token_id))
+
+            token_str = self._token_str_from_id(raw_token_id)
             steps_used += 1
             if token_str == eos_str:
                 stopped_on_eos = True
@@ -1479,14 +1496,27 @@ class _TensorizedLMBase:
             candidate_text = chunk_text + token_str
             open_idx = candidate_text.find(open_span_str)
             if open_idx != -1:
+                if spider_contract_active:
+                    self._record_generated_token_ids([raw_token_id])
                 prefix_text = candidate_text[:open_idx]
                 chunk_tokens = self._token_strs_from_text(prefix_text)
                 chunk_tokens.append(open_span_str)
                 stopped_on_open = True
                 break
 
+            if spider_contract_active:
+                self._record_generated_token_ids([raw_token_id])
             chunk_tokens.append(token_str)
             chunk_text = candidate_text
+
+        if spider_contract_active:
+            evidence = self._finalize_generation_evidence()
+            _SPIDER_CONTRACT_LOG.info(
+                "[spider-output-contract] token-boundary committed_ids=%d "
+                "removed_terminal_token_count=%d",
+                len(evidence["raw_token_ids"]) if evidence else 0,
+                len(evidence["removed_terminal_token_ids"]) if evidence else 0,
+            )
 
         return self._dafny_prefix_from_token_strs(chunk_tokens), stopped_on_open, stopped_on_eos, steps_used
 

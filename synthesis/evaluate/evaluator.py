@@ -2666,10 +2666,11 @@ class Evaluator:
             raise
 
         except Exception as e:
-            if isinstance(e, SpiderPromptRenderError):
-                # A model-specific Spider renderer is part of the harness entry
-                # contract.  Its failure must abort the run, not become a
-                # scored generation_error sample.
+            if self.dataset_name == "spider" and isinstance(e, SpiderPromptRenderError):
+                # A Spider prompt renderer/setup is part of the harness entry
+                # contract. Its failure must abort the run, not become a scored
+                # generation_error sample. Other datasets retain their legacy
+                # per-example error surface.
                 raise
             if hasattr(example, "conclusion"):
                 q_full = example.premises + " | " + example.conclusion

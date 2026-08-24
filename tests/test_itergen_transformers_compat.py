@@ -243,6 +243,130 @@ def test_spider_itergen_advances_by_schema_units_and_backtracks_invalid_names():
 
 
 
+def test_spider_itergen_timeout_does_not_restore_session_evidence_after_empty_completion(
+    monkeypatch,
+    tmp_path,
+):
+    observed = {}
+    written = {}
+
+    class Tokenizer:
+        all_special_ids = {2}
+        eos_token_id = 2
+
+        def apply_chat_template(self, messages, **kwargs):
+            return "<chat>" + messages[0]["content"] + "</chat>"
+
+    class FakeIterGen:
+        def __init__(self, **kwargs):
+            self.tokenizer = Tokenizer()
+
+    class FakeEvaluator:
+        def __init__(self, **kwargs):
+            pass
+
+        def _check_syntax_validity(self, scored_output, *, example):
+            return scored_output == "SELECT name FROM singer", []
+
+    class FakeLogic:
+        def load_dataset_sample(self, evaluator):
+            return [{
+                "id": "spider-timeout",
+                "db_info": "# singer ( singer_id , name )",
+                "query": "SELECT name FROM singer",
+            }]
+
+        def expected_answer(self, evaluator, example):
+            return example["query"]
+
+        def extract_actual(self, evaluator, scored_output, example):
+            observed["scored_output"] = scored_output
+            if scored_output == "SELECT name FROM singer":
+                return (
+                    scored_output,
+                    "bare_sql",
+                    {"syntax_valid": True, "output_contract_valid": True, "output_rejection_reason": None},
+                )
+            return (
+                None,
+                "spider_output_contract_rejected",
+                {"syntax_valid": False, "output_contract_valid": False, "output_rejection_reason": "prompt_or_wrapper"},
+            )
+
+        def is_correct(self, evaluator, actual, expected, example, aux, scored_output):
+            return actual == expected
+
+    fake_itergen_package = types.ModuleType("itergen")
+    fake_itergen_package.__path__ = []
+    fake_itergen_main = types.ModuleType("itergen.main")
+    fake_itergen_main.IterGen = FakeIterGen
+    monkeypatch.setitem(sys.modules, "itergen", fake_itergen_package)
+    monkeypatch.setitem(sys.modules, "itergen.main", fake_itergen_main)
+
+    from synthesis.evaluate import evaluator as evaluator_module
+    from synthesis.evaluate.benchmarks import registry as registry_module
+
+    monkeypatch.setattr(evaluator_module, "Evaluator", FakeEvaluator)
+    monkeypatch.setattr(registry_module, "get_logic", lambda dataset: FakeLogic())
+    monkeypatch.setattr(legacy_runner, "_itergen_add_import_paths", lambda root: None)
+    monkeypatch.setattr(legacy_runner, "_install_itergen_transformers_compat", lambda cls: None)
+    monkeypatch.setattr(legacy_runner, "_configure_fixed_eval_runtime", lambda *args: None)
+    monkeypatch.setattr(legacy_runner, "_legacy_local_cuda_device", lambda device: "cuda:0")
+    monkeypatch.setattr(
+        legacy_runner,
+        "_legacy_benchmark_prompt",
+        lambda *args: SpiderPromptParts("RAW SPIDER PROMPT", answer_cue=""),
+    )
+    monkeypatch.setattr(legacy_runner, "_baseline_row_question", lambda *args: "question")
+    monkeypatch.setattr(legacy_runner, "_ITERGEN_PER_EXAMPLE_TIMEOUT_SECONDS", 1)
+    monkeypatch.setattr(legacy_runner.Path, "exists", lambda self: True)
+    monkeypatch.setattr(
+        legacy_runner,
+        "_itergen_generate_with_timeout",
+        lambda *args, **kwargs: ("", True),
+    )
+    monkeypatch.setattr(
+        legacy_runner,
+        "_itergen_generation_token_evidence",
+        lambda iter_gen: {
+            "raw_token_ids": [10, 11, 2],
+            "raw_decoded_text": "SELECT name FROM singer<eos>",
+            "removed_terminal_token_ids": [2],
+            "decoded_text": "SELECT name FROM singer",
+        },
+    )
+    monkeypatch.setattr(
+        legacy_runner,
+        "_build_minimal_json",
+        lambda rows, *args, **kwargs: written.update(rows=rows),
+    )
+
+    args = argparse.Namespace(
+        dataset="spider",
+        eval_model="Qwen/Qwen2.5-7B-Instruct",
+        eval_backend="vllm",
+        device="cuda",
+        eval_sample_size=1,
+        eval_max_steps=64,
+        eval_step_token_budget=1,
+        vllm_gpu_memory_utilization=0.1,
+        vllm_tensor_parallel_size=1,
+        gsm_split_file=None,
+        gsm_split_name="eval",
+        spider_split_file=None,
+        spider_split_name="eval",
+        smiles_classes=None,
+        output_json=str(tmp_path / "baseline.json"),
+    )
+
+    assert legacy_runner._run_itergen_legacy_adapter_inner(args) == 0
+    assert observed["scored_output"] == ""
+    assert written["rows"][0]["llm_response"] == ""
+    assert written["rows"][0]["actual"] is None
+    assert written["rows"][0]["syntax_valid"] is False
+    assert written["rows"][0]["timed_out"] is True
+
+
 def test_spider_qwen35_itergen_renders_chat_template_without_thinking():
     calls = []
 

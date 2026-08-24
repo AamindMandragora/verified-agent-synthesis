@@ -7,21 +7,40 @@ entirely to the Dafny-verified CSD strategy.
 
 from __future__ import annotations
 
+import logging
+import os
 import time
 from pathlib import Path
 from typing import List, Optional, Tuple, Union
 
 
-import os
-
 from synthesis.evaluate.benchmarks.common.dafny_tokens import dafny_seq_to_str
 
 
-def _finalize_spider_generation_evidence(lm, spider_prompt_active: bool) -> None:
+_SPIDER_CONTRACT_LOG = logging.getLogger("csd.spider_output_contract")
+
+
+def _finalize_spider_generation_evidence(
+    lm,
+    spider_prompt_active: bool,
+    scored_output: str | None = None,
+) -> None:
     if not spider_prompt_active:
         return
     finalizer = getattr(lm, "_finalize_generation_evidence", None)
     if callable(finalizer) and finalizer() is not None:
+        evidence = getattr(lm, "_last_generation_evidence", None)
+        if scored_output is not None and evidence is not None:
+            decoded_text = str(evidence.get("decoded_text", ""))
+            if decoded_text != str(scored_output):
+                _SPIDER_CONTRACT_LOG.error(
+                    "[spider-output-contract] evidence_mismatch committed_chars=%d scored_chars=%d",
+                    len(decoded_text),
+                    len(str(scored_output)),
+                )
+                raise RuntimeError(
+                    "Spider committed token evidence does not match scored output"
+                )
         return
     token_ids = getattr(lm, "_generation_token_ids", None)
     tokenizer = getattr(lm, "tokenizer", None)
@@ -45,6 +64,17 @@ def _finalize_spider_generation_evidence(lm, spider_prompt_active: bool) -> None
         tokenizer,
         terminal_stop_token_ids=stop_ids or (),
     )
+    if scored_output is not None:
+        decoded_text = str(lm._last_generation_evidence.get("decoded_text", ""))
+        if decoded_text != str(scored_output):
+            _SPIDER_CONTRACT_LOG.error(
+                "[spider-output-contract] evidence_mismatch committed_chars=%d scored_chars=%d",
+                len(decoded_text),
+                len(str(scored_output)),
+            )
+            raise RuntimeError(
+                "Spider committed token evidence does not match scored output"
+            )
 
 
 
@@ -334,7 +364,11 @@ def run_crane_csd(
         lm.SetAnswerEarlyStop(False)
     _enforce_max_steps(result_tokens, max_steps)
     output_text = "".join(result_tokens)
-    _finalize_spider_generation_evidence(lm, spider_prompt_active)
+    _finalize_spider_generation_evidence(
+        lm,
+        spider_prompt_active,
+        scored_output=output_text,
+    )
     execution_time = time.time() - start_time
 
     constrained_segments: List[Tuple[str, bool]] = []

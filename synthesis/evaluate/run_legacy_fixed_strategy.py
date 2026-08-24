@@ -1636,7 +1636,11 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
             if dataset == "spider"
             else None
         )
-        if dataset == "spider" and generation_token_evidence is not None:
+        if (
+            dataset == "spider"
+            and not _timed_out
+            and generation_token_evidence is not None
+        ):
             raw_completion = generation_token_evidence["decoded_text"]
         if dataset == "gsm_symbolic":
             raw_completion = _gsm_symbolic_completion_to_delimited(
@@ -1685,6 +1689,7 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
             "correct": bool(is_correct),
             "syntax_valid": bool(syntax_valid),
             "generation_seconds": gen_seconds,
+            "timed_out": bool(_timed_out),
         }
         if dataset == "spider":
             row_out.update(
