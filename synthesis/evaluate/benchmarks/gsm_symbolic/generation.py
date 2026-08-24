@@ -17,6 +17,9 @@ from typing import List, Optional, Tuple, Union
 from synthesis.evaluate.benchmarks.common.dafny_tokens import dafny_seq_to_str
 
 
+from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
+    SpiderEvidenceContractError,
+)
 _SPIDER_CONTRACT_LOG = logging.getLogger("csd.spider_output_contract")
 
 
@@ -27,6 +30,10 @@ def _finalize_spider_generation_evidence(
 ) -> None:
     if not spider_prompt_active:
         return
+    if scored_output is not None:
+        reconcile = getattr(lm, "_reconcile_generation_evidence", None)
+        if callable(reconcile):
+            reconcile(str(scored_output))
     finalizer = getattr(lm, "_finalize_generation_evidence", None)
     if callable(finalizer) and finalizer() is not None:
         evidence = getattr(lm, "_last_generation_evidence", None)
@@ -38,7 +45,7 @@ def _finalize_spider_generation_evidence(
                     len(decoded_text),
                     len(str(scored_output)),
                 )
-                raise RuntimeError(
+                raise SpiderEvidenceContractError(
                     "Spider committed token evidence does not match scored output"
                 )
         return
@@ -72,7 +79,7 @@ def _finalize_spider_generation_evidence(
                 len(decoded_text),
                 len(str(scored_output)),
             )
-            raise RuntimeError(
+            raise SpiderEvidenceContractError(
                 "Spider committed token evidence does not match scored output"
             )
 

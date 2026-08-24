@@ -327,6 +327,64 @@ def test_non_spider_unconstrained_decode_preserves_eos_and_has_no_spider_evidenc
     assert lm._last_generation_evidence is None
 
 
+def test_spider_only_declared_stop_id_terminates_when_eos_text_is_duplicated():
+    """A non-stop ID that decodes like EOS remains generated Spider content."""
+    from synthesis.evaluate.benchmarks.common.model_utils import _TensorizedLMBase
+    from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
+
+    class Tokenizer:
+        all_special_ids = {2, 99}
+        eos_token_id = 2
+
+        def decode(self, token_ids, skip_special_tokens=False):
+            pieces = {
+                10: "SELECT ",
+                99: "<eos>",
+                11: "name FROM singer",
+                2: "<eos>",
+            }
+            return "".join(pieces[int(token_id)] for token_id in token_ids)
+
+        def encode(self, text, add_special_tokens=False):
+            return []
+
+    class Dafny:
+        @staticmethod
+        def Seq(text):
+            return text
+
+        @staticmethod
+        def SeqWithoutIsStrInference(values):
+            return values
+
+    lm = object.__new__(_TensorizedLMBase)
+    lm.tokenizer = Tokenizer()
+    lm._dafny = Dafny()
+    lm._token_id_to_str = {}
+    lm._structured_prompt = SpiderPromptParts(
+        "db_id: x\\nquestion: q\\n", model_name="Qwen/Qwen2.5-1.5B-Instruct"
+    )
+    lm._generation_stop_token_ids = {2}
+
+    result = lm._build_unconstrained_chunk_result(
+        [10, 99, 11, 2], "<<", "<eos>", 10
+    )
+
+    assert result[0] == ["SELECT ", "<eos>", "name FROM singer"]
+    assert result[1:] == (False, True, 3)
+    assert lm._last_generation_evidence["raw_token_ids"] == [10, 99, 11, 2]
+    assert lm._last_generation_evidence["removed_terminal_token_ids"] == [2]
+    assert lm._last_generation_evidence["decoded_text"] == (
+        "SELECT <eos>name FROM singer"
+    )
+
+
+    contract = _validate_bare_sql(
+        "SELECT <eos>name FROM singer", parser=_real_parser()
+    )
+    assert contract.accepted is False
+    assert contract.rejection_reason == "invalid_or_non_bare_sql"
+
 def test_itergen_generation_boundary_text_is_the_scored_text():
     from synthesis.evaluate.run_legacy_fixed_strategy import _itergen_generation_token_evidence
 
@@ -928,3 +986,244 @@ def test_spider_execution_comparison_is_inside_example_timer(monkeypatch):
     assert sample["timed_out"] is True
     assert sample["runtime_budget_exceeded"] is True
     assert sample["is_correct"] is False
+
+@pytest.fixture
+def _verified_csd_helpers(monkeypatch):
+    """Load the checked-in compiled CSD helper implementation with a tiny Dafny shim."""
+    import contextlib
+    import importlib
+    import sys
+    import types
+
+    ref_dir = (
+        Path(__file__).resolve().parents[1]
+        / "outputs"
+        / "compiled_references"
+        / "crane_faithful"
+        / "ref_crane_faithful"
+    )
+    dafny = types.ModuleType("_dafny")
+
+    class _Array:
+        def __init__(self, default, size):
+            self.values = [default] * size
+
+        def __getitem__(self, index):
+            return self.values[index]
+
+        def __setitem__(self, index, value):
+            self.values[index] = value
+
+        def length(self, _dimension):
+            return len(self.values)
+
+    class _TailCall(Exception):
+        pass
+
+    dafny.Array = _Array
+    dafny.TailCall = _TailCall
+    dafny.Seq = lambda value: [] if isinstance(value, dict) else list(value)
+    dafny.SeqWithoutIsStrInference = lambda values: list(values)
+    dafny.CodePoint = lambda value: value
+    dafny.BigRational = lambda value: float(value)
+    dafny.IntegerRange = lambda start, end: range(start, end)
+    dafny.quantifier = lambda *args: False
+
+    @contextlib.contextmanager
+    def _label(*_args):
+        yield
+
+    dafny.label = _label
+    dafny.c_label = _label
+    monkeypatch.setitem(sys.modules, "_dafny", dafny)
+    monkeypatch.setitem(sys.modules, "System_", types.ModuleType("System_"))
+    monkeypatch.syspath_prepend(str(ref_dir))
+    for module_name in ("module_", "GeneratedCSD", "VerifiedDecoderAgent"):
+        sys.modules.pop(module_name, None)
+    verified = importlib.import_module("VerifiedDecoderAgent")
+    monkeypatch.setattr(
+        verified.default__,
+        "RenderPrefix",
+        staticmethod(lambda prefix: list(prefix)),
+    )
+    return verified.CSDHelpers
+
+
+class _HelperParser:
+    def IsValidPrefix(self, prefix):
+        return "bad" not in list(prefix)
+
+    def IsDeadPrefix(self, prefix):
+        return list(prefix) == ["bad"]
+
+    def IsCompletePrefix(self, prefix):
+        return len(prefix) >= 1
+
+    def CompletedSchemaSymbolCount(self, prefix):
+        return len(prefix)
+
+
+def _spider_helper_lm():
+    import types
+
+    import torch
+
+    from synthesis.evaluate.benchmarks.common.model_utils import _TensorizedLMBase
+    from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
+
+    class Dafny:
+        @staticmethod
+        def Seq(value):
+            return value
+
+        @staticmethod
+        def SeqWithoutIsStrInference(values):
+            return list(values)
+
+    class Tokenizer:
+        all_special_ids = {3}
+        eos_token_id = 3
+        eos_token = "eos"
+
+        def decode(self, token_ids, skip_special_tokens=False):
+            pieces = {1: "bad", 2: "good", 3: "eos"}
+            return "".join(pieces[int(token_id)] for token_id in token_ids)
+
+        def encode(self, text, add_special_tokens=False):
+            return {"bad": [1], "good": [2], "eos": [3]}.get(text, [])
+
+    lm = _TensorizedLMBase(Dafny(), Tokenizer(), ["bad", "good", "eos"], [1, 2, 3])
+    lm.Tokens = lm._Tokens
+    lm._structured_prompt = SpiderPromptParts(
+        "db_id: x\nquestion: q\n", model_name="Qwen/Qwen2.5-1.5B-Instruct"
+    )
+    lm._generation_stop_token_ids = {3}
+
+    def generate_logits(self, prefix):
+        calls = getattr(self, "_test_generate_calls", 0)
+        self._test_generate_calls = calls + 1
+        if calls == 0:
+            self._full_logits = torch.tensor([0.0, 5.0, 4.0, 0.0])
+        else:
+            self._full_logits = torch.tensor([0.0, 4.0, 5.0, 0.0])
+        self._logits_tensor = self._full_logits[self._token_ids_tensor]
+        self.Logits.update_tensors(self._logits_tensor, self._full_logits)
+        self._apply_recurrence_penalty(self.instruction_text + self._prefix_text(prefix))
+        self._logits_dirty = False
+
+    lm.GenerateLogits = types.MethodType(generate_logits, lm)
+    lm.MaskValidNextAndEos = types.MethodType(lambda self, *args: None, lm)
+
+    def first_ungrounded(self, unit_tokens):
+        return (bool(unit_tokens) and self._to_str(unit_tokens[0]) == "bad", 0)
+
+    lm.FirstUngroundedIdentifierTokenIdx = types.MethodType(first_ungrounded, lm)
+    return lm
+
+
+def _finalize_spider_scored_prefix(lm, scored_output="good"):
+    from synthesis.evaluate.benchmarks.gsm_symbolic.generation import (
+        _finalize_spider_generation_evidence,
+    )
+
+    _finalize_spider_generation_evidence(
+        lm, spider_prompt_active=True, scored_output=scored_output
+    )
+    return lm._last_generation_evidence
+
+
+def test_spider_dead_end_helper_reconciles_masked_retry_to_committed_prefix(
+    _verified_csd_helpers,
+):
+    lm = _spider_helper_lm()
+    helper = _verified_csd_helpers()
+    helper.ctor__()
+
+    next_token, success = helper.DeadEndAvoidingStep(
+        lm, _HelperParser(), [], [], "eos", 1
+    )
+
+    assert next_token == "good" and success is True
+    evidence = _finalize_spider_scored_prefix(lm)
+    assert evidence["raw_token_ids"] == [2]
+    assert evidence["decoded_text"] == "good"
+
+
+def test_spider_check_failure_helper_reconciles_masked_retry_to_committed_prefix(
+    _verified_csd_helpers,
+):
+    lm = _spider_helper_lm()
+    helper = _verified_csd_helpers()
+    helper.ctor__()
+
+    result = helper.RegenerateUnitOnCheckFailure(
+        lm,
+        _HelperParser(),
+        [],
+        [],
+        "eos",
+        2,
+        1,
+        2,
+        [["good"]],
+    )
+
+    assert result == ["good"]
+    evidence = _finalize_spider_scored_prefix(lm)
+    assert evidence["raw_token_ids"] == [2]
+    assert evidence["decoded_text"] == "good"
+
+
+def test_spider_grounding_failure_helper_reconciles_penalty_retry_to_committed_prefix(
+    _verified_csd_helpers,
+):
+    lm = _spider_helper_lm()
+    helper = _verified_csd_helpers()
+    helper.ctor__()
+
+    result = helper.RegenerateUnitOnGroundingFailure(
+        lm, _HelperParser(), [], [], "eos", 2, 1, 2
+    )
+
+    assert result == ["good"]
+    evidence = _finalize_spider_scored_prefix(lm)
+    assert evidence["raw_token_ids"] == [2]
+    assert evidence["decoded_text"] == "good"
+
+
+def test_spider_evidence_contract_mismatch_propagates_as_typed_harness_error():
+    from synthesis.evaluate.evaluator import Evaluator
+    from synthesis.evaluate.benchmarks.gsm_symbolic.generation import (
+        _finalize_spider_generation_evidence,
+    )
+
+    lm = _spider_helper_lm()
+    lm._record_generated_token_ids([1])
+
+    evaluator = Evaluator(
+        dataset_name="spider",
+        model_name="Qwen/Qwen2.5-1.5B-Instruct",
+        backend="huggingface",
+        device="cpu",
+        sample_size=1,
+        max_steps=8,
+    )
+    evaluator._base_grammar_text = _GRAMMAR_PATH.read_text()
+
+    def fake_run(**kwargs):
+        _finalize_spider_generation_evidence(
+            lm, spider_prompt_active=True, scored_output="different"
+        )
+
+    with pytest.raises(RuntimeError, match="does not match") as exc_info:
+        evaluator._evaluate_one_example(
+            0,
+            _example(),
+            1,
+            {"lm": lm, "tokenizer": lm.tokenizer},
+            sql_eval_logic,
+            fake_run,
+            {},
+        )
+
+    assert type(exc_info.value).__name__ == "SpiderEvidenceContractError"

@@ -28,3 +28,5 @@ Token-0 Spider scoring accepts one parser-valid bare SQL statement only. Labels,
 
 - Spider evaluation is execution-grounded: generated SQL is executed and compared against gold-query behavior.
 - The benchmark includes vendored evaluator dependencies under `syncode` support paths and benchmark utilities.
+
+When a real CSD helper retries through `MaskToken` or `PenalizeTriedTokenAt`, finalization reconciles the recorded history to the actual scored prefix and preserves only declared terminal stop IDs. An unreconcilable mismatch raises `SpiderEvidenceContractError` and aborts the Spider harness rather than creating an accuracy row.

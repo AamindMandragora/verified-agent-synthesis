@@ -1411,6 +1411,58 @@ class _TensorizedLMBase:
             len(generated),
         )
 
+    def _reconcile_generation_evidence(self, scored_output: str) -> bool:
+        """Keep only sampled IDs that form the final committed Spider output."""
+        if getattr(self, "_structured_prompt", None) is None:
+            return True
+
+        expected = str(scored_output)
+        history = [int(token_id) for token_id in getattr(self, "_generation_token_ids", [])]
+        stop_ids = self._generation_stop_ids()
+        terminal_ids: list[int] = []
+        while history and history[-1] in stop_ids:
+            terminal_ids.insert(0, history.pop())
+
+        def _decode(token_ids: list[int]) -> str:
+            try:
+                return str(self.tokenizer.decode(token_ids, skip_special_tokens=False))
+            except TypeError:
+                return str(self.tokenizer.decode(token_ids))
+
+        selected: list[int] = []
+        remaining = len(expected)
+        for token_id in reversed(history):
+            token_text = self._token_str_from_id(token_id)
+            if token_text and expected[:remaining].endswith(token_text):
+                selected.append(token_id)
+                remaining -= len(token_text)
+        selected.reverse()
+        if remaining or _decode(selected) != expected:
+            try:
+                encoded = self.tokenizer.encode(expected, add_special_tokens=False)
+            except TypeError:
+                encoded = self.tokenizer.encode(expected)
+            selected = [int(token_id) for token_id in encoded]
+            if _decode(selected) != expected:
+                _SPIDER_CONTRACT_LOG.error(
+                    "[spider-output-contract] evidence_reconcile_failed history_ids=%d "
+                    "selected_ids=%d scored_chars=%d",
+                    len(history),
+                    len(selected),
+                    len(expected),
+                )
+                return False
+
+        self._generation_token_ids = selected + terminal_ids
+        _SPIDER_CONTRACT_LOG.info(
+            "[spider-output-contract] evidence_reconciled committed_ids=%d "
+            "removed_speculative_ids=%d terminal_ids=%d",
+            len(selected),
+            len(history) - len(selected),
+            len(terminal_ids),
+        )
+        return True
+
     def _generation_stop_ids(self) -> frozenset[int]:
         return _coerce_token_id_set(
             getattr(
@@ -1489,7 +1541,7 @@ class _TensorizedLMBase:
 
             token_str = self._token_str_from_id(raw_token_id)
             steps_used += 1
-            if token_str == eos_str:
+            if not spider_contract_active and token_str == eos_str:
                 stopped_on_eos = True
                 break
 

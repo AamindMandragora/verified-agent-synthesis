@@ -2435,6 +2435,9 @@ class Evaluator:
         tokenizer = env.get("tokenizer")
         generation_token_evidence: Optional[dict[str, Any]] = None
         from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptRenderError
+        from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
+            SpiderEvidenceContractError,
+        )
 
         try:
             print(f"  [EVAL]   Running CSD strategy (max_steps={self.max_steps})...", flush=True)
@@ -2666,7 +2669,9 @@ class Evaluator:
             raise
 
         except Exception as e:
-            if self.dataset_name == "spider" and isinstance(e, SpiderPromptRenderError):
+            if self.dataset_name == "spider" and isinstance(
+                e, (SpiderPromptRenderError, SpiderEvidenceContractError)
+            ):
                 # A Spider prompt renderer/setup is part of the harness entry
                 # contract. Its failure must abort the run, not become a scored
                 # generation_error sample. Other datasets retain their legacy

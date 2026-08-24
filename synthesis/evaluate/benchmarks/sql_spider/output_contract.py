@@ -7,6 +7,10 @@ import re
 from typing import Any
 
 
+class SpiderEvidenceContractError(RuntimeError):
+    """Raised when committed Spider token evidence cannot match scored text."""
+
+
 @dataclass(frozen=True)
 class SpiderOutputContractResult:
     accepted: bool
