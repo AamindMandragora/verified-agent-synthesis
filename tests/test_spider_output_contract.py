@@ -232,12 +232,19 @@ def test_empty_output_has_the_stable_empty_reason():
 
 class _Tokenizer:
     all_special_ids = {0, 2, 99}
+    eos_token_id = 2
 
 
-def test_terminal_token_removal_uses_only_declared_special_ids():
-    assert _strip_terminal_special_token_ids([10, 11, 99, 2], _Tokenizer()) == [10, 11]
-    assert _strip_terminal_special_token_ids([10, 11, 3], _Tokenizer()) == [10, 11, 3]
-    assert _strip_terminal_special_token_ids([10, 0, 11], _Tokenizer()) == [10, 0, 11]
+def test_terminal_token_removal_uses_only_exact_generation_stop_ids():
+    assert _strip_terminal_special_token_ids(
+        [10, 11, 99, 2], _Tokenizer(), terminal_stop_token_ids={2}
+    ) == [10, 11, 99]
+    assert _strip_terminal_special_token_ids(
+        [10, 11, 3], _Tokenizer(), terminal_stop_token_ids={2}
+    ) == [10, 11, 3]
+    assert _strip_terminal_special_token_ids(
+        [10, 0, 11], _Tokenizer(), terminal_stop_token_ids={2}
+    ) == [10, 0, 11]
 
 
 def test_real_unconstrained_decode_boundary_preserves_token_evidence():
@@ -245,6 +252,7 @@ def test_real_unconstrained_decode_boundary_preserves_token_evidence():
 
     class BoundaryTokenizer:
         all_special_ids = {2, 99}
+        eos_token_id = 2
 
         def decode(self, token_ids, skip_special_tokens=False):
             pieces = {10: "SELECT ", 11: "1", 99: "<special>", 2: "<eos>"}
@@ -275,12 +283,13 @@ def test_real_unconstrained_decode_boundary_preserves_token_evidence():
         [10, 11, 99, 2], "<<", "<eos>", 10
     )
 
-    assert result[0] == ["SELECT ", "1"]
+    assert result[0] == ["SELECT ", "1", "<special>"]
+    assert result[1:] == (False, True, 3)
     assert lm._last_generation_evidence == {
         "raw_token_ids": [10, 11, 99, 2],
         "raw_decoded_text": "SELECT 1<special><eos>",
-        "removed_terminal_token_ids": [99, 2],
-        "decoded_text": "SELECT 1",
+        "removed_terminal_token_ids": [2],
+        "decoded_text": "SELECT 1<special>",
     }
 
 
@@ -323,12 +332,13 @@ def test_itergen_generation_boundary_text_is_the_scored_text():
 
     class Tokenizer:
         all_special_ids = {2, 99}
+        eos_token_id = 2
 
         def decode(self, token_ids, skip_special_tokens=False):
             pieces = {
                 10: "SQL: ",
                 11: "SELECT name FROM singer",
-                99: "<special>",
+                99: "<|assistant|>",
                 2: "<eos>",
             }
             return "".join(pieces[int(token_id)] for token_id in token_ids)
@@ -348,7 +358,7 @@ def test_itergen_generation_boundary_text_is_the_scored_text():
         _CachedRealEvaluator(), evidence["decoded_text"], _example()
     )
 
-    assert evidence["decoded_text"] == "SQL: SELECT name FROM singer"
+    assert evidence["decoded_text"] == "SQL: SELECT name FROM singer<|assistant|>"
     assert actual is None
     assert source == "spider_output_contract_rejected"
     assert aux["output_rejection_reason"] == "prompt_or_wrapper"
@@ -367,7 +377,14 @@ def test_legacy_visible_span_opt_out_is_unchanged(monkeypatch):
     assert aux is None
 
 
-def _evaluate_one_sample(monkeypatch, output: str, evidence: dict | None = None) -> dict:
+def _evaluate_one_sample(
+    monkeypatch,
+    output: str,
+    evidence: dict | None = None,
+    max_seconds_per_example: float | None = None,
+    prediction_matches_gold=None,
+    fast_parser: bool = False,
+) -> dict:
     from synthesis.evaluate.benchmarks.sql_spider import executor
     from synthesis.evaluate.evaluator import Evaluator
 
@@ -378,8 +395,14 @@ def _evaluate_one_sample(monkeypatch, output: str, evidence: dict | None = None)
         device="cpu",
         sample_size=1,
         max_steps=8,
+        max_seconds_per_example=max_seconds_per_example,
     )
     evaluator._base_grammar_text = _GRAMMAR_PATH.read_text()
+    if fast_parser:
+        class FastParser:
+            def parse(self, text):
+                return object()
+        evaluator._get_syntax_parser = lambda example: FastParser()
     example = _example()
 
     class LM:
@@ -389,7 +412,7 @@ def _evaluate_one_sample(monkeypatch, output: str, evidence: dict | None = None)
     monkeypatch.setattr(
         executor,
         "prediction_matches_gold",
-        lambda actual, row: actual == row.get("query"),
+        prediction_matches_gold or (lambda actual, row: actual == row.get("query")),
     )
 
     def fake_run(**kwargs):
@@ -440,3 +463,249 @@ def test_accepted_evaluator_sample_fields_are_coherent(monkeypatch):
     assert sample["accuracy_applicable"] is True
     assert sample["output_contract_valid"] is True
     assert sample["output_rejection_reason"] is None
+
+
+
+def test_evaluator_does_not_strip_raw_spider_prompt_echo(monkeypatch):
+    from synthesis.evaluate.evaluator import Evaluator
+
+    evaluator = Evaluator(
+        dataset_name="spider",
+        model_name="Qwen/Qwen2.5-1.5B-Instruct",
+        backend="huggingface",
+        device="cpu",
+        sample_size=1,
+        max_steps=8,
+    )
+    evaluator._base_grammar_text = _GRAMMAR_PATH.read_text()
+    example = _example()
+
+    class LM:
+        _last_generation_evidence = None
+        task_guidance = None
+
+    def fake_run(**kwargs):
+        prompt = str(kwargs["prompt_text"])
+        return prompt + "SELECT name FROM singer", 4, 0.01, [], []
+
+    sample = evaluator._evaluate_one_example(
+        0,
+        example,
+        1,
+        {"lm": LM(), "tokenizer": None},
+        sql_eval_logic,
+        fake_run,
+        {},
+    )
+
+    assert sample["actual"] is None
+    assert sample["output_rejection_reason"] == "prompt_or_wrapper"
+    assert sample["has_extracted_answer"] is False
+
+
+def test_spider_prompt_renderer_failure_propagates_as_harness_error(monkeypatch):
+    from synthesis.evaluate.evaluator import Evaluator
+
+    try:
+        from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptRenderError
+    except ImportError:
+        class SpiderPromptRenderError(RuntimeError):
+            pass
+
+    evaluator = Evaluator(
+        dataset_name="spider",
+        model_name="Qwen/Qwen3.5-2B",
+        backend="huggingface",
+        device="cpu",
+        sample_size=1,
+        max_steps=8,
+    )
+    evaluator._base_grammar_text = _GRAMMAR_PATH.read_text()
+
+    class LM:
+        _last_generation_evidence = None
+        task_guidance = None
+
+    def fake_run(**kwargs):
+        raise SpiderPromptRenderError("Spider chat template rendering failed")
+
+    with pytest.raises(SpiderPromptRenderError, match="chat template rendering failed"):
+        evaluator._evaluate_one_example(
+            0,
+            _example(),
+            1,
+            {"lm": LM(), "tokenizer": None},
+            sql_eval_logic,
+            fake_run,
+            {},
+        )
+
+
+def test_generation_boundary_removes_only_actual_stop_ids():
+    from synthesis.evaluate.benchmarks.common.model_utils import _TensorizedLMBase
+
+    class Tokenizer:
+        all_special_ids = (2, 99)
+
+        def decode(self, token_ids, skip_special_tokens=False):
+            pieces = {
+                10: "SELECT ",
+                11: "name FROM singer",
+                99: "<|assistant|>",
+                2: "<eos>",
+            }
+            return "".join(pieces[int(token_id)] for token_id in token_ids)
+
+    lm = object.__new__(_TensorizedLMBase)
+    lm.tokenizer = Tokenizer()
+    lm._generation_stop_token_ids = {2}
+
+    retained = lm._prepare_generated_token_ids([10, 11, 99, 2])
+
+    assert retained == [10, 11, 99]
+    assert lm._last_generation_evidence["removed_terminal_token_ids"] == [2]
+    assert lm._last_generation_evidence["decoded_text"].endswith("<|assistant|>")
+    result = _validate_bare_sql(lm._last_generation_evidence["decoded_text"], parser=_real_parser())
+    assert result.accepted is False
+    assert result.rejection_reason == "prompt_or_wrapper"
+
+
+def _run_fake_spider_csd_with_ids(tmp_path, token_ids, token_texts):
+    from synthesis.evaluate.benchmarks.gsm_symbolic.generation import run_crane_csd
+    from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
+
+    class FakeSeq(list):
+        pass
+
+    class Dafny:
+        @staticmethod
+        def Seq(value):
+            return value
+
+        @staticmethod
+        def SeqWithoutIsStrInference(values):
+            return FakeSeq(values)
+
+    class Tokenizer:
+        eos_token = "<eos>"
+        eos_token_id = 2
+        all_special_ids = (2,)
+
+        def apply_chat_template(self, messages, **kwargs):
+            return messages[-1]["content"]
+
+        def decode(self, values, skip_special_tokens=False):
+            return "".join(token_texts[int(value)] for value in values)
+
+    class LM:
+        def __init__(self):
+            self.tokenizer = Tokenizer()
+            self.model_name = "Qwen/Qwen2.5-1.5B-Instruct"
+            self._last_generation_evidence = None
+            self._generation_token_ids = []
+            self.task_guidance = None
+
+        def ResetTaskGuidance(self):
+            pass
+
+        def set_structured_prompt(self, prompt, *, model_name=None):
+            self.structured_prompt = prompt
+
+        def SetRuntimeDeadline(self, deadline):
+            pass
+
+        def ClearRuntimeDeadline(self):
+            pass
+
+    lm = LM()
+
+    class GeneratedDefault:
+        @staticmethod
+        def MyCSDStrategy(
+            lm_arg,
+            parser,
+            seq0,
+            generated_prefix,
+            start_inside,
+            current_constrained,
+            max_steps,
+            step_budget,
+            eos_token,
+        ):
+            lm_arg._generation_token_ids = list(token_ids)
+            return (
+                FakeSeq([token_texts[int(value)] for value in token_ids if int(value) != 2]),
+                False,
+                FakeSeq([]),
+                len(token_ids),
+            )
+
+    class GeneratedCSD:
+        default__ = GeneratedDefault
+
+    class Parser:
+        def is_complete(self, text):
+            return True
+
+    env = {"_dafny": Dafny, "GeneratedCSD": GeneratedCSD, "lm": lm, "parser": Parser()}
+    result = run_crane_csd(
+        env=env,
+        prompt_text=SpiderPromptParts("db_id: x\nquestion: q\n", model_name=lm.model_name),
+        max_steps=32,
+        grammar_file=tmp_path / "unused.lark",
+        start_inside_constrained=True,
+    )
+    return lm, result
+
+
+def test_spider_constrained_only_csd_records_full_generation_evidence(tmp_path):
+    lm, result = _run_fake_spider_csd_with_ids(
+        tmp_path,
+        [10, 11, 2],
+        {10: "SELECT ", 11: "name FROM singer", 2: "<eos>"},
+    )
+
+    assert result[0] == "SELECT name FROM singer"
+    assert lm._last_generation_evidence["raw_token_ids"] == [10, 11, 2]
+    assert lm._last_generation_evidence["raw_decoded_text"] == "SELECT name FROM singer<eos>"
+    assert lm._last_generation_evidence["removed_terminal_token_ids"] == [2]
+    assert lm._last_generation_evidence["decoded_text"] == "SELECT name FROM singer"
+
+
+def test_spider_multi_chunk_csd_evidence_keeps_ordered_full_span(tmp_path):
+    lm, _ = _run_fake_spider_csd_with_ids(
+        tmp_path,
+        [10, 11, 12, 2],
+        {
+            10: "SELECT ",
+            11: "name ",
+            12: "FROM singer",
+            2: "<eos>",
+        },
+    )
+
+    assert lm._last_generation_evidence["raw_token_ids"] == [10, 11, 12, 2]
+    assert lm._last_generation_evidence["raw_decoded_text"] == "SELECT name FROM singer<eos>"
+    assert lm._last_generation_evidence["decoded_text"] == "SELECT name FROM singer"
+
+
+def test_spider_execution_comparison_is_inside_example_timer(monkeypatch):
+    from synthesis.evaluate.benchmarks.sql_spider import executor
+
+    def slow_executor(actual, row):
+        import time
+        time.sleep(0.30)
+        return True
+
+    monkeypatch.setattr(executor, "prediction_matches_gold", slow_executor)
+    sample = _evaluate_one_sample(
+        monkeypatch,
+        "SELECT name FROM singer",
+        max_seconds_per_example=0.10,
+        prediction_matches_gold=slow_executor,
+        fast_parser=True,
+    )
+
+    assert sample["timed_out"] is True
+    assert sample["runtime_budget_exceeded"] is True
+    assert sample["is_correct"] is False

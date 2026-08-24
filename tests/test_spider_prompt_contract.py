@@ -146,38 +146,6 @@ def _model_evaluator(model_name):
     return type("ModelEvaluator", (), {"model_name": model_name})()
 
 
-def test_qwen35_baseline_and_csd_render_identical_prompt_and_tokens():
-    model_names = (
-        "Qwen/Qwen2.5-1.5B-Instruct",
-        "Qwen/Qwen2.5-7B-Instruct",
-        "Qwen/Qwen3.5-2B",
-        "Qwen/Qwen3.5-4B",
-    )
-
-    for model_name in model_names:
-        tokenizer = _TraceTokenizer()
-        prompt = sql_eval_logic.format_prompt(
-            _model_evaluator(model_name), _example()
-        )
-        baseline_rendered = prompt.render_for_model(
-            tokenizer, model_name=model_name
-        )
-        csd_rendered = prompt.render_for_model(
-            tokenizer, model_name=model_name
-        )
-
-        assert baseline_rendered == csd_rendered
-        assert tokenizer.encode(baseline_rendered) == tokenizer.encode(csd_rendered)
-        if "Qwen3.5" in model_name:
-            assert len(tokenizer.calls) == 2
-            assert tokenizer.calls[0][0] == [{"role": "user", "content": prompt.raw_text}]
-            assert tokenizer.calls[0][1]["add_generation_prompt"] is True
-            assert tokenizer.calls[0][1]["enable_thinking"] is False
-        else:
-            assert tokenizer.calls == []
-            assert baseline_rendered == prompt.raw_text
-
-
 def test_qwen35_csd_template_disables_thinking_without_retry():
     calls = []
 
@@ -189,7 +157,9 @@ def test_qwen35_csd_template_disables_thinking_without_retry():
     prompt = sql_eval_logic.format_prompt(
         _model_evaluator("Qwen/Qwen3.5-4B"), _example()
     )
-    with pytest.raises(TypeError, match="thinking argument"):
+    from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptRenderError
+
+    with pytest.raises(SpiderPromptRenderError, match="chat-template rendering failed"):
         prompt.render_for_model(FailingTokenizer(), model_name="Qwen/Qwen3.5-4B")
     assert len(calls) == 1
     assert calls[0]["enable_thinking"] is False

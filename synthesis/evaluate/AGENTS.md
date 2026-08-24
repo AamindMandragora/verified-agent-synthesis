@@ -40,8 +40,9 @@
   unchanged.
 - Spider token-0 output validation belongs in the Spider benchmark module: accept
   one full-string parser-valid bare SQL statement, reject outer labels/wrappers
-  and extra statements with stable reasons, and retain raw/generated token
-  evidence while removing only tokenizer-declared terminal special IDs.
+  and extra statements with stable reasons, and retain complete ordered
+  raw/generated token evidence while removing only terminal IDs supplied by
+  the generation adapter's exact stop set.
 - SMILES CRANE samples at temperature 0.7, permits neutral reasoning before
   `<<`, constrains only the final SMILES inside `<< >>`, stops at `>>`, and
   scores only that inner span. Keep molecule examples, chemistry hints, and

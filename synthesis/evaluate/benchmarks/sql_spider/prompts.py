@@ -10,6 +10,10 @@ from typing import Any, ClassVar
 _PROMPT_LOG = logging.getLogger(__name__)
 
 
+class SpiderPromptRenderError(RuntimeError):
+    """Raised when a Spider model-specific prompt cannot be rendered."""
+
+
 @dataclass(frozen=True)
 class SpiderPromptParts:
     """Immutable Spider task content plus model-specific rendering state."""
@@ -104,14 +108,30 @@ class SpiderPromptParts:
                 len(rendered),
             )
             return rendered
-        rendered = tokenizer.apply_chat_template(
-            [{"role": "user", "content": self.user_content}],
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=False,
-        )
+        try:
+            rendered = tokenizer.apply_chat_template(
+                [{"role": "user", "content": self.user_content}],
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=False,
+            )
+        except Exception as exc:
+            _PROMPT_LOG.error(
+                "[spider-prompt] render_failed family=%s error_type=%s",
+                family,
+                type(exc).__name__,
+            )
+            raise SpiderPromptRenderError(
+                "Spider Qwen3.5 chat-template rendering failed"
+            ) from exc
         if not isinstance(rendered, str):
-            raise TypeError("Spider chat template must return a string")
+            _PROMPT_LOG.error(
+                "[spider-prompt] render_failed family=%s error_type=non_string_result",
+                family,
+            )
+            raise SpiderPromptRenderError(
+                "Spider chat template must return a string"
+            )
         _PROMPT_LOG.debug(
             "[spider-prompt] family=%s mode=chat thinking_disabled=%s "
             "guidance_present=%s raw_chars=%d rendered_chars=%d",

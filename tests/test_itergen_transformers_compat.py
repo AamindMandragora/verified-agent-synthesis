@@ -312,13 +312,19 @@ def test_qwen35_spider_adapter_keeps_raw_prompt_for_scoring_and_evidence(
 
     class Tokenizer:
         all_special_ids = (2, 99)
+        eos_token_id = 2
 
         def apply_chat_template(self, messages, **kwargs):
             observed["template_call"] = (messages, kwargs)
             return "<|user|>RAW SPIDER PROMPT<|assistant|>"
 
         def decode(self, token_ids, skip_special_tokens=False):
-            pieces = {10: "SQL: ", 11: "SELECT name FROM singer", 99: "<special>", 2: "<eos>"}
+            pieces = {
+                10: "RAW SPIDER PROMPT",
+                11: "SELECT name FROM singer",
+                99: "<|assistant|>",
+                2: "<eos>",
+            }
             return "".join(pieces[int(token_id)] for token_id in token_ids)
 
     class Config:
@@ -381,10 +387,17 @@ def test_qwen35_spider_adapter_keeps_raw_prompt_for_scoring_and_evidence(
             return example["query"]
 
         def extract_actual(self, evaluator, scored_output, example):
+            observed["scored_output"] = scored_output
+            if scored_output == "SELECT name FROM singer":
+                return (
+                    scored_output,
+                    "bare_sql",
+                    {"syntax_valid": True, "output_contract_valid": True, "output_rejection_reason": None},
+                )
             return (
                 None,
                 "spider_output_contract_rejected",
-                {"output_contract_valid": False, "output_rejection_reason": "prompt_or_wrapper"},
+                {"syntax_valid": False, "output_contract_valid": False, "output_rejection_reason": "prompt_or_wrapper"},
             )
 
         def is_correct(self, evaluator, actual, expected, example, aux, scored_output):
@@ -416,8 +429,7 @@ def test_qwen35_spider_adapter_keeps_raw_prompt_for_scoring_and_evidence(
     monkeypatch.setattr(legacy_runner.Path, "exists", lambda self: True)
 
     def score_completion(prompt, raw_completion):
-        observed["scoring_prompt"] = prompt
-        return raw_completion
+        raise AssertionError("Spider must score generated text without prefix stripping")
 
     monkeypatch.setattr(legacy_runner, "completion_for_scoring", score_completion)
     monkeypatch.setattr(
@@ -446,18 +458,19 @@ def test_qwen35_spider_adapter_keeps_raw_prompt_for_scoring_and_evidence(
 
     assert legacy_runner._run_itergen_legacy_adapter_inner(args) == 0
     assert observed["generation_prompt"] == "<|user|>RAW SPIDER PROMPT<|assistant|>"
-    assert observed["scoring_prompt"] == "RAW SPIDER PROMPT"
+    assert observed["scored_output"] == "RAW SPIDER PROMPTSELECT name FROM singer<|assistant|>"
+    assert "scoring_prompt" not in observed
     assert written["rows"][0]["prompt_used"] == "RAW SPIDER PROMPT"
-    assert written["rows"][0]["llm_response"] == "SQL: SELECT name FROM singer"
+    assert written["rows"][0]["llm_response"] == "RAW SPIDER PROMPTSELECT name FROM singer<|assistant|>"
     assert written["rows"][0]["actual"] is None
     assert written["rows"][0]["answer_source"] == "spider_output_contract_rejected"
     assert written["rows"][0]["output_contract_valid"] is False
     evidence = written["rows"][0]["generation_token_evidence"]
     assert observed["session_slice"] == (Ellipsis, slice(3, None))
     assert evidence["raw_token_ids"] == [10, 11, 99, 2]
-    assert evidence["removed_terminal_token_ids"] == [99, 2]
-    assert evidence["raw_decoded_text"] == "SQL: SELECT name FROM singer<special><eos>"
-    assert evidence["decoded_text"] == "SQL: SELECT name FROM singer"
+    assert evidence["removed_terminal_token_ids"] == [2]
+    assert evidence["raw_decoded_text"] == "RAW SPIDER PROMPTSELECT name FROM singer<|assistant|><eos>"
+    assert evidence["decoded_text"] == "RAW SPIDER PROMPTSELECT name FROM singer<|assistant|>"
 
 
 @pytest.mark.parametrize("strategy", ["gcd", "itergen"])
@@ -578,3 +591,178 @@ def test_spider_qwen35_prompt_state_is_shared_with_the_csd_entry():
 
     assert callable(getattr(prompt, "render_for_model", None))
     assert prompt.raw_text == str(prompt)
+
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "Qwen/Qwen2.5-1.5B-Instruct",
+        "Qwen/Qwen2.5-7B-Instruct",
+        "Qwen/Qwen3.5-2B",
+        "Qwen/Qwen3.5-4B",
+    ],
+)
+def test_real_fixed_and_csd_entries_match_rendered_strings_and_token_ids(
+    model_name,
+    tmp_path,
+    monkeypatch,
+):
+    from synthesis.evaluate.benchmarks.gsm_symbolic.generation import run_crane_csd
+
+    example = {
+        "db_id": "concert_singer",
+        "db_info": "# singer ( singer_id , name )",
+        "question": "How many singers do we have?",
+    }
+
+    class Tokenizer:
+        eos_token = "<eos>"
+        eos_token_id = 2
+
+        def __init__(self):
+            self.template_calls = []
+            self.encode_calls = []
+
+        def apply_chat_template(self, messages, **kwargs):
+            self.template_calls.append((messages, kwargs))
+            return "<chat>" + messages[0]["content"] + "</chat>"
+
+        def encode(self, text, add_special_tokens=False):
+            self.encode_calls.append((text, add_special_tokens))
+            return [ord(char) % 97 for char in text]
+
+    def fixed_entry(tokenizer):
+        evaluator = types.SimpleNamespace(model_name=model_name)
+        parts = legacy_runner._legacy_benchmark_prompt(
+            sql_eval_logic,
+            evaluator,
+            example,
+            "expression_only",
+        )
+
+        class FixedIterGen:
+            def __init__(self):
+                self.tokenizer = tokenizer
+                self.steps = 0
+                self.tokenized_prompt_ids = None
+
+            def start(self, prompt):
+                self.prompt = prompt
+                self.tokenized_prompt_ids = self.tokenizer.encode(
+                    prompt, add_special_tokens=False
+                )
+
+            def finished(self):
+                return self.steps >= 1
+
+            def forward(self, **kwargs):
+                self.steps += 1
+                return ["SELECT name FROM singer"]
+
+            def view(self, unit):
+                return {"column_name": [["name"]], "table_name": [["singer"]]}[unit]
+
+            def backward(self, unit):
+                raise AssertionError(f"unexpected backtrack: {unit}")
+
+        iter_gen = FixedIterGen()
+        rendered = parts.render_for_model(tokenizer, model_name=model_name)
+        generated = legacy_runner._itergen_generate_spider(
+            iter_gen, rendered, example
+        )
+        assert generated == "SELECT name FROM singer"
+        return rendered, iter_gen.tokenized_prompt_ids
+
+    class FakeSeq(list):
+        pass
+
+    class Dafny:
+        @staticmethod
+        def Seq(value):
+            return value
+
+        @staticmethod
+        def SeqWithoutIsStrInference(values):
+            return FakeSeq(values)
+
+    class LM:
+        def __init__(self, tokenizer):
+            self.tokenizer = tokenizer
+            self.model_name = model_name
+            self._last_generation_evidence = None
+            self.task_guidance = None
+
+        def ResetTaskGuidance(self):
+            pass
+
+        def set_structured_prompt(self, prompt, *, model_name=None):
+            pass
+
+        def SetRuntimeDeadline(self, deadline):
+            pass
+
+        def ClearRuntimeDeadline(self):
+            pass
+
+    class GeneratedDefault:
+        @staticmethod
+        def MyCSDStrategy(
+            lm_arg,
+            parser,
+            seq0,
+            generated_prefix,
+            start_inside,
+            current_constrained,
+            max_steps,
+            step_budget,
+            eos_token,
+        ):
+            lm_arg.csd_tokenized_ids = lm_arg.tokenizer.encode(
+                lm_arg.instruction_text, add_special_tokens=False
+            )
+            return FakeSeq([]), False, FakeSeq([]), 0
+
+    class GeneratedCSD:
+        default__ = GeneratedDefault
+
+    class Parser:
+        def is_complete(self, text):
+            return False
+
+    fixed_tokenizer = Tokenizer()
+    fixed_string, fixed_ids = fixed_entry(fixed_tokenizer)
+
+    csd_tokenizer = Tokenizer()
+    evaluator = types.SimpleNamespace(model_name=model_name)
+    csd_parts = sql_eval_logic.format_prompt(evaluator, example)
+    lm = LM(csd_tokenizer)
+    env = {
+        "_dafny": Dafny,
+        "GeneratedCSD": GeneratedCSD,
+        "lm": lm,
+        "parser": Parser(),
+        "model_name": model_name,
+    }
+    run_crane_csd(
+        env=env,
+        prompt_text=csd_parts,
+        max_steps=8,
+        grammar_file=tmp_path / "unused.lark",
+    )
+    csd_string = lm.instruction_text
+    csd_ids = lm.csd_tokenized_ids
+
+    assert fixed_string == csd_string
+    assert fixed_ids == csd_ids
+    if "Qwen3.5" in model_name:
+        assert len(fixed_tokenizer.template_calls) == 1
+        assert len(csd_tokenizer.template_calls) == 1
+        for calls in (fixed_tokenizer.template_calls, csd_tokenizer.template_calls):
+            messages, kwargs = calls[0]
+            assert messages == [{"role": "user", "content": str(csd_parts)}]
+            assert kwargs["add_generation_prompt"] is True
+            assert kwargs["enable_thinking"] is False
+    else:
+        assert fixed_tokenizer.template_calls == []
+        assert csd_tokenizer.template_calls == []

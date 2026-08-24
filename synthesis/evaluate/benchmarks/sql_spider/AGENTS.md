@@ -16,7 +16,9 @@
   closed with a descriptive error, and guidance is never appended after the
   answer cue.
 - Token-0 Spider scoring accepts only one parser-valid bare SQL statement and
-  records a stable rejection reason plus generated-token boundary evidence.
+  records a stable rejection reason plus complete ordered generated-token
+  boundary evidence. Remove only terminal IDs supplied by the generation
+  adapter's exact stop set; tokenizer-wide special IDs are not a stop rule.
   Preserve `SPIDER_TOKEN0_CONSTRAINED=0` as the explicit legacy visible-span
   mode.
 

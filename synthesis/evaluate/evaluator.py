@@ -2434,6 +2434,7 @@ class Evaluator:
         benchmark_aux: Optional[dict[str, Any]] = None
         tokenizer = env.get("tokenizer")
         generation_token_evidence: Optional[dict[str, Any]] = None
+        from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptRenderError
 
         try:
             print(f"  [EVAL]   Running CSD strategy (max_steps={self.max_steps})...", flush=True)
@@ -2494,10 +2495,14 @@ class Evaluator:
             )
             # endregion
 
-            from synthesis.evaluate.completion_text import completion_for_scoring
+            if self.dataset_name == "spider":
+                # Spider CSD returns generated text only.  Treat an echoed
+                # prompt as invalid output so the strict contract can reject it.
+                completion = str(output_text or "")
+            else:
+                from synthesis.evaluate.completion_text import completion_for_scoring
 
-            scoring_prompt = str(prompt) if self.dataset_name == "spider" else prompt
-            completion = completion_for_scoring(scoring_prompt, output_text)
+                completion = completion_for_scoring(prompt, output_text)
             _print_realtime_completion(i + 1, dataset_len, completion)
             scored_output = (
                 self._truncate_gsm_output(completion)
@@ -2515,16 +2520,16 @@ class Evaluator:
             try:
                 with _PerExampleTimer(self.max_seconds_per_example):
                     actual, answer_source, benchmark_aux = self._extract_actual_for_example(scored_output, example)
+                    is_correct = self._is_correct_for_example(
+                        actual,
+                        expected,
+                        example,
+                        benchmark_aux,
+                        scored_output,
+                    )
             finally:
                 if self.dataset_name == "spider":
                     self._active_generation_token_evidence = None
-            is_correct = self._is_correct_for_example(
-                actual,
-                expected,
-                example,
-                benchmark_aux,
-                scored_output,
-            )
 
             visible_delimiters = self._contains_delimiters(scored_output)
             used_hidden_chunk = bool(constrained_segments) or any(
@@ -2661,6 +2666,11 @@ class Evaluator:
             raise
 
         except Exception as e:
+            if isinstance(e, SpiderPromptRenderError):
+                # A model-specific Spider renderer is part of the harness entry
+                # contract.  Its failure must abort the run, not become a
+                # scored generation_error sample.
+                raise
             if hasattr(example, "conclusion"):
                 q_full = example.premises + " | " + example.conclusion
             else:

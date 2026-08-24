@@ -17,6 +17,36 @@ import os
 from synthesis.evaluate.benchmarks.common.dafny_tokens import dafny_seq_to_str
 
 
+def _finalize_spider_generation_evidence(lm, spider_prompt_active: bool) -> None:
+    if not spider_prompt_active:
+        return
+    finalizer = getattr(lm, "_finalize_generation_evidence", None)
+    if callable(finalizer) and finalizer() is not None:
+        return
+    token_ids = getattr(lm, "_generation_token_ids", None)
+    tokenizer = getattr(lm, "tokenizer", None)
+    if token_ids is None or tokenizer is None:
+        return
+    stop_ids = getattr(lm, "_generation_stop_token_ids", None)
+    if stop_ids is None:
+        stop_ids = getattr(lm, "generation_stop_token_ids", None)
+    if stop_ids is None:
+        stop_ids = getattr(tokenizer, "generation_stop_token_ids", None)
+    if stop_ids is None:
+        stop_ids = getattr(tokenizer, "eos_token_id", None)
+    if isinstance(stop_ids, int):
+        stop_ids = {stop_ids}
+    from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
+        generation_token_evidence,
+    )
+
+    lm._last_generation_evidence = generation_token_evidence(
+        token_ids,
+        tokenizer,
+        terminal_stop_token_ids=stop_ids or (),
+    )
+
+
 
 
 def _call_my_csd_strategy(
@@ -115,8 +145,11 @@ def run_crane_csd(
     GeneratedCSD = env["GeneratedCSD"]
     lm = env["lm"]
     parser = dynamic_parser if dynamic_parser is not None else env["parser"]
+    spider_prompt_active = hasattr(prompt_text, "render_for_model")
     if hasattr(lm, "_last_generation_evidence"):
         lm._last_generation_evidence = None
+    if hasattr(lm, "_generation_token_ids"):
+        lm._generation_token_ids = []
 
     if hasattr(prompt_text, "render_for_model"):
         if hasattr(lm, "ResetTaskGuidance"):
@@ -220,6 +253,8 @@ def run_crane_csd(
         result = None
         _successes = 0
         for _attempt in range(cars_steps):
+            if spider_prompt_active and hasattr(lm, "_generation_token_ids"):
+                lm._generation_token_ids = []
             if os.environ.get("CSD_PARITY_SEED_PER_ATTEMPT", "0") == "1":
                 _raw = os.environ.get("CSD_PARITY_SEED", "").strip()
                 if _raw:
@@ -299,6 +334,7 @@ def run_crane_csd(
         lm.SetAnswerEarlyStop(False)
     _enforce_max_steps(result_tokens, max_steps)
     output_text = "".join(result_tokens)
+    _finalize_spider_generation_evidence(lm, spider_prompt_active)
     execution_time = time.time() - start_time
 
     constrained_segments: List[Tuple[str, bool]] = []

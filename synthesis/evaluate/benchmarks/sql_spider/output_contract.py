@@ -15,12 +15,15 @@ class SpiderOutputContractResult:
     raw_output: str
 
 
-def strip_terminal_special_token_ids(token_ids: list[int], tokenizer: Any) -> list[int]:
-    """Remove only a terminal suffix of IDs declared special by the tokenizer."""
-    declared = {
-        int(value)
-        for value in (getattr(tokenizer, "all_special_ids", ()) or ())
-    }
+def strip_terminal_special_token_ids(
+    token_ids: list[int],
+    tokenizer: Any,
+    *,
+    terminal_stop_token_ids: Any,
+) -> list[int]:
+    """Remove only IDs in the generation adapter's exact terminal-stop set."""
+    del tokenizer
+    declared = {int(value) for value in (terminal_stop_token_ids or ())}
     result = [int(token_id) for token_id in token_ids]
     while result and result[-1] in declared:
         result.pop()
@@ -38,10 +41,19 @@ def _flat_token_ids(token_ids: Any) -> list[int]:
     return [int(token_id) for token_id in token_ids]
 
 
-def generation_token_evidence(token_ids: Any, tokenizer: Any) -> dict[str, Any]:
-    """Decode generated IDs before/after declared terminal special-token removal."""
+def generation_token_evidence(
+    token_ids: Any,
+    tokenizer: Any,
+    *,
+    terminal_stop_token_ids: Any,
+) -> dict[str, Any]:
+    """Decode generated IDs before/after exact terminal-stop removal."""
     raw_ids = _flat_token_ids(token_ids)
-    decoded_ids = strip_terminal_special_token_ids(raw_ids, tokenizer)
+    decoded_ids = strip_terminal_special_token_ids(
+        raw_ids,
+        tokenizer,
+        terminal_stop_token_ids=terminal_stop_token_ids,
+    )
     removed_ids = raw_ids[len(decoded_ids):]
 
     def _decode(ids: list[int]) -> str:

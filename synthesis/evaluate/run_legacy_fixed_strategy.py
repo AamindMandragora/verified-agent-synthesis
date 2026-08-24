@@ -24,6 +24,12 @@ _MAX_PROMPT_CHARS = 50000  # ~12.5K tokens; leaves room for generation within 16
 _MAX_SUFFIX_CHARS = 45000
 
 
+def _completion_for_dataset(dataset: str, prompt: Any, raw_output: Any) -> str:
+    """Use generated-only text for Spider; preserve legacy stripping elsewhere."""
+    if dataset == "spider":
+        return str(raw_output or "")
+    return completion_for_scoring(prompt, raw_output)
+
 
 def _maybe_seed_parity_rng() -> None:
     """Optional deterministic RNG for fair stochastic baseline compares."""
@@ -664,7 +670,7 @@ def _annotate_legacy_rows_with_syntax(
             or ""
         )
         prompt_used = str(row.get("prompt_used") or "")
-        completion = completion_for_scoring(prompt_used or None, output_text)
+        completion = _completion_for_dataset(dataset, prompt_used or None, output_text)
         scored_output = (
             eval_runtime._truncate_gsm_output(completion)
             if dataset == "gsm_symbolic"
@@ -920,7 +926,7 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
         gen_seconds = time.perf_counter() - gen_started
         if dataset == "gsm_symbolic":
             output_text = _cars_normalize_gsm_symbolic_output(output_text)
-        completion = completion_for_scoring(prompt, output_text)
+        completion = _completion_for_dataset(dataset, prompt, output_text)
         scored_output = (
             eval_runtime._truncate_gsm_output(completion)
             if dataset == "gsm_symbolic"
@@ -1093,7 +1099,7 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
         completions = sc.infer(gcd_prompt, stop_words=_gcd_stop_words(dataset))
         gen_seconds = time.perf_counter() - gen_started
         raw_output = _gcd_output(completions[0] if completions else "", example)
-        completion = completion_for_scoring(gcd_prompt, raw_output)
+        completion = _completion_for_dataset(dataset, gcd_prompt, raw_output)
         scored_output = (
             eval_runtime._truncate_gsm_output(completion)
             if dataset == "gsm_symbolic"
@@ -1242,6 +1248,26 @@ def _itergen_generate(iter_gen: Any, prompt: Any) -> str:
     return str(generated)
 
 
+def _itergen_generation_stop_token_ids(iter_gen: Any, tokenizer: Any) -> set[int]:
+    for owner in (iter_gen, tokenizer):
+        value = getattr(owner, "generation_stop_token_ids", None)
+        if value is None:
+            continue
+        if isinstance(value, int):
+            return {int(value)}
+        return {int(item) for item in value}
+    for owner in (iter_gen, tokenizer):
+        value = getattr(owner, "eos_token_id", None)
+        if value is None:
+            continue
+        if hasattr(value, "item"):
+            value = value.item()
+        if isinstance(value, int):
+            return {int(value)}
+        return {int(item) for item in value}
+    return set()
+
+
 def _itergen_generation_token_evidence(iter_gen: Any) -> dict[str, Any] | None:
     """Capture only generated IterGen IDs, excluding prompt/session prefix IDs."""
     session_tokens = getattr(iter_gen, "session_tokens", None)
@@ -1272,7 +1298,11 @@ def _itergen_generation_token_evidence(iter_gen: Any) -> dict[str, Any] | None:
         generation_token_evidence,
     )
 
-    evidence = generation_token_evidence(generated_tokens, tokenizer)
+    evidence = generation_token_evidence(
+        generated_tokens,
+        tokenizer,
+        terminal_stop_token_ids=_itergen_generation_stop_token_ids(iter_gen, tokenizer),
+    )
     LOGGER.info(
         "[legacy-itergen-spider] token-boundary generated_ids=%d removed_terminal_ids=%d",
         len(evidence["raw_token_ids"]),
@@ -1614,7 +1644,7 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
             )
         gen_seconds = time.perf_counter() - gen_started
         prompt_for_scoring = str(prompt) if dataset == "spider" else prompt
-        completion = completion_for_scoring(prompt_for_scoring, raw_completion)
+        completion = _completion_for_dataset(dataset, prompt_for_scoring, raw_completion)
         scored_output = (
             eval_runtime._truncate_gsm_output(completion)
             if dataset == "gsm_symbolic"
@@ -1952,6 +1982,8 @@ def _crane_adaptive_surface(dataset: str, grammar_text: str) -> dict[str, Any]:
 
 
 def _crane_completion_for_scoring(dataset: str, prompt: str, raw_output: str) -> str:
+    if dataset == "spider":
+        return str(raw_output or "")
     completion = completion_for_scoring(prompt, raw_output)
     if dataset != "smiles":
         return completion

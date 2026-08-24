@@ -32,6 +32,23 @@ import torch
 # (masks, scoring, decode) is byte-identical to before.
 _GROUNDING_LOG = logging.getLogger("csd.grounding")
 _SPIDER_CONTRACT_LOG = logging.getLogger("csd.spider_output_contract")
+
+
+def _coerce_token_id_set(value: Any) -> frozenset[int]:
+    if value is None:
+        return frozenset()
+    if isinstance(value, int):
+        return frozenset({int(value)})
+    return frozenset(int(item) for item in value)
+
+
+def _default_generation_stop_token_ids(tokenizer: Any) -> frozenset[int]:
+    configured = getattr(tokenizer, "generation_stop_token_ids", None)
+    if configured is None:
+        configured = getattr(tokenizer, "eos_token_id", None)
+    return _coerce_token_id_set(configured)
+
+
 if os.environ.get("CSD_GROUNDING_LOG"):
     _grounding_handler = logging.StreamHandler()
     _grounding_handler.setFormatter(logging.Formatter("%(message)s"))
@@ -808,6 +825,8 @@ class _TensorizedLMBase:
         self._token_ids = tids
         self._structured_prompt = None
         self.model_name: str | None = None
+        self._generation_stop_token_ids = _default_generation_stop_token_ids(tokenizer)
+        self._generation_token_ids: list[int] = []
         self.instruction_text = ""
         self._task_guidance = _TaskGuidanceState()
         # Chat-template scaffolding so AppendTaskGuidance can inject the
@@ -953,6 +972,7 @@ class _TensorizedLMBase:
         self.model_name = None
         self.instruction_text = ""
         self._last_generation_evidence = None
+        self._generation_token_ids = []
         self._last_full_prompt = None
         self._tried_token_penalties.clear()
         self._penalty_instruction_key = None
@@ -1360,18 +1380,53 @@ class _TensorizedLMBase:
         token_ids = self.tokenizer.encode(text, add_special_tokens=False)
         return [self._token_str_from_id(token_id) for token_id in token_ids]
 
+    def _record_generated_token_ids(self, token_ids) -> None:
+        if getattr(self, "_structured_prompt", None) is None:
+            return
+        if not hasattr(self, "_generation_token_ids"):
+            self._generation_token_ids = []
+        self._generation_token_ids.extend(int(token_id) for token_id in token_ids)
+
+    def _generation_stop_ids(self) -> frozenset[int]:
+        return _coerce_token_id_set(
+            getattr(
+                self,
+                "_generation_stop_token_ids",
+                _default_generation_stop_token_ids(self.tokenizer),
+            )
+        )
+
     def _prepare_generated_token_ids(self, token_ids) -> list[int]:
-        """Strip only terminal tokenizer-declared IDs and retain decode evidence."""
+        """Retain raw IDs for stopping while preserving exact boundary evidence."""
         from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
             generation_token_evidence,
         )
 
-        evidence = generation_token_evidence(token_ids, self.tokenizer)
+        raw_ids = [int(token_id) for token_id in token_ids]
+        evidence = generation_token_evidence(
+            raw_ids,
+            self.tokenizer,
+            terminal_stop_token_ids=self._generation_stop_ids(),
+        )
         self._last_generation_evidence = evidence
         removed_count = len(evidence["removed_terminal_token_ids"])
-        if removed_count:
-            return evidence["raw_token_ids"][:-removed_count]
-        return list(evidence["raw_token_ids"])
+        return raw_ids[:-removed_count] if removed_count else raw_ids
+
+    def _finalize_generation_evidence(self) -> dict[str, Any] | None:
+        if getattr(self, "_structured_prompt", None) is None:
+            self._last_generation_evidence = None
+            return None
+        from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
+            generation_token_evidence,
+        )
+
+        evidence = generation_token_evidence(
+            getattr(self, "_generation_token_ids", []),
+            self.tokenizer,
+            terminal_stop_token_ids=self._generation_stop_ids(),
+        )
+        self._last_generation_evidence = evidence
+        return evidence
 
     def _build_unconstrained_chunk_result(self, token_ids, open_span_token, eos_token, max_new_tokens: int):
         from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
@@ -1379,8 +1434,14 @@ class _TensorizedLMBase:
         spider_contract_active = isinstance(
             getattr(self, "_structured_prompt", None), SpiderPromptParts
         )
+        removed_terminal_count = 0
         if spider_contract_active:
+            token_ids = [int(token_id) for token_id in token_ids]
+            self._record_generated_token_ids(token_ids)
             token_ids = self._prepare_generated_token_ids(token_ids)
+            removed_terminal_count = len(
+                self._last_generation_evidence["removed_terminal_token_ids"]
+            )
             _SPIDER_CONTRACT_LOG.info(
                 "[spider-output-contract] token-boundary generated_ids=%d "
                 "removed_terminal_token_count=%d",
@@ -1400,10 +1461,14 @@ class _TensorizedLMBase:
         chunk_text = ""
         steps_used = 0
         stopped_on_open = False
-        stopped_on_eos = False
+        stopped_on_eos = bool(removed_terminal_count)
 
+        stop_ids = self._generation_stop_ids() if spider_contract_active else frozenset()
         for raw_token_id in token_ids:
             if steps_used >= max_new_tokens:
+                break
+            if int(raw_token_id) in stop_ids:
+                stopped_on_eos = True
                 break
             token_str = self._token_str_from_id(int(raw_token_id))
             steps_used += 1
@@ -1551,6 +1616,10 @@ class _TensorizedLMBase:
     def ChooseNextToken(self):
         with _timed("ChooseNextToken"):
             best_idx = self._select_constrained_index()
+            if getattr(self, "_structured_prompt", None) is not None:
+                self._record_generated_token_ids(
+                    [int(self._token_ids_tensor[best_idx].item())]
+                )
             return self._Tokens[best_idx]
 
     def _select_constrained_index(self) -> int:
@@ -1630,6 +1699,8 @@ class _TensorizedLMBase:
             except Exception:
                 pass
             # #endregion
+            if getattr(self, "_structured_prompt", None) is not None:
+                self._record_generated_token_ids([sampled_idx])
             return self._dafny.Seq(self.tokenizer.decode([sampled_idx]))
 
     def _token_indices_for_token(self, token) -> list[int]:
