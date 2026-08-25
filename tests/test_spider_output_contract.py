@@ -1829,6 +1829,49 @@ def _strategy_mutation_lm():
     return lm
 
 
+def _strategy_origin_alias_lm():
+    """Small Spider LM where a sampled close marker aliases strategy output."""
+    import types
+
+    from synthesis.evaluate.benchmarks.common.model_utils import _TensorizedLMBase
+    from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
+
+    class Dafny:
+        @staticmethod
+        def Seq(value):
+            return value
+
+        @staticmethod
+        def SeqWithoutIsStrInference(values):
+            return list(values)
+
+    class Tokenizer:
+        all_special_ids = {99}
+        eos_token_id = 99
+        eos_token = "eos"
+
+        def decode(self, token_ids, skip_special_tokens=False):
+            del skip_special_tokens
+            pieces = {1: "a", 2: "b", 3: ">>", 99: "eos"}
+            return "".join(pieces[int(token_id)] for token_id in token_ids)
+
+        def encode(self, text, add_special_tokens=False):
+            del add_special_tokens
+            return {"a": [1], "b": [2], ">>": [3], "eos": [99]}.get(text, [])
+
+    lm = _TensorizedLMBase(
+        Dafny(), Tokenizer(), ["a", "b", ">>", "eos"], [1, 2, 3, 99]
+    )
+    lm.Tokens = lm._Tokens
+    lm._structured_prompt = SpiderPromptParts(
+        "db_id: x\nquestion: q\n",
+        model_name="Qwen/Qwen2.5-7B-Instruct",
+    )
+    lm._generation_stop_token_ids = {99}
+    lm.AppendTaskGuidance = types.MethodType(lambda self, guidance: None, lm)
+    return lm
+
+
 class _StrategyCompleteParser:
     def IsCompletePrefix(self, prefix):
         return list(prefix) == ["a"]
@@ -1877,7 +1920,7 @@ def test_strategy_rollback_to_complete_keeps_raw_ids_and_scores_returned_text(
     except SpiderEvidenceContractError as exc:
         pytest.fail(f"strategy-authored rollback text aborted evidence finalization: {exc}")
     assert lm._last_generation_evidence["strategy_output_text"] == strategy_output
-    assert lm._last_generation_evidence["strategy_output_relation"] == "strategy_mutation"
+    assert lm._last_generation_evidence["strategy_output_relation"] == "mixed"
     assert lm._last_generation_evidence["strategy_mutation"] is True
     assert lm._last_generation_evidence["raw_token_ids"] == [1, 2]
 
@@ -1919,7 +1962,7 @@ def test_strategy_rollback_and_regenerate_without_callback_discards_removed_id(
         pytest.fail(f"callback-free strategy rollback aborted evidence finalization: {exc}")
     assert lm._last_generation_evidence["raw_token_ids"] == [1, 3]
     assert lm._last_generation_evidence["strategy_output_text"] == "ac"
-    assert lm._last_generation_evidence["strategy_output_relation"] == "strategy_mutation"
+    assert lm._last_generation_evidence["strategy_output_relation"] == "mixed"
     assert lm._last_generation_evidence["strategy_mutation"] is True
 
 
@@ -1965,8 +2008,80 @@ def test_strategy_close_span_keeps_sampled_ids_and_reaches_strict_wrapper_reject
     assert source == "spider_output_contract_rejected"
     assert aux["output_rejection_reason"] == "prompt_or_wrapper"
     assert lm._last_generation_evidence["strategy_output_text"] == strategy_output
-    assert lm._last_generation_evidence["strategy_output_relation"] == "strategy_mutation"
+    assert lm._last_generation_evidence["strategy_output_relation"] == "mixed"
     assert lm._last_generation_evidence["strategy_mutation"] is True
+
+
+def test_strategy_origin_alias_discards_sampled_marker_before_authored_close(
+    _verified_csd_helpers,
+):
+    """A traced rollback then close must distinguish discarded and authored markers."""
+    import sys
+
+    from synthesis.evaluate.benchmarks.common.dafny_tokens import (
+        dafny_seq_to_str,
+    )
+    from synthesis.evaluate.benchmarks.gsm_symbolic.environment import (
+        _attach_helper_trace,
+    )
+    from synthesis.evaluate.benchmarks.gsm_symbolic.generation import (
+        _finalize_spider_generation_evidence,
+    )
+    from synthesis.evaluate.benchmarks.sql_spider import eval_logic as sql_eval_logic
+    from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
+        SpiderEvidenceContractError,
+    )
+
+    lm = _strategy_origin_alias_lm()
+    verified = sys.modules["VerifiedDecoderAgent"]
+    trace_state = {"events": []}
+    _attach_helper_trace(verified, trace_state)
+    helper = _verified_csd_helpers()
+    helper.ctor__()
+    lm._record_generated_token_ids([1, 3])
+
+    generated, current = helper.RollbackConstrainedToComplete(
+        _StrategyCompleteParser(), ["a", ">>"], ["a", ">>"]
+    )
+    generated, inside, current = helper.CloseConstrainedSpan(
+        lm, _StrategyCompleteParser(), generated, current
+    )
+
+    helper_names = [event["helper"] for event in trace_state["events"]]
+    assert helper_names[-2:] == ["RollbackConstrainedToComplete", "CloseConstrainedSpan"]
+    rollback_event = trace_state["events"][-2]
+    assert rollback_event["generated_len_before"] == 2
+    assert rollback_event["generated_len_after"] == 1
+    assert rollback_event["current_len_before"] == 2
+    assert rollback_event["current_len_after"] == 1
+    assert dafny_seq_to_str(generated[0]) == "a"
+    assert dafny_seq_to_str(generated[1]) == ">>"
+    assert inside is False
+    assert current == []
+    strategy_output = "".join(dafny_seq_to_str(token) for token in generated)
+    assert strategy_output == "a>>"
+    try:
+        _finalize_spider_generation_evidence(
+            lm,
+            spider_prompt_active=True,
+            scored_output=strategy_output,
+            strategy_token_sequence=generated,
+        )
+    except SpiderEvidenceContractError as exc:
+        pytest.fail(f"origin-alias strategy output aborted evidence finalization: {exc}")
+
+    evidence = lm._last_generation_evidence
+    assert evidence["raw_token_ids"] == [1]
+    assert evidence["raw_decoded_text"] == "a"
+    assert evidence["strategy_removed_sampled_token_ids"] == [3]
+    assert evidence["strategy_output_relation"] == "mixed"
+    assert evidence["strategy_mutation"] is True
+    actual, source, aux = sql_eval_logic.extract_actual(
+        _CachedRealEvaluator(), strategy_output, _example()
+    )
+    assert actual is None
+    assert source == "spider_output_contract_rejected"
+    assert aux["output_rejection_reason"] == "prompt_or_wrapper"
 
 
 def test_preserved_qwen25_7b_control_flow_rolls_back_then_closes_span(
@@ -1977,6 +2092,9 @@ def test_preserved_qwen25_7b_control_flow_rolls_back_then_closes_span(
     import importlib
     import sys
 
+    from synthesis.evaluate.benchmarks.gsm_symbolic.environment import (
+        _attach_helper_trace,
+    )
     from synthesis.evaluate.benchmarks.common.dafny_tokens import dafny_seq_to_str
     from synthesis.evaluate.benchmarks.gsm_symbolic.generation import (
         _finalize_spider_generation_evidence,
@@ -2007,21 +2125,8 @@ def test_preserved_qwen25_7b_control_flow_rolls_back_then_closes_span(
         sys.modules.pop(module_name, None)
     generated_csd = importlib.import_module("GeneratedCSD")
 
-    events = []
-    helpers = generated_csd.VerifiedDecoderAgent.CSDHelpers
-    original_rollback = helpers.RollbackConstrainedToComplete
-    original_close = helpers.CloseConstrainedSpan
-
-    def tracked_rollback(self, parser, generated, current):
-        events.append("rollback")
-        return original_rollback(self, parser, generated, current)
-
-    def tracked_close(self, lm, parser, generated, current):
-        events.append("close")
-        return original_close(self, lm, parser, generated, current)
-
-    monkeypatch.setattr(helpers, "RollbackConstrainedToComplete", tracked_rollback)
-    monkeypatch.setattr(helpers, "CloseConstrainedSpan", tracked_close)
+    trace_state = {"events": []}
+    _attach_helper_trace(generated_csd.VerifiedDecoderAgent, trace_state)
 
     dafny = generated_csd._dafny
 
@@ -2040,7 +2145,7 @@ def test_preserved_qwen25_7b_control_flow_rolls_back_then_closes_span(
             )
 
     lm = _strategy_mutation_lm()
-    lm._record_generated_token_ids([1])
+    lm._record_generated_token_ids([1, 2])
     result = generated_csd.default__.MyCSDStrategy(
         lm,
         PreservedParser(),
@@ -2055,7 +2160,8 @@ def test_preserved_qwen25_7b_control_flow_rolls_back_then_closes_span(
     )
     strategy_output = "".join(dafny_seq_to_str(token) for token in result[0])
 
-    assert events == ["rollback", "close"]
+    events = [event["helper"] for event in trace_state["events"]]
+    assert events[-2:] == ["RollbackConstrainedToComplete", "CloseConstrainedSpan"]
     assert strategy_output == "a>>"
     assert lm._generation_token_ids == [1]
     try:
@@ -2072,7 +2178,8 @@ def test_preserved_qwen25_7b_control_flow_rolls_back_then_closes_span(
     assert source == "spider_output_contract_rejected"
     assert aux["output_rejection_reason"] == "prompt_or_wrapper"
     assert lm._last_generation_evidence["strategy_output_text"] == strategy_output
-    assert lm._last_generation_evidence["strategy_output_relation"] == "strategy_mutation"
+    assert lm._last_generation_evidence["strategy_removed_sampled_token_ids"] == [2]
+    assert lm._last_generation_evidence["strategy_output_relation"] == "mixed"
     assert lm._last_generation_evidence["strategy_mutation"] is True
 
 

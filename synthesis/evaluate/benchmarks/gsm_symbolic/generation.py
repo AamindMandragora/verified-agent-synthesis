@@ -89,16 +89,19 @@ def _finalize_spider_generation_evidence(
                 lm, "_generation_alignment_removed_token_ids", []
             )
         ]
-        strategy_mutation = bool(
-            raw_decoded_text != strategy_output_text or removed_sampled_ids
+        strategy_mutation = bool(raw_decoded_text != strategy_output_text or removed_sampled_ids)
+        origin_proven = bool(
+            getattr(lm, "_strategy_output_origin_proven", False)
         )
+        if removed_sampled_ids or raw_decoded_text != strategy_output_text or not origin_proven:
+            relation = "mixed" if raw_decoded_text else "strategy_authored"
+        else:
+            relation = "sampled_output"
         evidence.update(
             {
                 "strategy_output_text": strategy_output_text,
                 "strategy_token_texts": list(strategy_token_texts),
-                "strategy_output_relation": (
-                    "strategy_mutation" if strategy_mutation else "sampled_output"
-                ),
+                "strategy_output_relation": relation,
                 "strategy_mutation": strategy_mutation,
                 "strategy_removed_sampled_token_ids": removed_sampled_ids,
             }
@@ -333,6 +336,7 @@ def run_crane_csd(
     trace_state = env.get("csd_trace")
     if isinstance(trace_state, dict):
         trace_state["events"] = []
+        trace_state.pop("_pending_spider_rollback_prefix", None)
 
     if valid_token_groups is not None:
         token_groups = valid_token_groups
@@ -457,6 +461,15 @@ def run_crane_csd(
         lm.SetAnswerEarlyStop(False)
     _enforce_max_steps(result_tokens, max_steps)
     output_text = "".join(result_tokens)
+    if isinstance(trace_state, dict):
+        pending_prefix = trace_state.pop("_pending_spider_rollback_prefix", None)
+        if pending_prefix is not None:
+            align_prefix = getattr(lm, "_align_generation_history_to_prefix", None)
+            if callable(align_prefix):
+                align_prefix(pending_prefix)
+                _SPIDER_CONTRACT_LOG.info(
+                    "[spider-output-contract] final_rollback_alignment applied=1"
+                )
     _finalize_spider_generation_evidence(
         lm,
         spider_prompt_active,

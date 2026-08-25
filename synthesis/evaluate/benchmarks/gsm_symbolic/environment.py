@@ -119,13 +119,83 @@ def _summarize_helper_event(name: str, args: tuple[Any, ...], result: Any, cost_
         event["detail"] = f"closed span, generated_len={generated_len}"
         return event
 
-    if name in {"RollbackConstrainedSpan", "RollbackConstrainedSuffix", "RollbackToValidPrefix"}:
-        current_len = _safe_len(result[1]) if isinstance(result, tuple) and len(result) >= 2 else _safe_len(result)
+    if name == "CloseSpanIfComplete":
+        generated_len = _safe_len(result[0]) if isinstance(result, tuple) and result else None
+        current_len = _safe_len(result[2]) if isinstance(result, tuple) and len(result) >= 3 else None
+        closed = bool(result[3]) if isinstance(result, tuple) and len(result) >= 4 else None
+        event["generated_len"] = generated_len
         event["current_len"] = current_len
-        event["detail"] = f"rollback, current_len={current_len}"
+        event["closed"] = closed
+        event["detail"] = f"close_if_complete, generated_len={generated_len}, current_len={current_len}, closed={closed}"
         return event
 
-    if name == "RegenerateUnitOnCheckFailure":
+    if name == "CarsTrieStep":
+        next_len = _safe_len(result[0]) if isinstance(result, tuple) and result else _safe_len(result)
+        success = bool(result[1]) if isinstance(result, tuple) and len(result) >= 2 else None
+        event["next_len"] = next_len
+        event["success"] = success
+        event["detail"] = f"cars_step, next_len={next_len}, success={success}"
+        return event
+
+    if name == "ForwardUntilSymbol":
+        result_len = _safe_len(result)
+        event["result_len"] = result_len
+        event["detail"] = f"forward_until_symbol, result_len={result_len}"
+        return event
+
+    if name in {
+        "RollbackConstrainedSpan",
+        "RollbackConstrainedSuffix",
+        "RollbackConstrainedToComplete",
+        "RollbackToValidPrefix",
+        "RollbackAndRegenerate",
+        "RollbackAndContinue",
+    }:
+        generated_arg_index = {
+            "RollbackConstrainedSpan": 2,
+            "RollbackConstrainedSuffix": 1,
+            "RollbackConstrainedToComplete": 1,
+            "RollbackToValidPrefix": 1,
+            "RollbackAndRegenerate": 3,
+            "RollbackAndContinue": 3,
+        }[name]
+        current_arg_index = {
+            "RollbackConstrainedSpan": 3,
+            "RollbackConstrainedSuffix": 2,
+            "RollbackConstrainedToComplete": 2,
+            "RollbackAndContinue": 4,
+        }.get(name)
+        generated_before = (
+            _safe_len(args[generated_arg_index])
+            if len(args) > generated_arg_index
+            else None
+        )
+        generated_after = _safe_len(result[0]) if isinstance(result, tuple) and result else _safe_len(result)
+        current_before = (
+            _safe_len(args[current_arg_index])
+            if current_arg_index is not None and len(args) > current_arg_index
+            else None
+        )
+        current_after = _safe_len(result[1]) if isinstance(result, tuple) and len(result) >= 2 else None
+        event["generated_len_before"] = generated_before
+        event["generated_len_after"] = generated_after
+        event["current_len_before"] = current_before
+        event["current_len_after"] = current_after
+        event["detail"] = (
+            f"rollback, generated_len={generated_before}->{generated_after}, "
+            f"current_len={current_before}->{current_after}"
+        )
+        return event
+
+    if name == "DeadEndAvoidingStep":
+        next_len = _safe_len(result[0]) if isinstance(result, tuple) and result else _safe_len(result)
+        success = bool(result[1]) if isinstance(result, tuple) and len(result) >= 2 else None
+        event["next_len"] = next_len
+        event["success"] = success
+        event["detail"] = f"dead_end_retry, next_len={next_len}, success={success}"
+        return event
+
+    if name in {"RegenerateUnitOnCheckFailure", "RegenerateUnitOnGroundingFailure"}:
         result_len = _safe_len(result)
         # args: lm, parser, prompt, currentConstrained, eosToken, maxStepsPerUnit,
         #       maxRetries, maxRollbackBudget, allowedUnits
@@ -549,6 +619,9 @@ def _attach_helper_trace(VerifiedDecoderAgent, trace_state: Dict[str, Any]) -> N
         "EnterObservedConstrainedSpan",
         "AppendConstrainedToken",
         "CloseConstrainedSpan",
+        "CloseSpanIfComplete",
+        "CarsTrieStep",
+        "ForwardUntilSymbol",
         "ConstrainedStep",
         "UnconstrainedGeneration",
         "ConstrainedGeneration",
@@ -573,8 +646,13 @@ def _attach_helper_trace(VerifiedDecoderAgent, trace_state: Dict[str, Any]) -> N
         "ConstrainedSymbolInGenerated",
         "RollbackConstrainedSpan",
         "RollbackConstrainedSuffix",
+        "RollbackConstrainedToComplete",
         "RollbackToValidPrefix",
+        "RollbackAndRegenerate",
+        "RollbackAndContinue",
         "RegenerateUnitOnCheckFailure",
+        "RegenerateUnitOnGroundingFailure",
+        "DeadEndAvoidingStep",
         "DeadEndDetection",
         "ValidTokenCount",
         "BoostTokenLogits",
@@ -601,6 +679,32 @@ def _attach_helper_trace(VerifiedDecoderAgent, trace_state: Dict[str, Any]) -> N
         "SubtractTokenSets",
     ]
 
+    rollback_method_names = {
+        "RollbackConstrainedSpan",
+        "RollbackConstrainedSuffix",
+        "RollbackConstrainedToComplete",
+        "RollbackToValidPrefix",
+        "RollbackAndRegenerate",
+        "RollbackAndContinue",
+    }
+
+    def _align_pending_rollback(args):
+        pending = trace_state.get("_pending_spider_rollback_prefix")
+        if pending is None:
+            return
+        lm = next(
+            (
+                arg
+                for arg in args
+                if callable(getattr(arg, "_align_generation_history_to_prefix", None))
+            ),
+            None,
+        )
+        if lm is None:
+            return
+        lm._align_generation_history_to_prefix(pending)
+        trace_state.pop("_pending_spider_rollback_prefix", None)
+
     for name in helper_names:
         original = getattr(helpers_cls, name, None)
         if original is None:
@@ -608,9 +712,15 @@ def _attach_helper_trace(VerifiedDecoderAgent, trace_state: Dict[str, Any]) -> N
 
         def _make_wrapper(method_name, method):
             def _wrapped(self, *args, **kwargs):
+                _align_pending_rollback(args)
                 cost_before = getattr(self, "cost", None)
                 result = method(self, *args, **kwargs)
                 cost_after = getattr(self, "cost", None)
+                if method_name in rollback_method_names:
+                    prefix = result[0] if isinstance(result, tuple) and result else result
+                    if hasattr(prefix, "__len__"):
+                        # Keep raw prefix objects private; only lengths enter events.
+                        trace_state["_pending_spider_rollback_prefix"] = prefix
                 trace_state.setdefault("events", []).append(
                     _summarize_helper_event(method_name, args, result, cost_before, cost_after)
                 )
