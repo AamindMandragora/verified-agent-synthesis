@@ -13,8 +13,37 @@ from synthesis.evaluate.evaluator import Evaluator
 from synthesis.run_constants import EVAL_EARLY_STOP_ON_ANSWER, SPLIT_FILE_BY_DATASET
 
 
-def build_reevaluation_provenance(args: argparse.Namespace, compiled: Path) -> dict[str, Any]:
-    return {
+def _evaluated_source_indices(
+    dataset: str, evaluation_result: Any
+) -> list[int]:
+    """Read source order from the rows that the Evaluator actually returned."""
+    samples = list(getattr(evaluation_result, "sample_outputs", ()) or ())
+    indices: list[int] = []
+    for evaluated_index, sample in enumerate(samples):
+        if dataset == "spider":
+            source_index = sample.get("spider_source_index")
+        elif dataset == "gsm_symbolic":
+            source_index = sample.get("crane_source_index")
+        else:
+            source_index = sample.get("source_index")
+        if source_index is None:
+            source_index = sample.get("source_index")
+        if source_index is None:
+            raise ValueError(
+                "reevaluation result row "
+                f"{evaluated_index} has no resolved source index"
+            )
+        indices.append(int(source_index))
+    return indices
+
+
+def build_reevaluation_provenance(
+    args: argparse.Namespace,
+    compiled: Path,
+    *,
+    evaluation_result: Any = None,
+) -> dict[str, Any]:
+    provenance = {
         "cell_id": args.provenance_cell_id,
         "manifest_commit": args.provenance_manifest_commit,
         "dataset": args.dataset,
@@ -26,6 +55,25 @@ def build_reevaluation_provenance(args: argparse.Namespace, compiled: Path) -> d
         "step_token_budget": args.step_token_budget,
         "smiles_class": args.smiles_classes,
     }
+    if evaluation_result is not None:
+        provenance.update(
+            {
+                "sample_offset": int(getattr(args, "sample_offset", 0)),
+                "evaluated_source_indices": _evaluated_source_indices(
+                    args.dataset, evaluation_result
+                ),
+            }
+        )
+        if args.dataset == "spider":
+            provenance.update(
+                {
+                    "spider_split_file": str(args.spider_split_file)
+                    if getattr(args, "spider_split_file", None) is not None
+                    else None,
+                    "spider_split_name": getattr(args, "spider_split_name", None),
+                }
+            )
+    return provenance
 
 
 def babysitter_smoke_split_fallback(output_json: Path | None) -> str | None:
@@ -82,6 +130,7 @@ def main() -> None:
     p.add_argument("--eval-backend", default="vllm")
     p.add_argument("--device", default="cuda")
     p.add_argument("--sample-size", type=int, default=15)
+    p.add_argument("--sample-offset", type=int, default=0)
     p.add_argument("--max-steps", type=int, default=900)
     p.add_argument("--step-token-budget", type=int, default=1)
     p.add_argument("--vllm-gpu-memory-utilization", type=float, default=0.8)
@@ -177,7 +226,9 @@ def main() -> None:
 
     ev = Evaluator(**evaluator_kwargs)
     try:
-        res = ev.evaluate_sample(compiled, sample_size=args.sample_size)
+        res = ev.evaluate_sample(
+            compiled, sample_size=args.sample_size, sample_offset=args.sample_offset
+        )
     finally:
         ev.unload_runtime()
     if not res.success:
@@ -199,7 +250,11 @@ def main() -> None:
             args.output_json,
             eval_split=ev.split_provenance(),
             metadata=(
-                {"reevaluation_provenance": build_reevaluation_provenance(args, compiled)}
+                {
+                    "reevaluation_provenance": build_reevaluation_provenance(
+                        args, compiled, evaluation_result=res
+                    )
+                }
                 if args.provenance_cell_id
                 else None
             ),

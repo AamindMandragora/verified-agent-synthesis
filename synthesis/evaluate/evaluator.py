@@ -2434,6 +2434,7 @@ class Evaluator:
         benchmark_aux: Optional[dict[str, Any]] = None
         tokenizer = env.get("tokenizer")
         generation_token_evidence: Optional[dict[str, Any]] = None
+        prompt_contract: Optional[dict[str, Any]] = None
         from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptRenderError
         from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
             SpiderEvidenceContractError,
@@ -2479,6 +2480,7 @@ class Evaluator:
             generation_token_evidence = getattr(
                 env.get("lm"), "_last_generation_evidence", None
             )
+            prompt_contract = getattr(env.get("lm"), "_last_prompt_contract", None)
             example_time = time.time() - example_start
             print(f"  [EVAL]   Generated {token_count} tokens in {example_time:.2f}s", flush=True)
             # region agent log
@@ -2620,6 +2622,7 @@ class Evaluator:
                 "generation_token_evidence": (
                     generation_token_evidence if self.dataset_name == "spider" else None
                 ),
+                "prompt_contract": prompt_contract,
                 "removed_terminal_token_count": (
                     benchmark_aux.get("removed_terminal_token_count")
                     if self.dataset_name == "spider" and benchmark_aux
@@ -2741,6 +2744,7 @@ class Evaluator:
                     if self.dataset_name == "spider"
                     else None
                 ),
+                "prompt_contract": getattr(env.get("lm"), "_last_prompt_contract", None),
                 "removed_terminal_token_count": (
                     len((generation_token_evidence or {}).get("removed_terminal_token_ids", ()))
                     if self.dataset_name == "spider"
@@ -2813,6 +2817,7 @@ class Evaluator:
             sample = self._evaluate_one_example(
                 i, example, len(dataset), env, logic, run_crane_csd, smiles_suffix
             )
+            sample.update(EvaluationResult._sample_identity_metadata(example, i))
             sample_outputs.append(sample)
             if sample.get("timed_out"):
                 n_timeouts += 1
@@ -3095,6 +3100,12 @@ class Evaluator:
                     # worker (also assigned GPU 0), which then failed immediately.
                     pool = get_synthesis_eval_pool(self)
                     sample_outputs = pool.evaluate_examples(self, compiled_module_path, dataset)
+                    for evaluated_index, (example, sample) in enumerate(
+                        zip(dataset, sample_outputs)
+                    ):
+                        sample.update(
+                            EvaluationResult._sample_identity_metadata(example, evaluated_index)
+                        )
                     sample_outputs, early_stop_reason = self._posthoc_early_stop(
                         sample_outputs, early_stop_runtime_failures
                     )

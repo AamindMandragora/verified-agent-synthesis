@@ -142,6 +142,46 @@ class SpiderPromptParts:
             len(rendered),
         )
         return rendered
+
+    def render_for_model_with_contract(
+        self,
+        tokenizer: Any,
+        *,
+        model_name: str | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        """Render and return safe metadata for the branch that actually succeeded."""
+        identity = (model_name or self.model_name or "").lower()
+        identity = identity.replace("-", "_").replace(".", "_")
+        is_qwen35 = "qwen3_5" in identity or "qwen35" in identity
+        family = "qwen3.5" if is_qwen35 else (
+            "qwen2.5" if "qwen2_5" in identity else "unknown"
+        )
+        rendered = self.render_for_model(tokenizer, model_name=model_name)
+        contract = {
+            "renderer": "spider",
+            "family": family,
+            "mode": "chat" if is_qwen35 else "raw",
+            "template_used": bool(is_qwen35),
+            "raw_prompt": not is_qwen35,
+            "chat_message_count": 1 if is_qwen35 else 0,
+            "user_message_count": 1 if is_qwen35 else 0,
+            "add_generation_prompt": True if is_qwen35 else False,
+            "enable_thinking": False if is_qwen35 else None,
+            "render_succeeded": True,
+            "prompt_chars": len(rendered),
+        }
+        _PROMPT_LOG.debug(
+            "[spider-prompt] contract family=%s mode=%s template=%s "
+            "thinking=%s prompt_chars=%d",
+            family,
+            contract["mode"],
+            contract["template_used"],
+            contract["enable_thinking"],
+            contract["prompt_chars"],
+        )
+        return rendered, contract
+
+
 _SPIDER_FEW_SHOT = (
     "Example:\n"
     "db_id: concert_singer\n"

@@ -12,6 +12,20 @@ They are not imported by the core package at runtime; run them explicitly with `
 
 Scripts are self-contained CLIs. See each file's module docstring for arguments and examples.
 
+## Reevaluation evidence
+
+The reevaluate_compiled_csd script keeps the historical minimal answers list
+for compatibility and adds a separate reevaluation_sample_evidence list. Each
+row records its evaluated/source index, correctness and denominator flags,
+Spider contract result and rejection reason, timeout/error status, terminal
+token removal and full generation-token evidence, strategy mutation
+provenance, safe helper-trace tags, failure location, and the safe prompt
+delivery contract. Prompt records contain only renderer mode, booleans, and
+lengths; they never contain prompt or schema bodies. The reevaluation
+provenance records the requested sample offset and the exact source-index
+order returned by Evaluator, so smoke and pilot slices cannot claim a
+different list.
+
 ## See also
 
 - **`AGENTS.md`** in this folder for agent constraints when adding or editing scripts.

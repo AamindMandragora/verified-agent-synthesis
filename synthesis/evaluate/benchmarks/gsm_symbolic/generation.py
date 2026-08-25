@@ -267,6 +267,7 @@ def run_crane_csd(
     spider_prompt_active = hasattr(prompt_text, "render_for_model")
     if hasattr(lm, "_last_generation_evidence"):
         lm._last_generation_evidence = None
+    lm._last_prompt_contract = None
     if hasattr(lm, "_generation_token_ids"):
         lm._generation_token_ids = []
 
@@ -279,27 +280,81 @@ def run_crane_csd(
             model_name = getattr(model_config, "model_type", None)
         if hasattr(lm, "set_structured_prompt"):
             lm.set_structured_prompt(prompt_text, model_name=model_name)
-        lm.instruction_text = prompt_text.render_for_model(
-            lm.tokenizer, model_name=model_name
+        render_with_contract = getattr(
+            prompt_text, "render_for_model_with_contract", None
         )
+        if callable(render_with_contract):
+            rendered_prompt, prompt_contract = render_with_contract(
+                lm.tokenizer, model_name=model_name
+            )
+        else:
+            rendered_prompt = prompt_text.render_for_model(
+                lm.tokenizer, model_name=model_name
+            )
+            prompt_contract = {
+                "renderer": "structured",
+                "family": "unknown",
+                "mode": "structured",
+                "template_used": None,
+                "raw_prompt": None,
+                "chat_message_count": None,
+                "user_message_count": None,
+                "add_generation_prompt": None,
+                "enable_thinking": None,
+                "render_succeeded": True,
+                "prompt_chars": len(rendered_prompt),
+            }
+        lm.instruction_text = rendered_prompt
+        lm._last_prompt_contract = prompt_contract
     elif completion_mode:
         if not isinstance(prompt_text, str):
             raise ValueError("completion_mode requires prompt_text to be a string")
         if hasattr(lm, "ResetTaskGuidance"):
             lm.ResetTaskGuidance()
         lm.instruction_text = prompt_text
+        lm._last_prompt_contract = {
+            "renderer": "legacy",
+            "family": "unknown",
+            "mode": "raw_completion",
+            "template_used": False,
+            "raw_prompt": True,
+            "chat_message_count": 0,
+            "user_message_count": 0,
+            "add_generation_prompt": False,
+            "enable_thinking": None,
+            "render_succeeded": True,
+            "prompt_chars": len(prompt_text),
+        }
     else:
         if hasattr(lm, "ResetTaskGuidance"):
             lm.ResetTaskGuidance()
         chat_messages = prompt_text if isinstance(prompt_text, list) else [{"role": "user", "content": prompt_text}]
+        template_fallback = False
         try:
             lm.instruction_text = lm.tokenizer.apply_chat_template(
                 chat_messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
             )
         except TypeError:
+            template_fallback = True
             lm.instruction_text = lm.tokenizer.apply_chat_template(
                 chat_messages, tokenize=False, add_generation_prompt=True
             )
+        lm._last_prompt_contract = {
+            "renderer": "legacy",
+            "family": "unknown",
+            "mode": "chat",
+            "template_used": True,
+            "raw_prompt": False,
+            "chat_message_count": len(chat_messages),
+            "user_message_count": sum(
+                1 for message in chat_messages if message.get("role") == "user"
+            ),
+            "add_generation_prompt": True,
+            "enable_thinking": None if template_fallback else False,
+            "template_fallback": template_fallback,
+            "render_succeeded": True,
+            "prompt_chars": len(lm.instruction_text),
+        }
         if hasattr(lm, "set_chat_messages"):
             lm.set_chat_messages(chat_messages)
     start_time = time.time()

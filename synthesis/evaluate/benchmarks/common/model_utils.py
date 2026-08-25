@@ -865,6 +865,7 @@ class _TensorizedLMBase:
         self._early_stop_tokens: list[str] | None = None
 
         self._last_generation_evidence: dict[str, Any] | None = None
+        self._last_prompt_contract: dict[str, Any] | None = None
         # Prefix-cache short-circuit state.
         self._last_full_prompt: str | None = None
         self._logits_dirty: bool = False
