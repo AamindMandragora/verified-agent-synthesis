@@ -515,6 +515,45 @@ def test_synthesis_reservation_matches_what_all_workers_will_actually_take():
     assert queue.synthesis_required_memory_mib(job, 48_000) == 32_768
 
 
+def test_qwen35_2b_two_workers_fit_the_30672_mib_free_memory_boundary():
+    """The settled Qwen3.5-2B floor admits both GPUs at the exact boundary."""
+    job = _job("spider")
+    job["gpu_mem_util"] = 0.35
+    job["memory_reservation_mib"] = queue.EXPECTED_RUNTIME_BY_MODEL[
+        job["eval_model"]
+    ]["memory_reservation_mib"]
+    total = 40_960
+    snapshots = {
+        1: {"used_mib": total - 32_859, "free_mib": 32_859, "total_mib": total},
+        2: {"used_mib": total - 40_432, "free_mib": 40_432, "total_mib": total},
+    }
+    baseline = {gpu: dict(snapshot) for gpu, snapshot in snapshots.items()}
+    reservations = {gpu: {} for gpu in snapshots}
+
+    assert job["eval_model"] == "Qwen/Qwen3.5-2B"
+    assert queue.EXPECTED_RUNTIME_BY_MODEL[job["eval_model"]][
+        "memory_reservation_mib"
+    ] == 14_336
+    assert queue.eval_workers_per_gpu(job) == 2
+    assert queue.required_gpu_count(job) == 2
+    assert queue.synthesis_required_memory_mib(job, total) == 28_672
+    assert tuple(sorted(queue.choose_gpu_bundle(job, snapshots, reservations, baseline))) == (1, 2)
+
+    for low_gpu in snapshots:
+        below_boundary = {
+            gpu: dict(snapshot) for gpu, snapshot in snapshots.items()
+        }
+        below_boundary[low_gpu]["free_mib"] = 30_671
+        below_boundary[low_gpu]["used_mib"] = total - 30_671
+        below_baseline = {
+            gpu: dict(snapshot) for gpu, snapshot in below_boundary.items()
+        }
+        assert (
+            queue.choose_gpu_bundle(job, below_boundary, reservations, below_baseline)
+            is None
+        ), f"GPU {low_gpu} below 30672 MiB was incorrectly admitted"
+
+
 def test_poolable_double_workers_reject_a_partly_occupied_gpu():
     job = _job("spider")
     job["gpu_mem_util"] = 0.35

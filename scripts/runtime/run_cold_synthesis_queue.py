@@ -311,7 +311,7 @@ _MEMORY_RESERVATION_MIB_BY_MODEL = {
     "Qwen/Qwen2.5-1.5B-Instruct": 16000,
     "Qwen/Qwen2.5-7B-Instruct": 22000,
     "Qwen/Qwen2.5-14B-Instruct": 34000,
-    "Qwen/Qwen3.5-2B": 16384,
+    "Qwen/Qwen3.5-2B": 14336,
     "Qwen/Qwen3.5-4B": 19000,
     "Qwen/Qwen3.5-9B": 25000,
 }
