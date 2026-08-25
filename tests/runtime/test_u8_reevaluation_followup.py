@@ -9,6 +9,9 @@ class _ShardProcess:
     rows_by_shard = {0: [3], 1: [9, 15]}
     malformed_evidence = False
     source_mismatch = False
+    outcome_mode = None
+    provenance_mismatch_field = None
+    missing_provenance_shard = None
 
     def __init__(self, command, stdout=None, stderr=None, env=None):
         del stdout, stderr, env
@@ -44,6 +47,18 @@ class _ShardProcess:
             evidence = evidence[:-1]
         if self.source_mismatch and evidence:
             evidence[0]["source_index"] += 1
+        if self.outcome_mode == "missing":
+            for row in answers + evidence:
+                row.pop("is_correct", None)
+                row.pop("is_syntax_valid", None)
+        elif self.outcome_mode == "int":
+            answers[0]["is_correct"] = 1
+            evidence[0]["is_correct"] = 1
+        elif self.outcome_mode == "string":
+            answers[0]["is_syntax_valid"] = "true"
+            evidence[0]["is_syntax_valid"] = "true"
+        elif self.outcome_mode == "mismatch":
+            evidence[0]["is_correct"] = not answers[0]["is_correct"]
         split_provenance = {
             "gsm_split_file": None,
             "gsm_split_name": None,
@@ -54,28 +69,64 @@ class _ShardProcess:
         output_path.write_text(
             json.dumps(
                 {
-                    "accuracy": sum(row["is_correct"] for row in answers) / len(answers),
+                    "accuracy": sum(bool(row.get("is_correct")) for row in answers) / len(answers),
                     "syntax_rate": 1.0,
                     "metrics": {},
                     "answers": answers,
                     "eval_split": split_provenance,
                     "reevaluation_sample_evidence": evidence,
-                    "reevaluation_provenance": {
-                        "dataset": "spider",
-                        "spider_split_file": str(split_path),
-                        "spider_split_name": "test",
-                        "evaluated_source_indices": rows,
-                    },
+                    "reevaluation_provenance": (
+                        None
+                        if self.missing_provenance_shard == shard_index
+                        else {
+                            "dataset": "spider",
+                            "spider_split_file": str(split_path),
+                            "spider_split_name": "test",
+                            "evaluated_source_indices": rows,
+                            "compiled_csd_path": "/compiled/GeneratedCSD.py",
+                            "compiled_csd_sha256": "aaa",
+                            "eval_model": "Qwen/Qwen2.5-7B-Instruct",
+                            "cell_id": "spider-cell",
+                            "manifest_commit": "m" * 40,
+                            "sample_size": len(split["test_indices"]),
+                            "max_steps": 8,
+                            "step_token_budget": 1,
+                            "smiles_class": None,
+                        }
+                    ),
                 }
             )
         )
+        if self.provenance_mismatch_field and shard_index == 1:
+            output_payload = json.loads(output_path.read_text())
+            output_payload["reevaluation_provenance"][self.provenance_mismatch_field] = {
+                "compiled_csd_path": "/compiled/Other.py",
+                "compiled_csd_sha256": "bbb",
+                "eval_model": "Qwen/Qwen3.5-4B",
+                "cell_id": "other-cell",
+                "manifest_commit": "n" * 40,
+                "max_steps": 9,
+                "step_token_budget": 2,
+                "smiles_class": "other",
+            }[self.provenance_mismatch_field]
+            output_path.write_text(json.dumps(output_payload))
         self.returncode = 0
 
     def wait(self):
         return self.returncode
 
 
-def _run_sharded(monkeypatch, tmp_path, *, malformed=False, source_mismatch=False):
+def _run_sharded(
+    monkeypatch,
+    tmp_path,
+    *,
+    malformed=False,
+    source_mismatch=False,
+    rows_by_shard=None,
+    outcome_mode=None,
+    provenance_mismatch_field=None,
+    missing_provenance_shard=None,
+):
     from synthesis.scripts import sharded_eval_core
 
     split_path = tmp_path / "canonical_split.json"
@@ -90,8 +141,12 @@ def _run_sharded(monkeypatch, tmp_path, *, malformed=False, source_mismatch=Fals
         )
     )
     output_path = tmp_path / "merged.json"
+    _ShardProcess.rows_by_shard = rows_by_shard or {0: [3], 1: [9, 15]}
     _ShardProcess.malformed_evidence = malformed
     _ShardProcess.source_mismatch = source_mismatch
+    _ShardProcess.outcome_mode = outcome_mode
+    _ShardProcess.provenance_mismatch_field = provenance_mismatch_field
+    _ShardProcess.missing_provenance_shard = missing_provenance_shard
     monkeypatch.setattr(sharded_eval_core, "detect_gpu_slots", lambda *args, **kwargs: [0, 1])
     monkeypatch.setattr(sharded_eval_core.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(sharded_eval_core.subprocess, "Popen", _ShardProcess)
@@ -125,6 +180,11 @@ def test_run_sharded_reevaluation_merges_evidence_and_provenance_for_early_stop(
     assert payload["eval_split"]["spider_split_name"] == "test"
     assert payload["reevaluation_provenance"]["evaluated_source_indices"] == [3, 9, 15]
     assert payload["reevaluation_provenance"]["spider_split_file"] == str(split_path.resolve())
+    assert payload["reevaluation_provenance"]["sample_size"] == 4
+    assert payload["reevaluation_provenance"]["planned_sample_size"] == 4
+    assert payload["reevaluation_provenance"]["evaluated_count"] == 3
+    assert payload["metrics"]["planned_sample_size"] == 4
+    assert payload["metrics"]["evaluated_count"] == 3
 
 
 def test_run_sharded_reevaluation_fails_closed_on_answer_evidence_misalignment(
@@ -132,6 +192,68 @@ def test_run_sharded_reevaluation_fails_closed_on_answer_evidence_misalignment(
 ):
     with pytest.raises(ValueError, match="evidence.*answers"):
         _run_sharded(monkeypatch, tmp_path, malformed=True)
+
+
+@pytest.mark.parametrize(
+    "bad_rows",
+    [
+        [8],
+        [3, 9],
+        [8, 3],
+        [3, 8, 9],
+    ],
+)
+def test_run_sharded_reevaluation_rejects_rows_outside_assigned_prefix(
+    monkeypatch, tmp_path, bad_rows
+):
+    with pytest.raises(ValueError, match="assigned shard|prefix|canonical"):
+        _run_sharded(
+            monkeypatch,
+            tmp_path,
+            rows_by_shard={0: bad_rows, 1: [9, 15]},
+        )
+
+
+@pytest.mark.parametrize(
+    "outcome_mode",
+    ["missing", "int", "string", "mismatch"],
+)
+def test_run_sharded_reevaluation_requires_boolean_matching_outcomes(
+    monkeypatch, tmp_path, outcome_mode
+):
+    with pytest.raises(ValueError, match="outcome|bool|match"):
+        _run_sharded(monkeypatch, tmp_path, outcome_mode=outcome_mode)
+
+
+@pytest.mark.parametrize(
+    "provenance_mismatch_field",
+    [
+        "compiled_csd_path",
+        "compiled_csd_sha256",
+        "eval_model",
+        "cell_id",
+        "manifest_commit",
+        "max_steps",
+        "step_token_budget",
+        "smiles_class",
+    ],
+)
+def test_run_sharded_reevaluation_rejects_mixed_immutable_provenance(
+    monkeypatch, tmp_path, provenance_mismatch_field
+):
+    with pytest.raises(ValueError, match="provenance|mismatch|shard"):
+        _run_sharded(
+            monkeypatch,
+            tmp_path,
+            provenance_mismatch_field=provenance_mismatch_field,
+        )
+
+
+def test_run_sharded_reevaluation_rejects_mixed_provenance_presence(
+    monkeypatch, tmp_path
+):
+    with pytest.raises(ValueError, match="provenance"):
+        _run_sharded(monkeypatch, tmp_path, missing_provenance_shard=1)
 
 
 class _GuidanceTokenizer:

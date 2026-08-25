@@ -100,17 +100,47 @@ def _row_source_index(row: dict[str, Any]) -> int | None:
     return None
 
 
+_IMMUTABLE_PROVENANCE_FIELDS = (
+    "compiled_csd_path",
+    "compiled_csd_sha256",
+    "eval_model",
+    "cell_id",
+    "manifest_commit",
+    "dataset",
+    "max_steps",
+    "step_token_budget",
+    "smiles_class",
+)
+
+
 def merge_results(
     parts: list[dict],
     *,
     dataset: str,
     split_file: str,
     split_name: str,
-    canonical_indices: list[int],
+    planned_slices: list[list[int]],
 ) -> dict:
-    """Merge shard rows without inventing results for early-stopped shards."""
+    """Merge only rows proven to belong to each shard's planned prefix.
+
+    A worker may stop early, so its returned source indices may be a prefix of
+    its assigned slice, but never an arbitrary subset.  The child provenance
+    keeps the requested size for that slice; the merged result records both
+    the total planned size and the number of rows actually returned.
+    """
     if not parts:
         raise ValueError("no shard results to merge")
+    if len(parts) != len(planned_slices):
+        raise ValueError(
+            "shard result count does not match the planned shard slices"
+        )
+    if any(not isinstance(shard_slice, list) for shard_slice in planned_slices):
+        raise ValueError("planned shard slices must be lists")
+    canonical_indices = [
+        source_index
+        for shard_slice in planned_slices
+        for source_index in shard_slice
+    ]
     if len(set(canonical_indices)) != len(canonical_indices):
         raise ValueError("canonical split contains duplicate source indices")
     canonical_set = set(canonical_indices)
@@ -118,13 +148,15 @@ def merge_results(
     evidence_rows: list[dict[str, Any]] = []
     actual_source_indices: list[int] = []
     seen_source_indices: set[int] = set()
-    split_file_key = f"{dataset.split('_')[0]}_split_file"
     split_name_key = f"{dataset.split('_')[0]}_split_name"
     canonical_split_file = str(Path(split_file).resolve())
     first_eval_split: dict[str, Any] | None = None
-    first_provenance: dict[str, Any] = {}
+    first_provenance: dict[str, Any] | None = None
+    first_identity: tuple[Any, ...] | None = None
 
-    for shard_index, part in enumerate(parts):
+    for shard_index, (part, assigned_slice) in enumerate(
+        zip(parts, planned_slices)
+    ):
         shard_answers = part.get("answers")
         shard_evidence = part.get("reevaluation_sample_evidence")
         if not isinstance(shard_answers, list):
@@ -149,15 +181,38 @@ def merge_results(
             )
 
         provenance = part.get("reevaluation_provenance")
-        if provenance is not None:
-            if not isinstance(provenance, dict):
-                raise ValueError(f"shard {shard_index} reevaluation provenance is invalid")
-            if provenance.get("dataset") not in (None, dataset):
-                raise ValueError(f"shard {shard_index} dataset provenance mismatch")
-            if provenance.get(split_name_key) not in (None, split_name):
-                raise ValueError(f"shard {shard_index} split provenance mismatch")
-            if shard_index == 0:
-                first_provenance = dict(provenance)
+        if not isinstance(provenance, dict):
+            raise ValueError(
+                f"shard {shard_index} reevaluation provenance is missing or invalid"
+            )
+        missing_fields = [
+            field
+            for field in (*_IMMUTABLE_PROVENANCE_FIELDS, split_name_key)
+            if field not in provenance
+        ]
+        if missing_fields:
+            raise ValueError(
+                f"shard {shard_index} provenance missing immutable fields"
+            )
+        if provenance["dataset"] != dataset:
+            raise ValueError(f"shard {shard_index} dataset provenance mismatch")
+        if provenance[split_name_key] != split_name:
+            raise ValueError(f"shard {shard_index} split provenance mismatch")
+        identity = tuple(provenance[field] for field in _IMMUTABLE_PROVENANCE_FIELDS)
+        if first_identity is None:
+            first_identity = identity
+            first_provenance = dict(provenance)
+        elif identity != first_identity:
+            raise ValueError(
+                f"shard {shard_index} immutable reevaluation provenance mismatch"
+            )
+        declared_sample_size = provenance.get("sample_size")
+        if type(declared_sample_size) is not int or declared_sample_size != len(
+            assigned_slice
+        ):
+            raise ValueError(
+                f"shard {shard_index} provenance sample_size does not match its planned slice"
+            )
 
         row_source_indices: list[int] = []
         for local_index, (answer, evidence) in enumerate(
@@ -165,6 +220,17 @@ def merge_results(
         ):
             if not isinstance(answer, dict) or not isinstance(evidence, dict):
                 raise ValueError(f"shard {shard_index} rows must be objects")
+            for outcome_key in ("is_correct", "is_syntax_valid"):
+                answer_outcome = answer.get(outcome_key)
+                evidence_outcome = evidence.get(outcome_key)
+                if type(answer_outcome) is not bool or type(evidence_outcome) is not bool:
+                    raise ValueError(
+                        f"shard {shard_index} row {local_index} {outcome_key} outcomes must be bool"
+                    )
+                if answer_outcome != evidence_outcome:
+                    raise ValueError(
+                        f"shard {shard_index} row {local_index} answer/evidence {outcome_key} mismatch"
+                    )
             answer_source = _row_source_index(answer)
             evidence_source = _row_source_index(evidence)
             if answer_source is None or evidence_source is None:
@@ -194,16 +260,31 @@ def merge_results(
             evidence_rows.append(evidence_copy)
             actual_source_indices.append(answer_source)
 
-        if provenance is not None and "evaluated_source_indices" in provenance:
-            declared = [int(value) for value in provenance["evaluated_source_indices"]]
-            if declared != row_source_indices:
-                raise ValueError(
-                    f"shard {shard_index} provenance source indices do not match rows"
-                )
+        expected_prefix = assigned_slice[: len(row_source_indices)]
+        if row_source_indices != expected_prefix:
+            raise ValueError(
+                f"shard {shard_index} returned source indices that are not a prefix "
+                "of its assigned shard slice"
+            )
+        declared = provenance.get("evaluated_source_indices")
+        if not isinstance(declared, list):
+            raise ValueError(
+                f"shard {shard_index} provenance evaluated_source_indices is missing"
+            )
+        try:
+            declared_indices = [int(value) for value in declared]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"shard {shard_index} provenance source indices are invalid"
+            ) from exc
+        if declared_indices != row_source_indices:
+            raise ValueError(
+                f"shard {shard_index} provenance source indices do not match rows"
+            )
 
     if not answers:
         raise ValueError("no evaluated shard answers")
-    if first_eval_split is None:
+    if first_eval_split is None or first_provenance is None:
         raise ValueError("missing canonical split provenance")
     canonical_eval_split = dict(first_eval_split)
     canonical_eval_split["gsm_split_file"] = (
@@ -216,9 +297,13 @@ def merge_results(
     canonical_eval_split["spider_split_name"] = split_name if dataset == "spider" else None
 
     merged_provenance = dict(first_provenance)
+    planned_sample_size = len(canonical_indices)
+    evaluated_count = len(answers)
     merged_provenance["dataset"] = dataset
     merged_provenance["evaluated_source_indices"] = actual_source_indices
-    merged_provenance["sample_size"] = len(canonical_indices)
+    merged_provenance["sample_size"] = planned_sample_size
+    merged_provenance["planned_sample_size"] = planned_sample_size
+    merged_provenance["evaluated_count"] = evaluated_count
     merged_provenance["sample_offset"] = 0
     merged_provenance["gsm_split_file"] = (
         canonical_split_file if dataset == "gsm_symbolic" else None
@@ -232,15 +317,17 @@ def merge_results(
     merged_metrics = {
         "num_shards": len(parts),
         "shard_sizes": [len(p["answers"]) for p in parts],
+        "planned_sample_size": planned_sample_size,
+        "evaluated_count": evaluated_count,
     }
     print(
         f"{LOG} merge: {len(parts)} shard(s), sizes {merged_metrics['shard_sizes']} "
-        f"-> {len(answers)} example(s) total",
+        f"-> {evaluated_count} example(s) total",
         flush=True,
     )
     return {
-        "accuracy": sum(bool(a.get("is_correct")) for a in answers) / len(answers),
-        "syntax_rate": sum(bool(a.get("is_syntax_valid")) for a in answers) / len(answers),
+        "accuracy": sum(a["is_correct"] for a in answers) / evaluated_count,
+        "syntax_rate": sum(a["is_syntax_valid"] for a in answers) / evaluated_count,
         "metrics": merged_metrics,
         "answers": answers,
         "eval_split": canonical_eval_split,
@@ -357,12 +444,15 @@ def run_sharded_reevaluation(
               f"NOT writing merged output.", flush=True)
         return 1
 
+    planned_slices = [
+        list(split[indices_key][lo:hi]) for lo, hi in shards
+    ]
     merged = merge_results(
         parts,
         dataset=dataset,
         split_file=split_file,
         split_name=split_name,
-        canonical_indices=list(split[indices_key][:n]),
+        planned_slices=planned_slices,
     )
     out_base.write_text(json.dumps(merged, indent=1))
     print(f"{LOG} merged {len(merged['answers'])} examples -> {out_base} "
