@@ -2084,6 +2084,128 @@ def test_strategy_origin_alias_discards_sampled_marker_before_authored_close(
     assert aux["output_rejection_reason"] == "prompt_or_wrapper"
 
 
+def test_spider_public_rollback_to_complete_prefix_trace_preserves_origin(
+    _verified_csd_helpers,
+):
+    """The public static rollback alias must trace removal before authored close."""
+    import sys
+
+    from synthesis.evaluate.benchmarks.common.dafny_tokens import dafny_seq_to_str
+    from synthesis.evaluate.benchmarks.gsm_symbolic.environment import (
+        _attach_helper_trace,
+    )
+    from synthesis.evaluate.benchmarks.gsm_symbolic.generation import (
+        _finalize_spider_generation_evidence,
+    )
+    from synthesis.evaluate.benchmarks.sql_spider import eval_logic as sql_eval_logic
+    from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
+        SpiderEvidenceContractError,
+    )
+
+    lm = _strategy_origin_alias_lm()
+    helper = _verified_csd_helpers()
+    verified = sys.modules["VerifiedDecoderAgent"]
+    trace_state = {"events": []}
+    _attach_helper_trace(verified, trace_state)
+    helper_instance = helper
+    helper_instance.ctor__()
+    lm._record_generated_token_ids([1, 3])
+
+    parser = _StrategyCompleteParser()
+    generated = type(helper).RollbackToCompletePrefix(parser, ["a", ">>"])
+    generated, inside, current = helper_instance.CloseConstrainedSpan(
+        lm, parser, generated, generated
+    )
+
+    assert [dafny_seq_to_str(token) for token in generated] == ["a", ">>"]
+    assert inside is False
+    assert current == []
+    strategy_output = "".join(dafny_seq_to_str(token) for token in generated)
+    assert strategy_output == "a>>"
+    helper_names = [event["helper"] for event in trace_state["events"]]
+    assert helper_names[-2:] == [
+        "RollbackToCompletePrefix",
+        "CloseConstrainedSpan",
+    ]
+    rollback_event = trace_state["events"][-2]
+    assert rollback_event["generated_len_before"] == 2
+    assert rollback_event["generated_len_after"] == 1
+    assert set(rollback_event) == {
+        "helper",
+        "detail",
+        "cost_before",
+        "cost_after",
+        "generated_len_before",
+        "generated_len_after",
+    }
+    assert all(value not in (["a", ">>"], ["a"]) for value in rollback_event.values())
+
+    try:
+        _finalize_spider_generation_evidence(
+            lm,
+            spider_prompt_active=True,
+            scored_output=strategy_output,
+            strategy_token_sequence=generated,
+        )
+    except SpiderEvidenceContractError as exc:
+        pytest.fail(f"public rollback strategy output aborted finalization: {exc}")
+
+    evidence = lm._last_generation_evidence
+    assert evidence["raw_token_ids"] == [1]
+    assert evidence["raw_decoded_text"] == "a"
+    assert evidence["strategy_removed_sampled_token_ids"] == [3]
+    assert evidence["strategy_output_relation"] == "mixed"
+    assert evidence["strategy_mutation"] is True
+    actual, source, aux = sql_eval_logic.extract_actual(
+        _CachedRealEvaluator(), strategy_output, _example()
+    )
+    assert actual is None
+    assert source == "spider_output_contract_rejected"
+    assert aux["output_rejection_reason"] == "prompt_or_wrapper"
+
+
+def test_spider_static_rollback_to_valid_prefix_preserves_descriptor_and_trace(
+    _verified_csd_helpers,
+):
+    """Static rollback remains callable through both class and instance access."""
+    import sys
+
+    from synthesis.evaluate.benchmarks.gsm_symbolic.environment import (
+        _attach_helper_trace,
+    )
+
+    class PrefixParser:
+        def IsValidPrefix(self, prefix):
+            return list(prefix) == ["a"]
+
+        def IsDeadPrefix(self, prefix):
+            return False
+
+    helper = _verified_csd_helpers()
+    verified = sys.modules["VerifiedDecoderAgent"]
+    trace_state = {"events": []}
+    _attach_helper_trace(verified, trace_state)
+    parser = PrefixParser()
+    generated = ["a", "bad"]
+
+    class_result = type(helper).RollbackToValidPrefix(parser, generated)
+    helper.ctor__()
+    instance_result = helper.RollbackToValidPrefix(parser, generated)
+
+    assert class_result == ["a"]
+    assert instance_result == ["a"]
+    events = [
+        event
+        for event in trace_state["events"]
+        if event["helper"] == "RollbackToValidPrefix"
+    ]
+    assert len(events) == 2
+    for event in events:
+        assert event["generated_len_before"] == 2
+        assert event["generated_len_after"] == 1
+        assert all(value not in (["a", "bad"], ["a"]) for value in event.values())
+
+
 def test_preserved_qwen25_7b_control_flow_rolls_back_then_closes_span(
     monkeypatch,
 ):

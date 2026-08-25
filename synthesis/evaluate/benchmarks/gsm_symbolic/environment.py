@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import importlib
+import inspect
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -147,24 +148,20 @@ def _summarize_helper_event(name: str, args: tuple[Any, ...], result: Any, cost_
         "RollbackConstrainedSpan",
         "RollbackConstrainedSuffix",
         "RollbackConstrainedToComplete",
+        "RollbackToCompletePrefix",
         "RollbackToValidPrefix",
         "RollbackAndRegenerate",
         "RollbackAndContinue",
     }:
-        generated_arg_index = {
-            "RollbackConstrainedSpan": 2,
-            "RollbackConstrainedSuffix": 1,
-            "RollbackConstrainedToComplete": 1,
-            "RollbackToValidPrefix": 1,
-            "RollbackAndRegenerate": 3,
-            "RollbackAndContinue": 3,
+        generated_arg_index, current_arg_index = {
+            "RollbackConstrainedSpan": (2, 3),
+            "RollbackConstrainedSuffix": (1, 2),
+            "RollbackConstrainedToComplete": (1, 2),
+            "RollbackToCompletePrefix": (1, None),
+            "RollbackToValidPrefix": (1, None),
+            "RollbackAndRegenerate": (3, None),
+            "RollbackAndContinue": (3, 4),
         }[name]
-        current_arg_index = {
-            "RollbackConstrainedSpan": 3,
-            "RollbackConstrainedSuffix": 2,
-            "RollbackConstrainedToComplete": 2,
-            "RollbackAndContinue": 4,
-        }.get(name)
         generated_before = (
             _safe_len(args[generated_arg_index])
             if len(args) > generated_arg_index
@@ -179,11 +176,16 @@ def _summarize_helper_event(name: str, args: tuple[Any, ...], result: Any, cost_
         current_after = _safe_len(result[1]) if isinstance(result, tuple) and len(result) >= 2 else None
         event["generated_len_before"] = generated_before
         event["generated_len_after"] = generated_after
-        event["current_len_before"] = current_before
-        event["current_len_after"] = current_after
+        if current_arg_index is not None:
+            event["current_len_before"] = current_before
+            event["current_len_after"] = current_after
         event["detail"] = (
             f"rollback, generated_len={generated_before}->{generated_after}, "
-            f"current_len={current_before}->{current_after}"
+            + (
+                f"current_len={current_before}->{current_after}"
+                if current_arg_index is not None
+                else ""
+            )
         )
         return event
 
@@ -647,6 +649,7 @@ def _attach_helper_trace(VerifiedDecoderAgent, trace_state: Dict[str, Any]) -> N
         "RollbackConstrainedSpan",
         "RollbackConstrainedSuffix",
         "RollbackConstrainedToComplete",
+        "RollbackToCompletePrefix",
         "RollbackToValidPrefix",
         "RollbackAndRegenerate",
         "RollbackAndContinue",
@@ -683,6 +686,7 @@ def _attach_helper_trace(VerifiedDecoderAgent, trace_state: Dict[str, Any]) -> N
         "RollbackConstrainedSpan",
         "RollbackConstrainedSuffix",
         "RollbackConstrainedToComplete",
+        "RollbackToCompletePrefix",
         "RollbackToValidPrefix",
         "RollbackAndRegenerate",
         "RollbackAndContinue",
@@ -706,16 +710,21 @@ def _attach_helper_trace(VerifiedDecoderAgent, trace_state: Dict[str, Any]) -> N
         trace_state.pop("_pending_spider_rollback_prefix", None)
 
     for name in helper_names:
-        original = getattr(helpers_cls, name, None)
-        if original is None:
+        descriptor = inspect.getattr_static(helpers_cls, name, None)
+        if descriptor is None:
             continue
+        if isinstance(descriptor, staticmethod):
+            method = descriptor.__func__
+            descriptor_kind = "static"
+        elif isinstance(descriptor, classmethod):
+            method = descriptor.__func__
+            descriptor_kind = "class"
+        else:
+            method = descriptor
+            descriptor_kind = "instance"
 
-        def _make_wrapper(method_name, method):
-            def _wrapped(self, *args, **kwargs):
-                _align_pending_rollback(args)
-                cost_before = getattr(self, "cost", None)
-                result = method(self, *args, **kwargs)
-                cost_after = getattr(self, "cost", None)
+        def _make_wrapper(method_name, method, descriptor_kind):
+            def _record(args, result, cost_before, cost_after):
                 if method_name in rollback_method_names:
                     prefix = result[0] if isinstance(result, tuple) and result else result
                     if hasattr(prefix, "__len__"):
@@ -724,10 +733,34 @@ def _attach_helper_trace(VerifiedDecoderAgent, trace_state: Dict[str, Any]) -> N
                 trace_state.setdefault("events", []).append(
                     _summarize_helper_event(method_name, args, result, cost_before, cost_after)
                 )
-                return result
-            return _wrapped
 
-        setattr(helpers_cls, name, _make_wrapper(name, original))
+            def _wrapped_instance(self, *args, **kwargs):
+                _align_pending_rollback(args)
+                cost_before = getattr(self, "cost", None)
+                result = method(self, *args, **kwargs)
+                cost_after = getattr(self, "cost", None)
+                _record(args, result, cost_before, cost_after)
+                return result
+
+            def _wrapped_static(*args, **kwargs):
+                _align_pending_rollback(args)
+                result = method(*args, **kwargs)
+                _record(args, result, None, None)
+                return result
+
+            def _wrapped_class(cls, *args, **kwargs):
+                _align_pending_rollback(args)
+                result = method(cls, *args, **kwargs)
+                _record(args, result, getattr(cls, "cost", None), getattr(cls, "cost", None))
+                return result
+
+            if descriptor_kind == "static":
+                return staticmethod(_wrapped_static)
+            if descriptor_kind == "class":
+                return classmethod(_wrapped_class)
+            return _wrapped_instance
+
+        setattr(helpers_cls, name, _make_wrapper(name, method, descriptor_kind))
 
     helpers_cls._trace_wrapped = True
 
