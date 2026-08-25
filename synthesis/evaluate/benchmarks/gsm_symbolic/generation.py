@@ -23,14 +23,50 @@ from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
 _SPIDER_CONTRACT_LOG = logging.getLogger("csd.spider_output_contract")
 
 
+def _strategy_sequence_texts(strategy_token_sequence):
+    """Return the exact strategy token texts without re-tokenizing output."""
+    if strategy_token_sequence is None:
+        return None, None
+    if isinstance(strategy_token_sequence, str):
+        return [strategy_token_sequence], strategy_token_sequence
+    try:
+        items = list(strategy_token_sequence)
+    except TypeError:
+        items = [
+            strategy_token_sequence[index]
+            for index in range(len(strategy_token_sequence))
+        ]
+    token_texts = [
+        item if isinstance(item, str) else dafny_seq_to_str(item)
+        for item in items
+    ]
+    return token_texts, "".join(token_texts)
+
+
 def _finalize_spider_generation_evidence(
     lm,
     spider_prompt_active: bool,
     scored_output: str | None = None,
+    strategy_token_sequence=None,
 ) -> None:
     if not spider_prompt_active:
         return
-    if scored_output is not None:
+    strategy_token_texts, strategy_output_text = _strategy_sequence_texts(
+        strategy_token_sequence
+    )
+    explicit_strategy_output = strategy_token_sequence is not None
+    if explicit_strategy_output and scored_output is not None:
+        if strategy_output_text != str(scored_output):
+            _SPIDER_CONTRACT_LOG.error(
+                "[spider-output-contract] strategy_output_mismatch "
+                "strategy_chars=%d scored_chars=%d",
+                len(strategy_output_text),
+                len(str(scored_output)),
+            )
+            raise SpiderEvidenceContractError(
+                "Spider strategy output does not match scored output"
+            )
+    if not explicit_strategy_output and scored_output is not None:
         reconcile = getattr(lm, "_reconcile_generation_evidence", None)
         if callable(reconcile):
             reconciled = reconcile(str(scored_output))
@@ -43,10 +79,42 @@ def _finalize_spider_generation_evidence(
                 raise SpiderEvidenceContractError(
                     "Spider committed token evidence does not match scored output"
                 )
+    def _attach_strategy_evidence(evidence):
+        if not explicit_strategy_output or evidence is None:
+            return
+        raw_decoded_text = str(evidence.get("decoded_text", ""))
+        removed_sampled_ids = [
+            int(token_id)
+            for token_id in getattr(
+                lm, "_generation_alignment_removed_token_ids", []
+            )
+        ]
+        strategy_mutation = bool(
+            raw_decoded_text != strategy_output_text or removed_sampled_ids
+        )
+        evidence.update(
+            {
+                "strategy_output_text": strategy_output_text,
+                "strategy_token_texts": list(strategy_token_texts),
+                "strategy_output_relation": (
+                    "strategy_mutation" if strategy_mutation else "sampled_output"
+                ),
+                "strategy_mutation": strategy_mutation,
+                "strategy_removed_sampled_token_ids": removed_sampled_ids,
+            }
+        )
+        _SPIDER_CONTRACT_LOG.info(
+            "[spider-output-contract] strategy_output relation=%s "
+            "strategy_chars=%d sampled_chars=%d removed_count=%d",
+            evidence["strategy_output_relation"],
+            len(strategy_output_text),
+            len(raw_decoded_text),
+            len(removed_sampled_ids),
+        )
     finalizer = getattr(lm, "_finalize_generation_evidence", None)
     if callable(finalizer) and finalizer() is not None:
         evidence = getattr(lm, "_last_generation_evidence", None)
-        if scored_output is not None and evidence is not None:
+        if not explicit_strategy_output and scored_output is not None and evidence is not None:
             decoded_text = str(evidence.get("decoded_text", ""))
             if decoded_text != str(scored_output):
                 _SPIDER_CONTRACT_LOG.error(
@@ -57,6 +125,7 @@ def _finalize_spider_generation_evidence(
                 raise SpiderEvidenceContractError(
                     "Spider committed token evidence does not match scored output"
                 )
+        _attach_strategy_evidence(evidence)
         return
     token_ids = getattr(lm, "_generation_token_ids", None)
     tokenizer = getattr(lm, "tokenizer", None)
@@ -80,7 +149,7 @@ def _finalize_spider_generation_evidence(
         tokenizer,
         terminal_stop_token_ids=stop_ids or (),
     )
-    if scored_output is not None:
+    if not explicit_strategy_output and scored_output is not None:
         decoded_text = str(lm._last_generation_evidence.get("decoded_text", ""))
         if decoded_text != str(scored_output):
             _SPIDER_CONTRACT_LOG.error(
@@ -91,6 +160,7 @@ def _finalize_spider_generation_evidence(
             raise SpiderEvidenceContractError(
                 "Spider committed token evidence does not match scored output"
             )
+    _attach_strategy_evidence(lm._last_generation_evidence)
 
 
 
@@ -295,6 +365,7 @@ def run_crane_csd(
     from synthesis.evaluate.benchmarks.common.model_utils import AnswerCompleteStop
 
     answer_early_stopped = False
+    strategy_token_sequence = None
     try:
         result = None
         _successes = 0
@@ -365,16 +436,20 @@ def run_crane_csd(
     if answer_early_stopped:
         result_tokens = list(getattr(lm, "_early_stop_tokens", None) or [])
         total_cost = len(result_tokens)
+        strategy_token_sequence = result_tokens
     elif isinstance(result, tuple) and len(result) == 4:
         csd_output, final_inside_constrained, final_current_constrained, total_cost = result
         result_tokens = [dafny_seq_to_str(t) for t in csd_output]
+        strategy_token_sequence = csd_output
     elif isinstance(result, tuple):
         csd_output, total_cost = result
         result_tokens = [dafny_seq_to_str(t) for t in csd_output]
+        strategy_token_sequence = csd_output
     else:
         csd_output = result
         total_cost = 0
         result_tokens = [dafny_seq_to_str(t) for t in csd_output]
+        strategy_token_sequence = csd_output
 
     if early_stop_on_answer and hasattr(lm, "SetAnswerEarlyStop"):
         # Clear AFTER harvesting the stash so the flag cannot leak into the
@@ -386,6 +461,7 @@ def run_crane_csd(
         lm,
         spider_prompt_active,
         scored_output=output_text,
+        strategy_token_sequence=strategy_token_sequence,
     )
     execution_time = time.time() - start_time
 

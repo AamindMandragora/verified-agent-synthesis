@@ -828,6 +828,7 @@ class _TensorizedLMBase:
         self._generation_stop_token_ids = _default_generation_stop_token_ids(tokenizer)
         self._generation_token_ids: list[int] = []
         self._generation_transaction_checkpoints: dict[str, list[int]] = {}
+        self._generation_alignment_removed_token_ids: list[int] = []
         self._active_generation_checkpoint_key: str | None = None
         self._active_generation_checkpoint_prefix: str | None = None
         self._active_generation_checkpoint_snapshot: list[int] | None = None
@@ -977,6 +978,7 @@ class _TensorizedLMBase:
         self.model_name = None
         self.instruction_text = ""
         self._last_generation_evidence = None
+        self._generation_alignment_removed_token_ids = []
         self._generation_token_ids = []
         self._generation_transaction_checkpoints = {}
         self._active_generation_checkpoint_key = None
@@ -1406,16 +1408,65 @@ class _TensorizedLMBase:
 
     def _reset_generation_transactions(self) -> None:
         """Clear per-example prefix checkpoints for sampled-ID provenance."""
+        self._generation_alignment_removed_token_ids = []
         self._generation_transaction_checkpoints = {}
         self._active_generation_checkpoint_key = None
         self._active_generation_checkpoint_prefix = None
         self._active_generation_checkpoint_snapshot = None
         self._generation_transaction_rollback_restored = False
 
+    def _align_generation_history_to_prefix(self, input_prefix) -> None:
+        """Keep sampled-ID occurrences that still form the current CSD prefix."""
+        if getattr(self, "_structured_prompt", None) is None:
+            return
+        history = [
+            int(token_id) for token_id in getattr(self, "_generation_token_ids", [])
+        ]
+        stop_ids = self._generation_stop_ids()
+        content = list(history)
+        terminal: list[int] = []
+        while content and content[-1] in stop_ids:
+            terminal.insert(0, content.pop())
+        expected_pieces = [
+            self._to_str(input_prefix[index]) for index in range(len(input_prefix))
+        ]
+        expected_text = "".join(expected_pieces)
+        retained: list[int] = []
+        matched_indices: set[int] = set()
+        cursor = 0
+        for index, candidate in enumerate(content):
+            candidate_text = self._token_str_from_id(candidate)
+            if not candidate_text:
+                continue
+            match_at = expected_text.find(candidate_text, cursor)
+            if match_at == -1:
+                continue
+            retained.append(candidate)
+            matched_indices.add(index)
+            cursor = match_at + len(candidate_text)
+        removed_ids = [
+            token_id
+            for index, token_id in enumerate(content)
+            if index not in matched_indices
+        ]
+        if not removed_ids:
+            return
+        self._generation_token_ids = retained + terminal
+        self._generation_alignment_removed_token_ids.extend(removed_ids)
+        _SPIDER_CONTRACT_LOG.info(
+            "[spider-output-contract] prefix_alignment "
+            "prefix_tokens=%d before_ids=%d after_ids=%d removed_ids=%d",
+            len(expected_pieces),
+            len(history),
+            len(self._generation_token_ids),
+            len(removed_ids),
+        )
+
     def _begin_generation_transaction(self, input_prefix) -> None:
         """Checkpoint the current accepted IDs before generating at a prefix."""
         if getattr(self, "_structured_prompt", None) is None:
             return
+        self._align_generation_history_to_prefix(input_prefix)
         checkpoints = getattr(self, "_generation_transaction_checkpoints", None)
         if not isinstance(checkpoints, dict):
             checkpoints = {}
@@ -1443,16 +1494,14 @@ class _TensorizedLMBase:
         )
         checkpoints[key] = current
         if rollback_revisit:
-            active_snapshot = [int(token_id) for token_id in previous_snapshot]
             _SPIDER_CONTRACT_LOG.info(
-                "[spider-output-contract] transaction_rollback_checkpoint "
-                "prefix_chars=%d active_prefix_chars=%d snapshot_ids=%d",
+                "[spider-output-contract] transaction_checkpoint_replaced "
+                "prefix_chars=%d previous_ids=%d current_ids=%d",
                 len(prefix_text),
-                len(previous_prefix),
-                len(active_snapshot),
+                len(previous_snapshot),
+                len(current),
             )
-        else:
-            active_snapshot = current
+        active_snapshot = current
         self._active_generation_checkpoint_key = key
         self._active_generation_checkpoint_prefix = prefix_text
         self._active_generation_checkpoint_snapshot = active_snapshot
