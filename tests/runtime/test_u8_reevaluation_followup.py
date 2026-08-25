@@ -11,6 +11,7 @@ class _ShardProcess:
     source_mismatch = False
     outcome_mode = None
     provenance_mismatch_field = None
+    provenance_mode = "present"
     missing_provenance_shard = None
 
     def __init__(self, command, stdout=None, stderr=None, env=None):
@@ -77,7 +78,14 @@ class _ShardProcess:
                     "reevaluation_sample_evidence": evidence,
                     "reevaluation_provenance": (
                         None
-                        if self.missing_provenance_shard == shard_index
+                        if (
+                            self.provenance_mode == "absent"
+                            or (
+                                self.provenance_mode == "mixed"
+                                and shard_index == 1
+                            )
+                            or self.missing_provenance_shard == shard_index
+                        )
                         else {
                             "dataset": "spider",
                             "spider_split_file": str(split_path),
@@ -125,6 +133,7 @@ def _run_sharded(
     rows_by_shard=None,
     outcome_mode=None,
     provenance_mismatch_field=None,
+    provenance_mode="present",
     missing_provenance_shard=None,
 ):
     from synthesis.scripts import sharded_eval_core
@@ -146,6 +155,7 @@ def _run_sharded(
     _ShardProcess.source_mismatch = source_mismatch
     _ShardProcess.outcome_mode = outcome_mode
     _ShardProcess.provenance_mismatch_field = provenance_mismatch_field
+    _ShardProcess.provenance_mode = provenance_mode
     _ShardProcess.missing_provenance_shard = missing_provenance_shard
     monkeypatch.setattr(sharded_eval_core, "detect_gpu_slots", lambda *args, **kwargs: [0, 1])
     monkeypatch.setattr(sharded_eval_core.time, "sleep", lambda _seconds: None)
@@ -249,11 +259,32 @@ def test_run_sharded_reevaluation_rejects_mixed_immutable_provenance(
         )
 
 
+def test_run_sharded_reevaluation_preserves_generic_outputs_without_provenance(
+    monkeypatch, tmp_path
+):
+    rc, output_path, split_path = _run_sharded(
+        monkeypatch, tmp_path, provenance_mode="absent"
+    )
+
+    assert rc == 0
+    payload = json.loads(output_path.read_text())
+    assert "reevaluation_provenance" not in payload
+    assert [row["source_index"] for row in payload["answers"]] == [3, 9, 15]
+    assert [row["source_index"] for row in payload["reevaluation_sample_evidence"]] == [
+        3,
+        9,
+        15,
+    ]
+    assert payload["eval_split"]["spider_split_file"] == str(split_path.resolve())
+    assert payload["metrics"]["planned_sample_size"] == 4
+    assert payload["metrics"]["evaluated_count"] == 3
+
+
 def test_run_sharded_reevaluation_rejects_mixed_provenance_presence(
     monkeypatch, tmp_path
 ):
     with pytest.raises(ValueError, match="provenance"):
-        _run_sharded(monkeypatch, tmp_path, missing_provenance_shard=1)
+        _run_sharded(monkeypatch, tmp_path, provenance_mode="mixed")
 
 
 class _GuidanceTokenizer:

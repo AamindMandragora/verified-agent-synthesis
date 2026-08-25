@@ -121,12 +121,13 @@ def merge_results(
     split_name: str,
     planned_slices: list[list[int]],
 ) -> dict:
-    """Merge only rows proven to belong to each shard's planned prefix.
+    """Merge rows while preserving generic outputs without U8 provenance.
 
-    A worker may stop early, so its returned source indices may be a prefix of
-    its assigned slice, but never an arbitrary subset.  The child provenance
-    keeps the requested size for that slice; the merged result records both
-    the total planned size and the number of rows actually returned.
+    Every shard still must return a prefix of its planned slice, with aligned
+    source/outcome rows.  When every shard has reevaluation provenance, the
+    strict U8 identity checks and merged provenance are retained.  When no
+    shard has it, the generic answer/evidence/eval_split shape is preserved
+    without fabricating a provenance block; mixed presence is rejected.
     """
     if not parts:
         raise ValueError("no shard results to merge")
@@ -153,6 +154,7 @@ def merge_results(
     first_eval_split: dict[str, Any] | None = None
     first_provenance: dict[str, Any] | None = None
     first_identity: tuple[Any, ...] | None = None
+    provenance_presence: bool | None = None
 
     for shard_index, (part, assigned_slice) in enumerate(
         zip(parts, planned_slices)
@@ -181,38 +183,47 @@ def merge_results(
             )
 
         provenance = part.get("reevaluation_provenance")
-        if not isinstance(provenance, dict):
-            raise ValueError(
-                f"shard {shard_index} reevaluation provenance is missing or invalid"
+        has_provenance = provenance is not None
+        if provenance_presence is None:
+            provenance_presence = has_provenance
+        elif has_provenance != provenance_presence:
+            raise ValueError("shard reevaluation provenance presence is mixed")
+        if has_provenance:
+            if not isinstance(provenance, dict):
+                raise ValueError(
+                    f"shard {shard_index} reevaluation provenance is invalid"
+                )
+            missing_fields = [
+                field
+                for field in (*_IMMUTABLE_PROVENANCE_FIELDS, split_name_key)
+                if field not in provenance
+            ]
+            if missing_fields:
+                raise ValueError(
+                    f"shard {shard_index} provenance missing immutable fields"
+                )
+            if provenance["dataset"] != dataset:
+                raise ValueError(f"shard {shard_index} dataset provenance mismatch")
+            if provenance[split_name_key] != split_name:
+                raise ValueError(f"shard {shard_index} split provenance mismatch")
+            identity = tuple(
+                provenance[field] for field in _IMMUTABLE_PROVENANCE_FIELDS
             )
-        missing_fields = [
-            field
-            for field in (*_IMMUTABLE_PROVENANCE_FIELDS, split_name_key)
-            if field not in provenance
-        ]
-        if missing_fields:
-            raise ValueError(
-                f"shard {shard_index} provenance missing immutable fields"
-            )
-        if provenance["dataset"] != dataset:
-            raise ValueError(f"shard {shard_index} dataset provenance mismatch")
-        if provenance[split_name_key] != split_name:
-            raise ValueError(f"shard {shard_index} split provenance mismatch")
-        identity = tuple(provenance[field] for field in _IMMUTABLE_PROVENANCE_FIELDS)
-        if first_identity is None:
-            first_identity = identity
-            first_provenance = dict(provenance)
-        elif identity != first_identity:
-            raise ValueError(
-                f"shard {shard_index} immutable reevaluation provenance mismatch"
-            )
-        declared_sample_size = provenance.get("sample_size")
-        if type(declared_sample_size) is not int or declared_sample_size != len(
-            assigned_slice
-        ):
-            raise ValueError(
-                f"shard {shard_index} provenance sample_size does not match its planned slice"
-            )
+            if first_identity is None:
+                first_identity = identity
+                first_provenance = dict(provenance)
+            elif identity != first_identity:
+                raise ValueError(
+                    f"shard {shard_index} immutable reevaluation provenance mismatch"
+                )
+            declared_sample_size = provenance.get("sample_size")
+            if type(declared_sample_size) is not int or declared_sample_size != len(
+                assigned_slice
+            ):
+                raise ValueError(
+                    f"shard {shard_index} provenance sample_size does not match "
+                    "its planned slice"
+                )
 
         row_source_indices: list[int] = []
         for local_index, (answer, evidence) in enumerate(
@@ -266,25 +277,30 @@ def merge_results(
                 f"shard {shard_index} returned source indices that are not a prefix "
                 "of its assigned shard slice"
             )
-        declared = provenance.get("evaluated_source_indices")
-        if not isinstance(declared, list):
-            raise ValueError(
-                f"shard {shard_index} provenance evaluated_source_indices is missing"
-            )
-        try:
-            declared_indices = [int(value) for value in declared]
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"shard {shard_index} provenance source indices are invalid"
-            ) from exc
-        if declared_indices != row_source_indices:
-            raise ValueError(
-                f"shard {shard_index} provenance source indices do not match rows"
-            )
+        if provenance_presence:
+            if not isinstance(provenance, dict):
+                raise ValueError(
+                    f"shard {shard_index} reevaluation provenance is invalid"
+                )
+            declared = provenance.get("evaluated_source_indices")
+            if not isinstance(declared, list):
+                raise ValueError(
+                    f"shard {shard_index} provenance evaluated_source_indices is missing"
+                )
+            try:
+                declared_indices = [int(value) for value in declared]
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"shard {shard_index} provenance source indices are invalid"
+                ) from exc
+            if declared_indices != row_source_indices:
+                raise ValueError(
+                    f"shard {shard_index} provenance source indices do not match rows"
+                )
 
     if not answers:
         raise ValueError("no evaluated shard answers")
-    if first_eval_split is None or first_provenance is None:
+    if first_eval_split is None:
         raise ValueError("missing canonical split provenance")
     canonical_eval_split = dict(first_eval_split)
     canonical_eval_split["gsm_split_file"] = (
@@ -296,23 +312,31 @@ def merge_results(
     )
     canonical_eval_split["spider_split_name"] = split_name if dataset == "spider" else None
 
-    merged_provenance = dict(first_provenance)
     planned_sample_size = len(canonical_indices)
     evaluated_count = len(answers)
-    merged_provenance["dataset"] = dataset
-    merged_provenance["evaluated_source_indices"] = actual_source_indices
-    merged_provenance["sample_size"] = planned_sample_size
-    merged_provenance["planned_sample_size"] = planned_sample_size
-    merged_provenance["evaluated_count"] = evaluated_count
-    merged_provenance["sample_offset"] = 0
-    merged_provenance["gsm_split_file"] = (
-        canonical_split_file if dataset == "gsm_symbolic" else None
-    )
-    merged_provenance["gsm_split_name"] = split_name if dataset == "gsm_symbolic" else None
-    merged_provenance["spider_split_file"] = (
-        canonical_split_file if dataset == "spider" else None
-    )
-    merged_provenance["spider_split_name"] = split_name if dataset == "spider" else None
+    merged_provenance: dict[str, Any] | None = None
+    if provenance_presence:
+        if first_provenance is None:
+            raise ValueError("missing canonical reevaluation provenance")
+        merged_provenance = dict(first_provenance)
+        merged_provenance["dataset"] = dataset
+        merged_provenance["evaluated_source_indices"] = actual_source_indices
+        merged_provenance["sample_size"] = planned_sample_size
+        merged_provenance["planned_sample_size"] = planned_sample_size
+        merged_provenance["evaluated_count"] = evaluated_count
+        merged_provenance["sample_offset"] = 0
+        merged_provenance["gsm_split_file"] = (
+            canonical_split_file if dataset == "gsm_symbolic" else None
+        )
+        merged_provenance["gsm_split_name"] = (
+            split_name if dataset == "gsm_symbolic" else None
+        )
+        merged_provenance["spider_split_file"] = (
+            canonical_split_file if dataset == "spider" else None
+        )
+        merged_provenance["spider_split_name"] = (
+            split_name if dataset == "spider" else None
+        )
 
     merged_metrics = {
         "num_shards": len(parts),
@@ -325,16 +349,17 @@ def merge_results(
         f"-> {evaluated_count} example(s) total",
         flush=True,
     )
-    return {
+    merged = {
         "accuracy": sum(a["is_correct"] for a in answers) / evaluated_count,
         "syntax_rate": sum(a["is_syntax_valid"] for a in answers) / evaluated_count,
         "metrics": merged_metrics,
         "answers": answers,
         "eval_split": canonical_eval_split,
         "reevaluation_sample_evidence": evidence_rows,
-        "reevaluation_provenance": merged_provenance,
     }
-
+    if merged_provenance is not None:
+        merged["reevaluation_provenance"] = merged_provenance
+    return merged
 
 def detect_gpu_slots(workers_per_gpu: int, idle_util_threshold: int, min_free_mb: int) -> list[int]:
     """Return a list of GPU indices, one entry per worker slot ("anything idle":

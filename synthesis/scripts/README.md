@@ -30,7 +30,9 @@ of its planned canonical slice, assigns global evaluated indices, combines only
 the source indices actually returned before an early stop, canonicalizes the split
 provenance, keeps immutable model/run identity consistent across shards, records
 planned sample size separately from evaluated count, and fails closed on
-answer/evidence/source misalignment.
+answer/evidence/source misalignment. Generic shard outputs with no child
+provenance retain answers, evidence, and split data but omit the provenance
+block; mixed provenance presence is rejected.
 
 ## See also
 
