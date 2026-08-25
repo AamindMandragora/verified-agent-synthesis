@@ -693,6 +693,11 @@ def _attach_helper_trace(VerifiedDecoderAgent, trace_state: Dict[str, Any]) -> N
     }
 
     def _align_pending_rollback(args):
+        # A rollback can call another traced rollback before its outer result
+        # is available. Only the next top-level LM-bearing helper may consume
+        # the private returned prefix; inner wrappers must leave it untouched.
+        if int(trace_state.get("_spider_helper_wrapper_depth", 0)) != 0:
+            return
         pending = trace_state.get("_pending_spider_rollback_prefix")
         if pending is None:
             return
@@ -708,6 +713,17 @@ def _attach_helper_trace(VerifiedDecoderAgent, trace_state: Dict[str, Any]) -> N
             return
         lm._align_generation_history_to_prefix(pending)
         trace_state.pop("_pending_spider_rollback_prefix", None)
+
+    def _enter_helper_wrapper() -> None:
+        depth = int(trace_state.get("_spider_helper_wrapper_depth", 0))
+        trace_state["_spider_helper_wrapper_depth"] = depth + 1
+
+    def _leave_helper_wrapper() -> None:
+        depth = int(trace_state.get("_spider_helper_wrapper_depth", 0)) - 1
+        if depth > 0:
+            trace_state["_spider_helper_wrapper_depth"] = depth
+        else:
+            trace_state.pop("_spider_helper_wrapper_depth", None)
 
     for name in helper_names:
         descriptor = inspect.getattr_static(helpers_cls, name, None)
@@ -725,7 +741,10 @@ def _attach_helper_trace(VerifiedDecoderAgent, trace_state: Dict[str, Any]) -> N
 
         def _make_wrapper(method_name, method, descriptor_kind):
             def _record(args, result, cost_before, cost_after):
-                if method_name in rollback_method_names:
+                if (
+                    method_name in rollback_method_names
+                    and int(trace_state.get("_spider_helper_wrapper_depth", 0)) == 1
+                ):
                     prefix = result[0] if isinstance(result, tuple) and result else result
                     if hasattr(prefix, "__len__"):
                         # Keep raw prefix objects private; only lengths enter events.
@@ -736,23 +755,37 @@ def _attach_helper_trace(VerifiedDecoderAgent, trace_state: Dict[str, Any]) -> N
 
             def _wrapped_instance(self, *args, **kwargs):
                 _align_pending_rollback(args)
-                cost_before = getattr(self, "cost", None)
-                result = method(self, *args, **kwargs)
-                cost_after = getattr(self, "cost", None)
-                _record(args, result, cost_before, cost_after)
-                return result
+                _enter_helper_wrapper()
+                try:
+                    cost_before = getattr(self, "cost", None)
+                    result = method(self, *args, **kwargs)
+                    cost_after = getattr(self, "cost", None)
+                    _record(args, result, cost_before, cost_after)
+                    return result
+                finally:
+                    _leave_helper_wrapper()
 
             def _wrapped_static(*args, **kwargs):
                 _align_pending_rollback(args)
-                result = method(*args, **kwargs)
-                _record(args, result, None, None)
-                return result
+                _enter_helper_wrapper()
+                try:
+                    result = method(*args, **kwargs)
+                    _record(args, result, None, None)
+                    return result
+                finally:
+                    _leave_helper_wrapper()
 
             def _wrapped_class(cls, *args, **kwargs):
                 _align_pending_rollback(args)
-                result = method(cls, *args, **kwargs)
-                _record(args, result, getattr(cls, "cost", None), getattr(cls, "cost", None))
-                return result
+                _enter_helper_wrapper()
+                try:
+                    cost_before = getattr(cls, "cost", None)
+                    result = method(cls, *args, **kwargs)
+                    cost_after = getattr(cls, "cost", None)
+                    _record(args, result, cost_before, cost_after)
+                    return result
+                finally:
+                    _leave_helper_wrapper()
 
             if descriptor_kind == "static":
                 return staticmethod(_wrapped_static)

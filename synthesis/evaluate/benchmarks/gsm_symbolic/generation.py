@@ -337,6 +337,7 @@ def run_crane_csd(
     if isinstance(trace_state, dict):
         trace_state["events"] = []
         trace_state.pop("_pending_spider_rollback_prefix", None)
+        trace_state.pop("_spider_helper_wrapper_depth", None)
 
     if valid_token_groups is not None:
         token_groups = valid_token_groups
@@ -470,6 +471,7 @@ def run_crane_csd(
                 _SPIDER_CONTRACT_LOG.info(
                     "[spider-output-contract] final_rollback_alignment applied=1"
                 )
+        trace_state.pop("_spider_helper_wrapper_depth", None)
     _finalize_spider_generation_evidence(
         lm,
         spider_prompt_active,

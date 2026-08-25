@@ -2318,3 +2318,163 @@ def test_spider_alignment_preserves_multi_piece_csd_chunks_and_drops_branch():
     lm._begin_generation_transaction(["abc"])
     assert lm._generation_token_ids == [1, 2, 3]
     assert lm._generation_alignment_removed_token_ids == [4]
+
+
+def test_spider_rollback_and_continue_nested_lifecycle_preserves_stable_ids(
+    _verified_csd_helpers,
+):
+    """Nested complete rollback must flush the outer full-prefix occurrence history."""
+    import sys
+    import types
+
+    from synthesis.evaluate.benchmarks.common.model_utils import _TensorizedLMBase
+    from synthesis.evaluate.benchmarks.gsm_symbolic.environment import (
+        _attach_helper_trace,
+    )
+    from synthesis.evaluate.benchmarks.gsm_symbolic.generation import (
+        _finalize_spider_generation_evidence,
+    )
+    from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
+        SpiderEvidenceContractError,
+    )
+    from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
+
+    class Dafny:
+        @staticmethod
+        def Seq(value):
+            return value
+
+        @staticmethod
+        def SeqWithoutIsStrInference(values):
+            return list(values)
+
+    class Tokenizer:
+        all_special_ids = {99}
+        eos_token_id = 99
+        eos_token = "eos"
+
+        def decode(self, token_ids, skip_special_tokens=False):
+            del skip_special_tokens
+            return "".join({1: "a", 2: "b", 3: "c", 99: "eos"}[int(token_id)] for token_id in token_ids)
+
+        def encode(self, text, add_special_tokens=False):
+            del add_special_tokens
+            return {"a": [1], "b": [2], "c": [3], "eos": [99]}.get(text, [])
+
+    class NestedParser:
+        def IsCompletePrefix(self, prefix):
+            return list(prefix) == ["b"]
+
+        def IsValidPrefix(self, prefix):
+            return True
+
+        def IsDeadPrefix(self, prefix):
+            return False
+
+    lm = _TensorizedLMBase(Dafny(), Tokenizer(), ["a", "b", "c", "eos"], [1, 2, 3, 99])
+    lm.Tokens = lm._Tokens
+    lm._structured_prompt = SpiderPromptParts(
+        "db_id: x\nquestion: q\n", model_name="Qwen/Qwen2.5-7B-Instruct"
+    )
+    lm._generation_stop_token_ids = {99}
+
+    def generate_logits(self, prefix):
+        begin_transaction = getattr(self, "_begin_generation_transaction", None)
+        if callable(begin_transaction):
+            begin_transaction(prefix)
+
+    lm.GenerateLogits = types.MethodType(generate_logits, lm)
+    lm.MaskValidNextAndEos = types.MethodType(lambda self, *args: None, lm)
+    lm.ChooseNextToken = types.MethodType(lambda self: "eos", lm)
+
+    helper = _verified_csd_helpers()
+    helper.ctor__()
+    verified = sys.modules["VerifiedDecoderAgent"]
+    trace_state = {"events": []}
+    _attach_helper_trace(verified, trace_state)
+    lm._record_generated_token_ids([1, 2, 3])
+
+    generated, current = helper.RollbackAndContinue(
+        lm,
+        NestedParser(),
+        ["a"],
+        ["a", "b", "c"],
+        ["b", "c"],
+        "eos",
+        2,
+        1,
+        1,
+    )
+
+    assert generated == ["a", "b"]
+    assert current == ["b"]
+    helper_names = [event["helper"] for event in trace_state["events"]]
+    assert helper_names[-3:] == [
+        "RollbackToCompletePrefix",
+        "DeadEndAvoidingStep",
+        "RollbackAndContinue",
+    ]
+    nested_event = trace_state["events"][-3]
+    assert nested_event["generated_len_before"] == 2
+    assert nested_event["generated_len_after"] == 1
+    outer_event = trace_state["events"][-1]
+    assert outer_event["generated_len_before"] == 3
+    assert outer_event["generated_len_after"] == 2
+    assert outer_event["current_len_before"] == 2
+    assert outer_event["current_len_after"] == 1
+
+    pending_prefix = trace_state.pop("_pending_spider_rollback_prefix", None)
+    assert pending_prefix == generated
+    lm._align_generation_history_to_prefix(pending_prefix)
+    try:
+        _finalize_spider_generation_evidence(
+            lm,
+            spider_prompt_active=True,
+            scored_output="ab",
+            strategy_token_sequence=generated,
+        )
+    except SpiderEvidenceContractError as exc:
+        pytest.fail(f"nested rollback strategy output aborted finalization: {exc}")
+
+    evidence = lm._last_generation_evidence
+    assert evidence["raw_token_ids"] == [1, 2]
+    assert evidence["raw_decoded_text"] == "ab"
+    assert evidence["strategy_removed_sampled_token_ids"] == [3]
+
+
+def test_helper_trace_preserves_classmethod_cost_transitions():
+    """Classmethod wrappers must record pre-call and post-call class cost."""
+    import types
+
+    from synthesis.evaluate.benchmarks.gsm_symbolic.environment import (
+        _attach_helper_trace,
+    )
+
+    class ClassMethodHelpers:
+        cost = 0
+
+        @classmethod
+        def RollbackToCompletePrefix(cls, parser, generated):
+            del parser
+            cls.cost += 1
+            return list(generated[:-1])
+
+    verified = types.SimpleNamespace(CSDHelpers=ClassMethodHelpers)
+    trace_state = {"events": []}
+    _attach_helper_trace(verified, trace_state)
+    parser = object()
+
+    class_result = ClassMethodHelpers.RollbackToCompletePrefix(parser, ["a", "b"])
+    instance_result = ClassMethodHelpers().RollbackToCompletePrefix(parser, ["a", "b"])
+
+    assert class_result == ["a"]
+    assert instance_result == ["a"]
+    events = [
+        event
+        for event in trace_state["events"]
+        if event["helper"] == "RollbackToCompletePrefix"
+    ]
+    assert [(event["cost_before"], event["cost_after"]) for event in events] == [
+        (0, 1),
+        (1, 2),
+    ]
