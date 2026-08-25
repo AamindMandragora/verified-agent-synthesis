@@ -829,6 +829,9 @@ class _TensorizedLMBase:
         self._generation_token_ids: list[int] = []
         self._generation_transaction_checkpoints: dict[str, list[int]] = {}
         self._active_generation_checkpoint_key: str | None = None
+        self._active_generation_checkpoint_prefix: str | None = None
+        self._active_generation_checkpoint_snapshot: list[int] | None = None
+        self._generation_transaction_rollback_restored = False
         self.instruction_text = ""
         self._task_guidance = _TaskGuidanceState()
         # Chat-template scaffolding so AppendTaskGuidance can inject the
@@ -977,6 +980,9 @@ class _TensorizedLMBase:
         self._generation_token_ids = []
         self._generation_transaction_checkpoints = {}
         self._active_generation_checkpoint_key = None
+        self._active_generation_checkpoint_prefix = None
+        self._active_generation_checkpoint_snapshot = None
+        self._generation_transaction_rollback_restored = False
         self._last_full_prompt = None
         self._tried_token_penalties.clear()
         self._penalty_instruction_key = None
@@ -1402,9 +1408,12 @@ class _TensorizedLMBase:
         """Clear per-example prefix checkpoints for sampled-ID provenance."""
         self._generation_transaction_checkpoints = {}
         self._active_generation_checkpoint_key = None
+        self._active_generation_checkpoint_prefix = None
+        self._active_generation_checkpoint_snapshot = None
+        self._generation_transaction_rollback_restored = False
 
     def _begin_generation_transaction(self, input_prefix) -> None:
-        """Checkpoint exact IDs before generating the next token at a prefix."""
+        """Checkpoint the current accepted IDs before generating at a prefix."""
         if getattr(self, "_structured_prompt", None) is None:
             return
         checkpoints = getattr(self, "_generation_transaction_checkpoints", None)
@@ -1414,31 +1423,55 @@ class _TensorizedLMBase:
         prefix_text = self._prefix_text(input_prefix)
         key = f"{self.instruction_text}\x00{prefix_text}"
         current = [int(token_id) for token_id in getattr(self, "_generation_token_ids", [])]
-        if key not in checkpoints:
-            checkpoints[key] = current
-        else:
-            committed = [int(token_id) for token_id in checkpoints[key]]
-            if current != committed:
-                self._generation_token_ids = committed
-                _SPIDER_CONTRACT_LOG.info(
-                    "[spider-output-contract] transaction_rollback prefix_chars=%d "
-                    "from_ids=%d to_ids=%d",
-                    len(prefix_text),
-                    len(current),
-                    len(committed),
+        previous_prefix = getattr(self, "_active_generation_checkpoint_prefix", None)
+        previous_snapshot = checkpoints.get(key)
+        rollback_already_restored = bool(
+            getattr(self, "_generation_transaction_rollback_restored", False)
+        )
+        rollback_revisit = (
+            previous_snapshot is not None
+            and not rollback_already_restored
+            and previous_prefix is not None
+            and current != previous_snapshot
+            and (
+                prefix_text == previous_prefix
+                or (
+                    len(prefix_text) < len(previous_prefix)
+                    and previous_prefix.startswith(prefix_text)
                 )
+            )
+        )
+        checkpoints[key] = current
+        if rollback_revisit:
+            active_snapshot = [int(token_id) for token_id in previous_snapshot]
+            _SPIDER_CONTRACT_LOG.info(
+                "[spider-output-contract] transaction_rollback_checkpoint "
+                "prefix_chars=%d active_prefix_chars=%d snapshot_ids=%d",
+                len(prefix_text),
+                len(previous_prefix),
+                len(active_snapshot),
+            )
+        else:
+            active_snapshot = current
         self._active_generation_checkpoint_key = key
+        self._active_generation_checkpoint_prefix = prefix_text
+        self._active_generation_checkpoint_snapshot = active_snapshot
+        self._generation_transaction_rollback_restored = False
 
     def _restore_generation_transaction(self) -> None:
-        """Restore the exact committed IDs at the active retry checkpoint."""
+        """Restore the active pre-choice snapshot for a real rollback callback."""
         if getattr(self, "_structured_prompt", None) is None:
             return
         key = getattr(self, "_active_generation_checkpoint_key", None)
         checkpoints = getattr(self, "_generation_transaction_checkpoints", {})
-        if key is None or key not in checkpoints:
+        snapshot = getattr(self, "_active_generation_checkpoint_snapshot", None)
+        if snapshot is None and key is not None:
+            snapshot = checkpoints.get(key)
+        if snapshot is None:
             return
-        committed = [int(token_id) for token_id in checkpoints[key]]
+        committed = [int(token_id) for token_id in snapshot]
         current = [int(token_id) for token_id in getattr(self, "_generation_token_ids", [])]
+        self._generation_transaction_rollback_restored = True
         if current == committed:
             return
         self._generation_token_ids = committed
@@ -1467,7 +1500,7 @@ class _TensorizedLMBase:
         )
 
     def _reconcile_generation_evidence(self, scored_output: str) -> bool:
-        """Reconcile the final score to sampled IDs or fail closed."""
+        """Validate the current committed history or fail closed."""
         if getattr(self, "_structured_prompt", None) is None:
             return True
 
@@ -1489,31 +1522,21 @@ class _TensorizedLMBase:
                 return str(self.tokenizer.decode(token_ids))
 
         content_history, terminal_ids = _split_terminal(history)
-        selected: list[int] | None = None
-        checkpoints = getattr(self, "_generation_transaction_checkpoints", {})
-        for checkpoint in checkpoints.values():
-            checkpoint_content, _ = _split_terminal([int(token_id) for token_id in checkpoint])
-            if _decode(checkpoint_content) == expected:
-                selected = checkpoint_content
-                break
-        if selected is None and _decode(content_history) == expected:
-            selected = content_history
-        if selected is None:
+        if _decode(content_history) != expected:
             _SPIDER_CONTRACT_LOG.error(
                 "[spider-output-contract] evidence_reconcile_failed history_ids=%d "
-                "checkpoint_count=%d scored_chars=%d",
+                "scored_chars=%d",
                 len(content_history),
-                len(checkpoints),
                 len(expected),
             )
             return False
 
-        self._generation_token_ids = selected + terminal_ids
+        self._generation_token_ids = content_history + terminal_ids
         _SPIDER_CONTRACT_LOG.info(
             "[spider-output-contract] evidence_reconciled committed_ids=%d "
             "removed_speculative_ids=%d terminal_ids=%d",
-            len(selected),
-            len(history) - len(selected),
+            len(content_history),
+            0,
             len(terminal_ids),
         )
         return True
@@ -2109,6 +2132,7 @@ def create_huggingface_lm(
             self._check_answer_early_stop(input_prefix)
             prefix_text = self._prefix_text(input_prefix)
             full_prompt = self.instruction_text + prefix_text
+            self._begin_generation_transaction(input_prefix)
 
             # Prefix-cache short-circuit
             if full_prompt == self._last_full_prompt and not self._logits_dirty:
@@ -2306,6 +2330,7 @@ def create_vllm_lm(
 
             prefix_text = self._prefix_text(input_prefix)
             full_prompt = self.instruction_text + prefix_text
+            self._begin_generation_transaction(input_prefix)
             sampling_params = SamplingParams(
                 max_tokens=max_new_tokens,
                 temperature=0.0,

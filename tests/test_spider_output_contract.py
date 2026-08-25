@@ -1475,3 +1475,296 @@ def test_spider_finalizer_propagates_false_reconcile_before_matching_full_decode
             spider_prompt_active=True,
             scored_output="ab",
         )
+
+def _spider_two_token_duplicate_helper_lm():
+    import types
+
+    import torch
+
+    from synthesis.evaluate.benchmarks.common.model_utils import _TensorizedLMBase
+    from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
+
+    class Dafny:
+        @staticmethod
+        def Seq(value):
+            return value
+
+        @staticmethod
+        def SeqWithoutIsStrInference(values):
+            return list(values)
+
+    class Tokenizer:
+        all_special_ids = {99}
+        eos_token_id = 99
+        eos_token = "eos"
+
+        def decode(self, token_ids, skip_special_tokens=False):
+            pieces = {1: "x", 2: "x", 3: "bad", 4: "good", 99: "eos"}
+            return "".join(pieces[int(token_id)] for token_id in token_ids)
+
+        def encode(self, text, add_special_tokens=False):
+            return {"x": [1], "bad": [3], "good": [4], "eos": [99]}.get(text, [])
+
+    lm = _TensorizedLMBase(
+        Dafny(),
+        Tokenizer(),
+        ["x", "x", "bad", "good", "eos"],
+        [1, 2, 3, 4, 99],
+    )
+    lm.Tokens = lm._Tokens
+    lm._structured_prompt = SpiderPromptParts(
+        "db_id: x\nquestion: q\n",
+        model_name="Qwen/Qwen2.5-1.5B-Instruct",
+    )
+    lm._generation_stop_token_ids = {99}
+    lm._test_generate_calls = 0
+
+    # First unit: [1, 3] -> x,bad. After rollback, retry unit: [2, 4] -> x,good.
+    sequence = [1, 3, 3, 2, 4, 99]
+
+    def generate_logits(self, prefix):
+        self._begin_generation_transaction(prefix)
+        call = self._test_generate_calls
+        self._test_generate_calls += 1
+        full_logits = torch.full((100,), -1e9)
+        full_logits[sequence[min(call, len(sequence) - 1)]] = 5.0
+        self._full_logits = full_logits
+        self._logits_tensor = self._full_logits[self._token_ids_tensor]
+        self.Logits.update_tensors(self._logits_tensor, self._full_logits)
+        self._apply_recurrence_penalty(self.instruction_text + self._prefix_text(prefix))
+        self._logits_dirty = False
+
+    lm.GenerateLogits = types.MethodType(generate_logits, lm)
+    lm.MaskValidNextAndEos = types.MethodType(lambda self, *args: None, lm)
+
+    def first_ungrounded(self, unit_tokens):
+        values = list(unit_tokens)
+        return (len(values) >= 2 and self._to_str(values[1]) == "bad", 1)
+
+    lm.FirstUngroundedIdentifierTokenIdx = types.MethodType(first_ungrounded, lm)
+    return lm
+
+
+class _TwoTokenParser(_HelperParser):
+    def IsCompletePrefix(self, prefix):
+        return len(prefix) >= 2
+
+    def CompletedSchemaSymbolCount(self, prefix):
+        return 2 if len(prefix) >= 2 else 0
+
+
+def test_spider_check_failure_two_token_retry_keeps_accepted_id_provenance(
+    _verified_csd_helpers,
+):
+    lm = _spider_two_token_duplicate_helper_lm()
+    helper = _verified_csd_helpers()
+    helper.ctor__()
+
+    result = helper.RegenerateUnitOnCheckFailure(
+        lm,
+        _TwoTokenParser(),
+        [],
+        [],
+        "eos",
+        6,
+        1,
+        1,
+        [["x", "good"]],
+    )
+
+    assert result == ["x", "good"]
+    evidence = _finalize_spider_scored_prefix(lm, scored_output="xgood")
+    assert evidence["raw_token_ids"] == [2, 4, 99]
+    assert evidence["decoded_text"] == "xgood"
+
+
+def test_spider_grounding_failure_two_token_retry_keeps_accepted_id_provenance(
+    _verified_csd_helpers,
+):
+    lm = _spider_two_token_duplicate_helper_lm()
+    helper = _verified_csd_helpers()
+    helper.ctor__()
+
+    result = helper.RegenerateUnitOnGroundingFailure(
+        lm,
+        _TwoTokenParser(),
+        [],
+        [],
+        "eos",
+        6,
+        1,
+        1,
+    )
+
+    assert result == ["x", "good"]
+    evidence = _finalize_spider_scored_prefix(lm, scored_output="xgood")
+    assert evidence["raw_token_ids"] == [2, 4, 99]
+    assert evidence["decoded_text"] == "xgood"
+
+
+def _factory_entry_lm(monkeypatch, backend, events):
+    import sys
+    import types
+
+    import torch
+
+    from synthesis.evaluate.benchmarks.common import model_utils
+    from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
+
+    class Tokenizer:
+        all_special_ids = {99}
+        eos_token_id = 99
+        eos_token = "eos"
+        generation_stop_token_ids = {99}
+
+        def __len__(self):
+            return 2
+
+        def decode(self, token_ids, skip_special_tokens=False):
+            return "".join({1: "x", 99: "eos"}[int(token_id)] for token_id in token_ids)
+
+        def encode(self, text, add_special_tokens=False):
+            return []
+
+    class Dafny:
+        @staticmethod
+        def Seq(value):
+            return value
+
+        @staticmethod
+        def SeqWithoutIsStrInference(values):
+            return list(values)
+
+    class VerifiedDecoderAgent:
+        class LM:
+            def __init__(self):
+                pass
+
+    tokenizer = Tokenizer()
+
+    if backend == "huggingface":
+        class FakeHFModel:
+            def eval(self):
+                return self
+
+            def __call__(self, input_ids=None, **kwargs):
+                events.append("backend")
+                seq_len = max(1, int(input_ids.shape[-1]))
+                logits = torch.zeros((1, seq_len, 100))
+                logits[:, -1, 1] = 1.0
+                return types.SimpleNamespace(logits=logits)
+
+            def generate(self, **kwargs):
+                events.append("backend")
+                input_ids = kwargs["input_ids"]
+                return torch.cat(
+                    [input_ids, torch.tensor([[1]], dtype=torch.long)],
+                    dim=1,
+                )
+
+        monkeypatch.setattr(model_utils, "load_runtime_tokenizer", lambda *args, **kwargs: tokenizer)
+        monkeypatch.setattr(
+            model_utils.AutoModelForCausalLM,
+            "from_pretrained",
+            lambda *args, **kwargs: FakeHFModel(),
+        )
+        monkeypatch.setattr(model_utils, "get_max_input_length", lambda *args, **kwargs: 64)
+        lm = model_utils.create_huggingface_lm(
+            model_name="Qwen/Qwen2.5-1.5B-Instruct",
+            device="cpu",
+            VerifiedDecoderAgent=VerifiedDecoderAgent,
+            _dafny=Dafny(),
+            token_ids=[1, 99],
+        )
+    else:
+        class _CudaNamedCpu(str):
+            def startswith(self, prefix):
+                return prefix == "cuda" or super().startswith(prefix)
+
+        class SamplingParams:
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+        class FakeEngine:
+            def generate(self, prompts, sampling_params, use_tqdm=False):
+                events.append("backend")
+                output = types.SimpleNamespace(
+                    token_ids=[1],
+                    logprobs=[{1: types.SimpleNamespace(logprob=0.0)}],
+                )
+                return [types.SimpleNamespace(outputs=[output])]
+
+        fake_vllm = types.ModuleType("vllm")
+        fake_vllm.SamplingParams = SamplingParams
+        monkeypatch.setitem(sys.modules, "vllm", fake_vllm)
+        monkeypatch.setattr(model_utils, "_configure_vllm_multiprocessing", lambda: None)
+        monkeypatch.setattr(model_utils, "resolve_vllm_tensor_parallel_size", lambda value: 1)
+        monkeypatch.setattr(
+            model_utils,
+            "_get_cached_vllm_engine",
+            lambda **kwargs: (FakeEngine(), tokenizer),
+        )
+        lm = model_utils.create_vllm_lm(
+            model_name="Qwen/Qwen2.5-1.5B-Instruct",
+            device=_CudaNamedCpu("cpu"),
+            VerifiedDecoderAgent=VerifiedDecoderAgent,
+            _dafny=Dafny(),
+            token_ids=[1, 99],
+        )
+
+    lm._structured_prompt = SpiderPromptParts(
+        "db_id: x\nquestion: q\n",
+        model_name="Qwen/Qwen2.5-1.5B-Instruct",
+    )
+    lm.instruction_text = "db_id: x\nquestion: q\n"
+    return lm
+
+
+def _assert_backend_entry_transaction_order(monkeypatch, backend, method_name):
+    events = []
+    lm = _factory_entry_lm(monkeypatch, backend, events)
+    original_begin = lm._begin_generation_transaction
+
+    def tracked_begin(prefix):
+        events.append("begin")
+        return original_begin(prefix)
+
+    monkeypatch.setattr(lm, "_begin_generation_transaction", tracked_begin)
+
+    if method_name == "GenerateLogits":
+        lm.GenerateLogits([])
+    else:
+        lm.GenerateUnconstrainedChunk([], 1, "<open>", "eos")
+
+    assert events[:2] == ["begin", "backend"]
+
+    if method_name == "GenerateLogits":
+        events.clear()
+        lm._last_full_prompt = lm.instruction_text
+        lm._logits_dirty = False
+        lm.GenerateLogits([])
+        assert events == ["begin"]
+
+
+def test_huggingface_constrained_entry_begins_transaction_before_cache(
+    monkeypatch,
+):
+    _assert_backend_entry_transaction_order(monkeypatch, "huggingface", "GenerateLogits")
+
+
+def test_huggingface_unconstrained_entry_begins_transaction_before_generation(
+    monkeypatch,
+):
+    _assert_backend_entry_transaction_order(
+        monkeypatch, "huggingface", "GenerateUnconstrainedChunk"
+    )
+
+
+def test_vllm_constrained_entry_begins_transaction_before_cache(monkeypatch):
+    _assert_backend_entry_transaction_order(monkeypatch, "vllm", "GenerateLogits")
+
+
+def test_vllm_unconstrained_entry_begins_transaction_before_generation(monkeypatch):
+    _assert_backend_entry_transaction_order(
+        monkeypatch, "vllm", "GenerateUnconstrainedChunk"
+    )
