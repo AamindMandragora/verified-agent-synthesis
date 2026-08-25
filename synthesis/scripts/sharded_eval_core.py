@@ -150,6 +150,12 @@ def merge_results(
         )
     if any(not isinstance(shard_slice, list) for shard_slice in planned_slices):
         raise ValueError("planned shard slices must be lists")
+    if any(
+        type(source_index) is not int
+        for shard_slice in planned_slices
+        for source_index in shard_slice
+    ):
+        raise ValueError("planned shard source indices must be strict integers")
     canonical_indices = [
         source_index
         for shard_slice in planned_slices
@@ -300,12 +306,11 @@ def merge_results(
                 raise ValueError(
                     f"shard {shard_index} provenance evaluated_source_indices is missing"
                 )
-            try:
-                declared_indices = [int(value) for value in declared]
-            except (TypeError, ValueError) as exc:
+            if any(type(value) is not int for value in declared):
                 raise ValueError(
-                    f"shard {shard_index} provenance source indices are invalid"
-                ) from exc
+                    f"shard {shard_index} provenance source indices must be strict integers"
+                )
+            declared_indices = list(declared)
             if declared_indices != row_source_indices:
                 raise ValueError(
                     f"shard {shard_index} provenance source indices do not match rows"
@@ -426,7 +431,12 @@ def run_sharded_reevaluation(
     indices_key = indices_key_for(dataset, split_name)
 
     split = json.loads(Path(split_file).read_text())
-    n = min(sample_size, len(split[indices_key]))
+    split_indices = split.get(indices_key)
+    if not isinstance(split_indices, list):
+        raise ValueError(f"split {indices_key} must be a list")
+    if any(type(source_index) is not int for source_index in split_indices):
+        raise ValueError(f"split {indices_key} must contain strict integers")
+    n = min(sample_size, len(split_indices))
 
     slots = detect_gpu_slots(workers_per_gpu, idle_util_threshold, min_free_mb)
     if not slots:

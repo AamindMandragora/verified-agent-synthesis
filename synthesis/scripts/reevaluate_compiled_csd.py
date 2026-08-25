@@ -16,24 +16,39 @@ from synthesis.run_constants import EVAL_EARLY_STOP_ON_ANSWER, SPLIT_FILE_BY_DAT
 def _evaluated_source_indices(
     dataset: str, evaluation_result: Any
 ) -> list[int]:
-    """Read source order from the rows that the Evaluator actually returned."""
+    """Read and validate every source-index alias from returned evaluator rows."""
+    dataset_alias = {
+        "spider": "spider_source_index",
+        "gsm_symbolic": "crane_source_index",
+    }.get(dataset)
+    aliases = ("source_index", dataset_alias) if dataset_alias else ("source_index",)
     samples = list(getattr(evaluation_result, "sample_outputs", ()) or ())
     indices: list[int] = []
     for evaluated_index, sample in enumerate(samples):
-        if dataset == "spider":
-            source_index = sample.get("spider_source_index")
-        elif dataset == "gsm_symbolic":
-            source_index = sample.get("crane_source_index")
-        else:
-            source_index = sample.get("source_index")
-        if source_index is None:
-            source_index = sample.get("source_index")
-        if source_index is None:
+        present: list[tuple[str, int]] = []
+        for key in aliases:
+            if key is None or key not in sample:
+                continue
+            value = sample[key]
+            if value is None:
+                continue
+            if type(value) is not int:
+                raise ValueError(
+                    f"reevaluation result row {evaluated_index} source alias "
+                    f"{key} must be a strict integer"
+                )
+            present.append((key, value))
+        if not present:
             raise ValueError(
                 "reevaluation result row "
                 f"{evaluated_index} has no resolved source index"
             )
-        indices.append(int(source_index))
+        resolved = present[0][1]
+        if any(value != resolved for _, value in present[1:]):
+            raise ValueError(
+                f"reevaluation result row {evaluated_index} source index aliases disagree"
+            )
+        indices.append(resolved)
     return indices
 
 

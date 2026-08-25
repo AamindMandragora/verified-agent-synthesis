@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 
@@ -287,3 +289,107 @@ def test_evaluator_sequential_rows_keep_resolved_spider_source_indices(monkeypat
     assert samples[0]["example_index"] == 0
     assert samples[0]["spider_source_index"] == 3
     assert samples[0]["source_index"] == 3
+
+
+def _source_alias_provenance_args(dataset, split_file):
+    return SimpleNamespace(
+        dataset=dataset,
+        eval_model="Qwen/Qwen2.5-7B-Instruct",
+        sample_size=1,
+        sample_offset=0,
+        max_steps=8,
+        step_token_budget=1,
+        smiles_classes=None,
+        spider_split_name="test",
+        spider_split_file=str(split_file),
+        gsm_split_name="test",
+        gsm_split_file=str(split_file),
+        provenance_cell_id=f"{dataset}-test",
+        provenance_manifest_commit="a" * 40,
+    )
+
+
+@pytest.mark.parametrize(
+    ("dataset", "dataset_alias"),
+    [("spider", "spider_source_index"), ("gsm_symbolic", "crane_source_index")],
+)
+def test_sequential_provenance_rejects_conflicting_source_aliases(
+    tmp_path, dataset, dataset_alias
+):
+    from synthesis.scripts.reevaluate_compiled_csd import build_reevaluation_provenance
+
+    compiled = tmp_path / "GeneratedCSD.py"
+    compiled.write_text("# frozen\n")
+    result = SimpleNamespace(
+        sample_outputs=[{"source_index": 3, dataset_alias: 4}],
+    )
+
+    with pytest.raises(ValueError, match="source index aliases disagree"):
+        build_reevaluation_provenance(
+            _source_alias_provenance_args(dataset, tmp_path / "split.json"),
+            compiled,
+            evaluation_result=result,
+        )
+
+
+@pytest.mark.parametrize(
+    ("dataset", "bad_key", "bad_value"),
+    [
+        ("spider", "source_index", "3"),
+        ("spider", "spider_source_index", 3.0),
+        ("spider", "spider_source_index", True),
+        ("gsm_symbolic", "source_index", 3.0),
+        ("gsm_symbolic", "crane_source_index", "3"),
+        ("gsm_symbolic", "crane_source_index", True),
+    ],
+)
+def test_sequential_provenance_rejects_non_integer_source_aliases(
+    tmp_path, dataset, bad_key, bad_value
+):
+    from synthesis.scripts.reevaluate_compiled_csd import build_reevaluation_provenance
+
+    compiled = tmp_path / "GeneratedCSD.py"
+    compiled.write_text("# frozen\n")
+    dataset_alias = "spider_source_index" if dataset == "spider" else "crane_source_index"
+    row = {"source_index": 3, dataset_alias: 3}
+    row[bad_key] = bad_value
+    result = SimpleNamespace(sample_outputs=[row])
+
+    with pytest.raises(ValueError, match="source alias|integer"):
+        build_reevaluation_provenance(
+            _source_alias_provenance_args(dataset, tmp_path / "split.json"),
+            compiled,
+            evaluation_result=result,
+        )
+
+
+@pytest.mark.parametrize(
+    ("dataset", "dataset_alias"),
+    [("spider", "spider_source_index"), ("gsm_symbolic", "crane_source_index")],
+)
+def test_sequential_provenance_accepts_equal_aliases_and_optional_none(
+    tmp_path, dataset, dataset_alias
+):
+    from synthesis.scripts.reevaluate_compiled_csd import build_reevaluation_provenance
+
+    compiled = tmp_path / "GeneratedCSD.py"
+    compiled.write_text("# frozen\n")
+    equal_result = SimpleNamespace(
+        sample_outputs=[{"source_index": 3, dataset_alias: 3}],
+    )
+    equal_provenance = build_reevaluation_provenance(
+        _source_alias_provenance_args(dataset, tmp_path / "split.json"),
+        compiled,
+        evaluation_result=equal_result,
+    )
+    assert equal_provenance["evaluated_source_indices"] == [3]
+
+    optional_none_result = SimpleNamespace(
+        sample_outputs=[{"source_index": 3, dataset_alias: None}],
+    )
+    optional_none_provenance = build_reevaluation_provenance(
+        _source_alias_provenance_args(dataset, tmp_path / "split.json"),
+        compiled,
+        evaluation_result=optional_none_result,
+    )
+    assert optional_none_provenance["evaluated_source_indices"] == [3]

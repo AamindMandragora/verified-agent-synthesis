@@ -15,8 +15,11 @@ class _ShardProcess:
     missing_provenance_shard = None
     dataset = "spider"
     alias_mode = "equal"
+    provenance_source_mode = None
+    spawn_count = 0
 
     def __init__(self, command, stdout=None, stderr=None, env=None):
+        type(self).spawn_count += 1
         del stdout, stderr, env
         output_path = Path(command[command.index("--output-json") + 1])
         shard_index = int(output_path.stem.removeprefix("part"))
@@ -93,6 +96,13 @@ class _ShardProcess:
             "spider_split_name": "test" if dataset == "spider" else None,
             "bar_split_name": None,
         }
+        provenance_indices = list(rows)
+        if self.provenance_source_mode == "string":
+            provenance_indices[0] = str(provenance_indices[0])
+        elif self.provenance_source_mode == "float":
+            provenance_indices[0] = float(provenance_indices[0])
+        elif self.provenance_source_mode == "bool" and shard_index == 0:
+            provenance_indices[0] = True
         output_path.write_text(
             json.dumps(
                 {
@@ -126,7 +136,7 @@ class _ShardProcess:
                             "spider_split_name": "test"
                             if dataset == "spider"
                             else None,
-                            "evaluated_source_indices": rows,
+                            "evaluated_source_indices": provenance_indices,
                             "compiled_csd_path": "/compiled/GeneratedCSD.py",
                             "compiled_csd_sha256": "aaa",
                             "eval_model": "Qwen/Qwen2.5-7B-Instruct",
@@ -173,6 +183,8 @@ def _run_sharded(
     missing_provenance_shard=None,
     dataset="spider",
     alias_mode="equal",
+    provenance_source_mode=None,
+    planned_indices=None,
 ):
     from synthesis.scripts import sharded_eval_core
 
@@ -180,7 +192,11 @@ def _run_sharded(
     split_path.write_text(
         json.dumps(
             {
-                "test_indices": [3, 8, 9, 15],
+                "test_indices": (
+                    planned_indices
+                    if planned_indices is not None
+                    else [3, 8, 9, 15]
+                ),
                 "test_size": 4,
                 "train_indices": [100],
                 "train_size": 1,
@@ -197,6 +213,8 @@ def _run_sharded(
     _ShardProcess.missing_provenance_shard = missing_provenance_shard
     _ShardProcess.dataset = dataset
     _ShardProcess.alias_mode = alias_mode
+    _ShardProcess.provenance_source_mode = provenance_source_mode
+    _ShardProcess.spawn_count = 0
     monkeypatch.setattr(sharded_eval_core, "detect_gpu_slots", lambda *args, **kwargs: [0, 1])
     monkeypatch.setattr(sharded_eval_core.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(sharded_eval_core.subprocess, "Popen", _ShardProcess)
@@ -382,6 +400,33 @@ def test_run_sharded_reevaluation_accepts_equal_multi_alias_rows(
     assert [
         row["spider_source_index"] for row in payload["reevaluation_sample_evidence"]
     ] == [3, 9, 15]
+
+
+@pytest.mark.parametrize("bad_value", ["3", 3.0, True])
+def test_run_sharded_reevaluation_rejects_non_integer_planned_indices_before_spawn(
+    monkeypatch, tmp_path, bad_value
+):
+    with pytest.raises(ValueError):
+        _run_sharded(
+            monkeypatch,
+            tmp_path,
+            planned_indices=[bad_value, 8, 9, 15],
+        )
+    assert _ShardProcess.spawn_count == 0
+
+
+@pytest.mark.parametrize("provenance_source_mode", ["string", "float", "bool"])
+def test_run_sharded_reevaluation_rejects_non_integer_provenance_indices(
+    monkeypatch, tmp_path, provenance_source_mode
+):
+    kwargs = {"provenance_source_mode": provenance_source_mode}
+    if provenance_source_mode == "bool":
+        kwargs.update(
+            rows_by_shard={0: [1], 1: [9, 15]},
+            planned_indices=[1, 8, 9, 15],
+        )
+    with pytest.raises(ValueError):
+        _run_sharded(monkeypatch, tmp_path, **kwargs)
 
 
 class _GuidanceTokenizer:
