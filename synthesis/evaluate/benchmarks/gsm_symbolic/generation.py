@@ -33,7 +33,16 @@ def _finalize_spider_generation_evidence(
     if scored_output is not None:
         reconcile = getattr(lm, "_reconcile_generation_evidence", None)
         if callable(reconcile):
-            reconcile(str(scored_output))
+            reconciled = reconcile(str(scored_output))
+            if reconciled is False:
+                _SPIDER_CONTRACT_LOG.error(
+                    "[spider-output-contract] evidence_reconcile_failed "
+                    "reason=sampled_ids_do_not_match scored_chars=%d",
+                    len(str(scored_output)),
+                )
+                raise SpiderEvidenceContractError(
+                    "Spider committed token evidence does not match scored output"
+                )
     finalizer = getattr(lm, "_finalize_generation_evidence", None)
     if callable(finalizer) and finalizer() is not None:
         evidence = getattr(lm, "_last_generation_evidence", None)
@@ -292,6 +301,8 @@ def run_crane_csd(
         for _attempt in range(cars_steps):
             if spider_prompt_active and hasattr(lm, "_generation_token_ids"):
                 lm._generation_token_ids = []
+                if hasattr(lm, "_reset_generation_transactions"):
+                    lm._reset_generation_transactions()
             if os.environ.get("CSD_PARITY_SEED_PER_ATTEMPT", "0") == "1":
                 _raw = os.environ.get("CSD_PARITY_SEED", "").strip()
                 if _raw:

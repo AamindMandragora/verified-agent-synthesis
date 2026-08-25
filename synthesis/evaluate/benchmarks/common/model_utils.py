@@ -827,6 +827,8 @@ class _TensorizedLMBase:
         self.model_name: str | None = None
         self._generation_stop_token_ids = _default_generation_stop_token_ids(tokenizer)
         self._generation_token_ids: list[int] = []
+        self._generation_transaction_checkpoints: dict[str, list[int]] = {}
+        self._active_generation_checkpoint_key: str | None = None
         self.instruction_text = ""
         self._task_guidance = _TaskGuidanceState()
         # Chat-template scaffolding so AppendTaskGuidance can inject the
@@ -973,6 +975,8 @@ class _TensorizedLMBase:
         self.instruction_text = ""
         self._last_generation_evidence = None
         self._generation_token_ids = []
+        self._generation_transaction_checkpoints = {}
+        self._active_generation_checkpoint_key = None
         self._last_full_prompt = None
         self._tried_token_penalties.clear()
         self._penalty_instruction_key = None
@@ -1147,6 +1151,7 @@ class _TensorizedLMBase:
         previously-tried next-token at a rolled-back trace position). Fair: uses
         only previously-tried tokens — no gold labels, no execution feedback.
         """
+        self._restore_generation_transaction()
         indices = self._token_indices_for_token(token)
         if not indices:
             # Token not in the constrained subset vocab — nothing to penalize.
@@ -1393,6 +1398,56 @@ class _TensorizedLMBase:
         token_ids = self.tokenizer.encode(text, add_special_tokens=False)
         return [self._token_str_from_id(token_id) for token_id in token_ids]
 
+    def _reset_generation_transactions(self) -> None:
+        """Clear per-example prefix checkpoints for sampled-ID provenance."""
+        self._generation_transaction_checkpoints = {}
+        self._active_generation_checkpoint_key = None
+
+    def _begin_generation_transaction(self, input_prefix) -> None:
+        """Checkpoint exact IDs before generating the next token at a prefix."""
+        if getattr(self, "_structured_prompt", None) is None:
+            return
+        checkpoints = getattr(self, "_generation_transaction_checkpoints", None)
+        if not isinstance(checkpoints, dict):
+            checkpoints = {}
+            self._generation_transaction_checkpoints = checkpoints
+        prefix_text = self._prefix_text(input_prefix)
+        key = f"{self.instruction_text}\x00{prefix_text}"
+        current = [int(token_id) for token_id in getattr(self, "_generation_token_ids", [])]
+        if key not in checkpoints:
+            checkpoints[key] = current
+        else:
+            committed = [int(token_id) for token_id in checkpoints[key]]
+            if current != committed:
+                self._generation_token_ids = committed
+                _SPIDER_CONTRACT_LOG.info(
+                    "[spider-output-contract] transaction_rollback prefix_chars=%d "
+                    "from_ids=%d to_ids=%d",
+                    len(prefix_text),
+                    len(current),
+                    len(committed),
+                )
+        self._active_generation_checkpoint_key = key
+
+    def _restore_generation_transaction(self) -> None:
+        """Restore the exact committed IDs at the active retry checkpoint."""
+        if getattr(self, "_structured_prompt", None) is None:
+            return
+        key = getattr(self, "_active_generation_checkpoint_key", None)
+        checkpoints = getattr(self, "_generation_transaction_checkpoints", {})
+        if key is None or key not in checkpoints:
+            return
+        committed = [int(token_id) for token_id in checkpoints[key]]
+        current = [int(token_id) for token_id in getattr(self, "_generation_token_ids", [])]
+        if current == committed:
+            return
+        self._generation_token_ids = committed
+        _SPIDER_CONTRACT_LOG.info(
+            "[spider-output-contract] callback_rollback from_ids=%d to_ids=%d",
+            len(current),
+            len(committed),
+        )
+
     def _record_generated_token_ids(self, token_ids) -> None:
         if getattr(self, "_structured_prompt", None) is None:
             return
@@ -1412,16 +1467,20 @@ class _TensorizedLMBase:
         )
 
     def _reconcile_generation_evidence(self, scored_output: str) -> bool:
-        """Keep only sampled IDs that form the final committed Spider output."""
+        """Reconcile the final score to sampled IDs or fail closed."""
         if getattr(self, "_structured_prompt", None) is None:
             return True
 
         expected = str(scored_output)
         history = [int(token_id) for token_id in getattr(self, "_generation_token_ids", [])]
         stop_ids = self._generation_stop_ids()
-        terminal_ids: list[int] = []
-        while history and history[-1] in stop_ids:
-            terminal_ids.insert(0, history.pop())
+
+        def _split_terminal(token_ids: list[int]) -> tuple[list[int], list[int]]:
+            content = list(token_ids)
+            terminal: list[int] = []
+            while content and content[-1] in stop_ids:
+                terminal.insert(0, content.pop())
+            return content, terminal
 
         def _decode(token_ids: list[int]) -> str:
             try:
@@ -1429,29 +1488,25 @@ class _TensorizedLMBase:
             except TypeError:
                 return str(self.tokenizer.decode(token_ids))
 
-        selected: list[int] = []
-        remaining = len(expected)
-        for token_id in reversed(history):
-            token_text = self._token_str_from_id(token_id)
-            if token_text and expected[:remaining].endswith(token_text):
-                selected.append(token_id)
-                remaining -= len(token_text)
-        selected.reverse()
-        if remaining or _decode(selected) != expected:
-            try:
-                encoded = self.tokenizer.encode(expected, add_special_tokens=False)
-            except TypeError:
-                encoded = self.tokenizer.encode(expected)
-            selected = [int(token_id) for token_id in encoded]
-            if _decode(selected) != expected:
-                _SPIDER_CONTRACT_LOG.error(
-                    "[spider-output-contract] evidence_reconcile_failed history_ids=%d "
-                    "selected_ids=%d scored_chars=%d",
-                    len(history),
-                    len(selected),
-                    len(expected),
-                )
-                return False
+        content_history, terminal_ids = _split_terminal(history)
+        selected: list[int] | None = None
+        checkpoints = getattr(self, "_generation_transaction_checkpoints", {})
+        for checkpoint in checkpoints.values():
+            checkpoint_content, _ = _split_terminal([int(token_id) for token_id in checkpoint])
+            if _decode(checkpoint_content) == expected:
+                selected = checkpoint_content
+                break
+        if selected is None and _decode(content_history) == expected:
+            selected = content_history
+        if selected is None:
+            _SPIDER_CONTRACT_LOG.error(
+                "[spider-output-contract] evidence_reconcile_failed history_ids=%d "
+                "checkpoint_count=%d scored_chars=%d",
+                len(content_history),
+                len(checkpoints),
+                len(expected),
+            )
+            return False
 
         self._generation_token_ids = selected + terminal_ids
         _SPIDER_CONTRACT_LOG.info(
@@ -1578,6 +1633,7 @@ class _TensorizedLMBase:
 
     def MaskToken(self, token):
         with _timed("MaskToken"):
+            self._restore_generation_transaction()
             # All-index: a runtime "token" is tokenizer.decode([id]), so two
             # vocab ids can decode to the SAME string. Masking only TokenToId's
             # first match leaves duplicate copies samplable, which defeats
@@ -2124,6 +2180,7 @@ def create_huggingface_lm(
 
             prefix_text = self._prefix_text(input_prefix)
             full_prompt = self.instruction_text + prefix_text
+            self._begin_generation_transaction(input_prefix)
             id_list = self._full_input_ids(input_prefix)
             if len(id_list) > self._max_input_len:
                 id_list = id_list[-self._max_input_len :]
@@ -2200,6 +2257,7 @@ def create_vllm_lm(
                 with _timed("GenerateLogits.prefix_text"):
                     prefix_text = self._prefix_text(input_prefix)
                     full_prompt = self.instruction_text + prefix_text
+                    self._begin_generation_transaction(input_prefix)
 
                 # Prefix-cache short-circuit
                 if full_prompt == self._last_full_prompt and not self._logits_dirty:
