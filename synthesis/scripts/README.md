@@ -24,7 +24,10 @@ delivery contract. Prompt records contain only renderer mode, booleans, and
 lengths; they never contain prompt or schema bodies. The reevaluation
 provenance records the requested sample offset and the exact source-index
 order returned by Evaluator, so smoke and pilot slices cannot claim a
-different list.
+different list. Sharded reevaluation applies the same contract: it merges
+answers and evidence in shard order, assigns global evaluated indices, combines
+only the source indices actually returned before an early stop, canonicalizes
+the split provenance, and fails closed on answer/evidence/source misalignment.
 
 ## See also
 

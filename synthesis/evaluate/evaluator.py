@@ -2711,6 +2711,13 @@ class Evaluator:
                 },
             )
             # endregion
+            if self.dataset_name == "spider":
+                # Read the published evidence once after a late generation
+                # failure; the count below must describe this same object.
+                generation_token_evidence = getattr(
+                    env.get("lm"), "_last_generation_evidence", None
+                )
+                prompt_contract = getattr(env.get("lm"), "_last_prompt_contract", None)
             sample = {
                 "question": q_str,
                 "question_full": q_full,
@@ -2740,11 +2747,9 @@ class Evaluator:
                     and elapsed > self.max_seconds_per_example
                 ),
                 "generation_token_evidence": (
-                    getattr(env.get("lm"), "_last_generation_evidence", None)
-                    if self.dataset_name == "spider"
-                    else None
+                    generation_token_evidence if self.dataset_name == "spider" else None
                 ),
-                "prompt_contract": getattr(env.get("lm"), "_last_prompt_contract", None),
+                "prompt_contract": prompt_contract,
                 "removed_terminal_token_count": (
                     len((generation_token_evidence or {}).get("removed_terminal_token_ids", ()))
                     if self.dataset_name == "spider"

@@ -25,6 +25,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 LOG = "[sharded-eval]"
 
@@ -91,25 +92,160 @@ def slice_split(split: dict, indices_key: str, lo: int, hi: int) -> dict:
     return out
 
 
-def merge_results(parts: list[dict]) -> dict:
+def _row_source_index(row: dict[str, Any]) -> int | None:
+    for key in ("source_index", "spider_source_index", "crane_source_index"):
+        value = row.get(key)
+        if value is not None:
+            return int(value)
+    return None
+
+
+def merge_results(
+    parts: list[dict],
+    *,
+    dataset: str,
+    split_file: str,
+    split_name: str,
+    canonical_indices: list[int],
+) -> dict:
+    """Merge shard rows without inventing results for early-stopped shards."""
     if not parts:
         raise ValueError("no shard results to merge")
-    answers = [a for p in parts for a in p["answers"]]
-    n = len(answers)
+    if len(set(canonical_indices)) != len(canonical_indices):
+        raise ValueError("canonical split contains duplicate source indices")
+    canonical_set = set(canonical_indices)
+    answers: list[dict[str, Any]] = []
+    evidence_rows: list[dict[str, Any]] = []
+    actual_source_indices: list[int] = []
+    seen_source_indices: set[int] = set()
+    split_file_key = f"{dataset.split('_')[0]}_split_file"
+    split_name_key = f"{dataset.split('_')[0]}_split_name"
+    canonical_split_file = str(Path(split_file).resolve())
+    first_eval_split: dict[str, Any] | None = None
+    first_provenance: dict[str, Any] = {}
+
+    for shard_index, part in enumerate(parts):
+        shard_answers = part.get("answers")
+        shard_evidence = part.get("reevaluation_sample_evidence")
+        if not isinstance(shard_answers, list):
+            raise ValueError(f"shard {shard_index} answers must be a list")
+        if not isinstance(shard_evidence, list):
+            raise ValueError(f"shard {shard_index} evidence must be a list")
+        if len(shard_answers) != len(shard_evidence):
+            raise ValueError(
+                f"shard {shard_index} evidence count does not match answers count"
+            )
+
+        eval_split = part.get("eval_split")
+        if not isinstance(eval_split, dict):
+            raise ValueError(f"shard {shard_index} is missing eval_split provenance")
+        if first_eval_split is None:
+            first_eval_split = dict(eval_split)
+        elif eval_split.get("bar_split_name") != first_eval_split.get("bar_split_name"):
+            raise ValueError("shard split provenance bar_split_name mismatch")
+        if eval_split.get(split_name_key) != split_name:
+            raise ValueError(
+                f"shard {shard_index} split name does not match canonical {split_name!r}"
+            )
+
+        provenance = part.get("reevaluation_provenance")
+        if provenance is not None:
+            if not isinstance(provenance, dict):
+                raise ValueError(f"shard {shard_index} reevaluation provenance is invalid")
+            if provenance.get("dataset") not in (None, dataset):
+                raise ValueError(f"shard {shard_index} dataset provenance mismatch")
+            if provenance.get(split_name_key) not in (None, split_name):
+                raise ValueError(f"shard {shard_index} split provenance mismatch")
+            if shard_index == 0:
+                first_provenance = dict(provenance)
+
+        row_source_indices: list[int] = []
+        for local_index, (answer, evidence) in enumerate(
+            zip(shard_answers, shard_evidence)
+        ):
+            if not isinstance(answer, dict) or not isinstance(evidence, dict):
+                raise ValueError(f"shard {shard_index} rows must be objects")
+            answer_source = _row_source_index(answer)
+            evidence_source = _row_source_index(evidence)
+            if answer_source is None or evidence_source is None:
+                raise ValueError(
+                    f"shard {shard_index} row {local_index} lacks source index"
+                )
+            if answer_source != evidence_source:
+                raise ValueError(
+                    f"shard {shard_index} row {local_index} answer/evidence source mismatch"
+                )
+            if answer_source not in canonical_set:
+                raise ValueError(
+                    f"shard {shard_index} row {local_index} source index is outside canonical split"
+                )
+            if answer_source in seen_source_indices:
+                raise ValueError(
+                    f"duplicate evaluated source index {answer_source} across shards"
+                )
+            seen_source_indices.add(answer_source)
+            row_source_indices.append(answer_source)
+            global_index = len(answers)
+            answer_copy = dict(answer)
+            answer_copy["example_index"] = global_index
+            evidence_copy = dict(evidence)
+            evidence_copy["evaluated_index"] = global_index
+            answers.append(answer_copy)
+            evidence_rows.append(evidence_copy)
+            actual_source_indices.append(answer_source)
+
+        if provenance is not None and "evaluated_source_indices" in provenance:
+            declared = [int(value) for value in provenance["evaluated_source_indices"]]
+            if declared != row_source_indices:
+                raise ValueError(
+                    f"shard {shard_index} provenance source indices do not match rows"
+                )
+
+    if not answers:
+        raise ValueError("no evaluated shard answers")
+    if first_eval_split is None:
+        raise ValueError("missing canonical split provenance")
+    canonical_eval_split = dict(first_eval_split)
+    canonical_eval_split["gsm_split_file"] = (
+        canonical_split_file if dataset == "gsm_symbolic" else None
+    )
+    canonical_eval_split["gsm_split_name"] = split_name if dataset == "gsm_symbolic" else None
+    canonical_eval_split["spider_split_file"] = (
+        canonical_split_file if dataset == "spider" else None
+    )
+    canonical_eval_split["spider_split_name"] = split_name if dataset == "spider" else None
+
+    merged_provenance = dict(first_provenance)
+    merged_provenance["dataset"] = dataset
+    merged_provenance["evaluated_source_indices"] = actual_source_indices
+    merged_provenance["sample_size"] = len(canonical_indices)
+    merged_provenance["sample_offset"] = 0
+    merged_provenance["gsm_split_file"] = (
+        canonical_split_file if dataset == "gsm_symbolic" else None
+    )
+    merged_provenance["gsm_split_name"] = split_name if dataset == "gsm_symbolic" else None
+    merged_provenance["spider_split_file"] = (
+        canonical_split_file if dataset == "spider" else None
+    )
+    merged_provenance["spider_split_name"] = split_name if dataset == "spider" else None
+
     merged_metrics = {
         "num_shards": len(parts),
         "shard_sizes": [len(p["answers"]) for p in parts],
     }
     print(
         f"{LOG} merge: {len(parts)} shard(s), sizes {merged_metrics['shard_sizes']} "
-        f"-> {n} example(s) total",
+        f"-> {len(answers)} example(s) total",
         flush=True,
     )
     return {
-        "accuracy": sum(bool(a["is_correct"]) for a in answers) / n,
-        "syntax_rate": sum(bool(a["is_syntax_valid"]) for a in answers) / n,
+        "accuracy": sum(bool(a.get("is_correct")) for a in answers) / len(answers),
+        "syntax_rate": sum(bool(a.get("is_syntax_valid")) for a in answers) / len(answers),
         "metrics": merged_metrics,
         "answers": answers,
+        "eval_split": canonical_eval_split,
+        "reevaluation_sample_evidence": evidence_rows,
+        "reevaluation_provenance": merged_provenance,
     }
 
 
@@ -221,7 +357,13 @@ def run_sharded_reevaluation(
               f"NOT writing merged output.", flush=True)
         return 1
 
-    merged = merge_results(parts)
+    merged = merge_results(
+        parts,
+        dataset=dataset,
+        split_file=split_file,
+        split_name=split_name,
+        canonical_indices=list(split[indices_key][:n]),
+    )
     out_base.write_text(json.dumps(merged, indent=1))
     print(f"{LOG} merged {len(merged['answers'])} examples -> {out_base} "
           f"acc={merged['accuracy']:.4f} syn={merged['syntax_rate']:.4f}", flush=True)

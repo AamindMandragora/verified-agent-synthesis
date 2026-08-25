@@ -1217,10 +1217,23 @@ class _TensorizedLMBase:
         if self._structured_prompt is not None:
             candidate = self._structured_prompt.with_guidance(text)
             try:
-                rendered = candidate.render_for_model(
-                    self.tokenizer,
-                    model_name=self.model_name,
+                render_with_contract = getattr(
+                    candidate, "render_for_model_with_contract", None
                 )
+                if callable(render_with_contract):
+                    rendered, prompt_contract = render_with_contract(
+                        self.tokenizer,
+                        model_name=self.model_name,
+                    )
+                else:
+                    rendered = candidate.render_for_model(
+                        self.tokenizer,
+                        model_name=self.model_name,
+                    )
+                    prompt_contract = dict(self._last_prompt_contract or {})
+                    prompt_contract.setdefault("renderer", "structured")
+                    prompt_contract["render_succeeded"] = True
+                    prompt_contract["prompt_chars"] = len(rendered)
             except SpiderPromptRenderError:
                 raise
             except Exception as exc:
@@ -1233,6 +1246,7 @@ class _TensorizedLMBase:
                 ) from exc
             self._structured_prompt = candidate
             self.instruction_text = rendered
+            self._last_prompt_contract = prompt_contract
             self._task_guidance.accepted_guidance = text
             _GROUNDING_LOG.info(
                 "[spider-prompt] guidance_rebuild mode=structured model_family=%s "
@@ -1267,6 +1281,7 @@ class _TensorizedLMBase:
             identity = (
                 self.model_name or ""
             ).lower().replace("-", "_").replace(".", "_")
+            template_fallback = False
             try:
                 if "qwen3_5" in identity or "qwen35" in identity:
                     rendered = self.tokenizer.apply_chat_template(
@@ -1284,6 +1299,7 @@ class _TensorizedLMBase:
                             enable_thinking=False,
                         )
                     except TypeError:
+                        template_fallback = True
                         rendered = self.tokenizer.apply_chat_template(
                             messages,
                             tokenize=False,
@@ -1299,8 +1315,27 @@ class _TensorizedLMBase:
                 raise SpiderPromptRenderError(
                     "Task guidance could not rebuild the registered chat prompt"
                 ) from exc
+            prompt_contract = dict(self._last_prompt_contract or {})
+            prompt_contract.update(
+                {
+                    "renderer": prompt_contract.get("renderer", "legacy"),
+                    "mode": "chat",
+                    "template_used": True,
+                    "raw_prompt": False,
+                    "chat_message_count": len(messages),
+                    "user_message_count": sum(
+                        1 for message in messages if message.get("role") == "user"
+                    ),
+                    "add_generation_prompt": True,
+                    "enable_thinking": None if template_fallback else False,
+                    "template_fallback": template_fallback,
+                    "render_succeeded": True,
+                    "prompt_chars": len(rendered),
+                }
+            )
             self._chat_messages = messages
             self.instruction_text = rendered
+            self._last_prompt_contract = prompt_contract
             self._task_guidance.accepted_guidance = text
             _GROUNDING_LOG.info(
                 "[spider-prompt] guidance_rebuild mode=chat model_family=%s "

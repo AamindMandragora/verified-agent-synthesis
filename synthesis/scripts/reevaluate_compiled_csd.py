@@ -65,12 +65,23 @@ def build_reevaluation_provenance(
             }
         )
         if args.dataset == "spider":
+            resolved_split_file = getattr(args, "spider_split_file", None)
+            if resolved_split_file is None:
+                resolved_split_file = SPLIT_FILE_BY_DATASET["spider"]
             provenance.update(
                 {
-                    "spider_split_file": str(args.spider_split_file)
-                    if getattr(args, "spider_split_file", None) is not None
-                    else None,
+                    "spider_split_file": str(resolved_split_file),
                     "spider_split_name": getattr(args, "spider_split_name", None),
+                }
+            )
+        elif args.dataset == "gsm_symbolic":
+            resolved_split_file = getattr(args, "gsm_split_file", None)
+            if resolved_split_file is None:
+                resolved_split_file = SPLIT_FILE_BY_DATASET["gsm_symbolic"]
+            provenance.update(
+                {
+                    "gsm_split_file": str(resolved_split_file),
+                    "gsm_split_name": getattr(args, "gsm_split_name", None),
                 }
             )
     return provenance
@@ -175,6 +186,10 @@ def main() -> None:
 
     gsm_split_file = args.gsm_split_file or SPLIT_FILE_BY_DATASET["gsm_symbolic"]
     spider_split_file = args.spider_split_file or SPLIT_FILE_BY_DATASET["spider"]
+    # Bind the resolved canonical path onto args so provenance and evaluator
+    # output cannot diverge when the CLI omitted an override.
+    args.gsm_split_file = gsm_split_file
+    args.spider_split_file = spider_split_file
 
     if args.dataset == "gsm_symbolic" and args.gsm_split_name is None:
         args.gsm_split_name = babysitter_smoke_split_fallback(args.output_json)

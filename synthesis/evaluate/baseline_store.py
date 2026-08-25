@@ -154,9 +154,12 @@ def build_reevaluation_sample_evidence(
         error_status = sample.get("error_status")
         if error_status is None and sample.get("error"):
             error_status = "failed"
-        removed_count = sample.get("removed_terminal_token_count")
-        if removed_count is None and token_evidence is not None:
+        if token_evidence is not None:
+            # The token evidence is authoritative; never export a conflicting
+            # caller-provided count.
             removed_count = len(removed_terminal_ids)
+        else:
+            removed_count = sample.get("removed_terminal_token_count")
         evidence_rows.append(
             {
                 "evaluated_index": evaluated_index,
