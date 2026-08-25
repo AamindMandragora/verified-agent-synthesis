@@ -576,6 +576,9 @@ def test_evaluator_late_generation_error_uses_published_token_evidence_for_count
             "raw_decoded_text": "SELECT 1<eos>",
             "removed_terminal_token_ids": [2],
             "decoded_text": "SELECT 1",
+            "strategy_output_relation": "mixed",
+            "strategy_mutation": True,
+            "strategy_removed_sampled_token_ids": [],
         }
         raise RuntimeError("late generation failure")
 
@@ -591,6 +594,9 @@ def test_evaluator_late_generation_error_uses_published_token_evidence_for_count
 
     assert sample["generation_token_evidence"]["removed_terminal_token_ids"] == [2]
     assert sample["removed_terminal_token_count"] == 1
+    assert sample["strategy_output_relation"] == "mixed"
+    assert sample["strategy_mutation"] is True
+    assert sample["strategy_removed_sampled_token_ids"] == []
 
 
 def test_exporter_normalizes_inconsistent_removed_terminal_count():

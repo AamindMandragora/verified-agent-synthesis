@@ -2039,6 +2039,168 @@ def test_strategy_close_span_keeps_sampled_ids_and_reaches_strict_wrapper_reject
     assert lm._last_generation_evidence["strategy_mutation"] is True
 
 
+def test_reevaluation_export_preserves_static_close_strategy_evidence(
+    tmp_path, _verified_csd_helpers
+):
+    """The real evaluator/exporter must retain a compiled close-marker mutation."""
+    import json
+    import sys
+    import types
+
+    import torch
+
+    from synthesis.evaluate.baseline_store import save_minimal_baseline_json
+    from synthesis.evaluate.benchmarks.common.model_utils import _TensorizedLMBase
+    from synthesis.evaluate.benchmarks.gsm_symbolic.environment import (
+        _attach_helper_trace,
+    )
+    from synthesis.evaluate.benchmarks.gsm_symbolic.generation import run_crane_csd
+    from synthesis.evaluate.evaluator import EvaluationResult, Evaluator
+
+    class Dafny:
+        @staticmethod
+        def Seq(value):
+            return value
+
+        @staticmethod
+        def SeqWithoutIsStrInference(values):
+            return list(values)
+
+    class Tokenizer:
+        eos_token = "<eos>"
+        eos_token_id = 99
+        all_special_ids = {99}
+
+        def decode(self, token_ids, skip_special_tokens=False):
+            del skip_special_tokens
+            pieces = {1: "a", 3: ">>", 99: "<eos>"}
+            return "".join(pieces[int(token_id)] for token_id in token_ids)
+
+        def encode(self, text, add_special_tokens=False):
+            del add_special_tokens
+            return {"a": [1], ">>": [3], "<eos>": [99]}.get(text, [])
+
+    class Parser:
+        @staticmethod
+        def IsCompletePrefix(prefix):
+            return list(prefix) == ["a"]
+
+        @staticmethod
+        def is_complete(text):
+            return text == "a>>"
+
+    tokenizer = Tokenizer()
+    lm = _TensorizedLMBase(Dafny(), tokenizer, ["a", ">>", "<eos>"], [1, 3, 99])
+    lm.Tokens = lm._Tokens
+    lm.model_name = "Qwen/Qwen2.5-1.5B-Instruct"
+
+    def generate_logits(self, prefix):
+        self._begin_generation_transaction(prefix)
+        full_logits = torch.full((100,), -1e9)
+        full_logits[1] = 5.0
+        self._finalize_full_logits(full_logits)
+        self._logits_dirty = False
+
+    lm.GenerateLogits = types.MethodType(generate_logits, lm)
+
+    helpers_cls = _verified_csd_helpers
+    verified = sys.modules["VerifiedDecoderAgent"]
+    trace_state = {"events": []}
+    _attach_helper_trace(verified, trace_state)
+
+    class GeneratedDefault:
+        @staticmethod
+        def MyCSDStrategy(
+            lm_arg,
+            parser,
+            seq0,
+            generated_prefix,
+            start_inside,
+            current_constrained,
+            max_steps,
+            step_budget,
+            eos_token,
+        ):
+            del seq0, generated_prefix, start_inside, current_constrained
+            del max_steps, step_budget, eos_token
+            helper = helpers_cls()
+            helper.ctor__()
+            lm_arg.GenerateLogits([])
+            sampled = lm_arg.ChooseNextToken()
+            generated, inside, current = helper.CloseConstrainedSpan(
+                lm_arg, parser, [sampled], [sampled]
+            )
+            return generated, inside, current, 1
+
+    class GeneratedCSD:
+        default__ = GeneratedDefault
+
+    env = {
+        "_dafny": Dafny,
+        "GeneratedCSD": GeneratedCSD,
+        "lm": lm,
+        "parser": Parser(),
+        "model_name": lm.model_name,
+        "tokenizer": tokenizer,
+        "csd_trace": trace_state,
+    }
+
+    evaluator = Evaluator(
+        dataset_name="spider",
+        model_name=lm.model_name,
+        backend="huggingface",
+        device="cpu",
+        sample_size=1,
+        max_steps=8,
+    )
+    evaluator._base_grammar_text = _GRAMMAR_PATH.read_text(encoding="utf-8")
+
+    def real_runner(**kwargs):
+        return run_crane_csd(
+            env=env,
+            prompt_text=kwargs["prompt_text"],
+            max_steps=kwargs["max_steps"],
+            step_token_budget=kwargs.get("step_token_budget", 1),
+            grammar_file=kwargs["grammar_file"],
+            dynamic_parser=kwargs.get("dynamic_parser"),
+            start_inside_constrained=True,
+        )
+
+    sample = evaluator._evaluate_one_example(
+        0,
+        _example(),
+        1,
+        env,
+        sql_eval_logic,
+        real_runner,
+        {},
+    )
+    assert sample["full_output"] == "a>>"
+    assert sample["output_rejection_reason"] == "prompt_or_wrapper"
+    assert sample["generation_token_evidence"]["raw_token_ids"] == [1]
+    assert any(event["helper"] == "CloseConstrainedSpan" for event in sample["helper_trace"])
+
+    result = EvaluationResult(
+        success=True,
+        accuracy=0.0,
+        contains_delimiters=False,
+        syntax_rate=0.0,
+        num_examples=1,
+        num_correct=0,
+        total_time_seconds=sample["time_seconds"],
+        sample_outputs=[sample],
+    )
+    output_path = save_minimal_baseline_json(result, tmp_path / "smoke.json")
+    exported = json.loads(output_path.read_text(encoding="utf-8"))
+    evidence = exported["reevaluation_sample_evidence"][0]
+
+    assert evidence["strategy_mutation"] is True
+    assert evidence["strategy_output_relation"] == "mixed"
+    assert evidence["strategy_removed_sampled_token_ids"] == []
+    assert evidence["generation_token_evidence"]["raw_token_ids"] == [1]
+    assert evidence["generation_token_evidence"]["decoded_text"] == "a"
+
+
 def test_strategy_origin_alias_discards_sampled_marker_before_authored_close(
     _verified_csd_helpers,
 ):

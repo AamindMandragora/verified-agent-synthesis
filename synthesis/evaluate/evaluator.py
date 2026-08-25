@@ -209,6 +209,24 @@ def _print_realtime_completion(
     print(f"{prefix} end", flush=True)
 
 
+_STRATEGY_SAMPLE_EVIDENCE_FIELDS = (
+    "strategy_output_relation",
+    "strategy_mutation",
+    "strategy_removed_sampled_token_ids",
+)
+
+
+def _strategy_sample_evidence_fields(evidence: Any) -> dict[str, Any]:
+    """Copy strategy-origin fields from token evidence into the sample row."""
+    if not isinstance(evidence, dict):
+        return {}
+    return {
+        key: evidence[key]
+        for key in _STRATEGY_SAMPLE_EVIDENCE_FIELDS
+        if key in evidence
+    }
+
+
 def _is_pathological_gsm_scoring_expression(expression: str) -> bool:
     """Return whether a generated GSM expression is too large for safe scoring.
 
@@ -2622,6 +2640,7 @@ class Evaluator:
                 "generation_token_evidence": (
                     generation_token_evidence if self.dataset_name == "spider" else None
                 ),
+                **_strategy_sample_evidence_fields(generation_token_evidence),
                 "prompt_contract": prompt_contract,
                 "removed_terminal_token_count": (
                     benchmark_aux.get("removed_terminal_token_count")
@@ -2749,6 +2768,7 @@ class Evaluator:
                 "generation_token_evidence": (
                     generation_token_evidence if self.dataset_name == "spider" else None
                 ),
+                **_strategy_sample_evidence_fields(generation_token_evidence),
                 "prompt_contract": prompt_contract,
                 "removed_terminal_token_count": (
                     len((generation_token_evidence or {}).get("removed_terminal_token_ids", ()))

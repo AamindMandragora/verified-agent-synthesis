@@ -53,6 +53,14 @@ The evaluate stage executes compiled strategies on benchmark tasks and returns s
   - `accuracy`, `syntax_rate`
   - `metrics` (counts, optional sums/means for `generation_seconds` / `num_tokens`, optional `run_wall_time_seconds` or evaluator totals)
   - `answers[]` with `question`, `generated_answer`, and optional `generation_seconds` / `num_tokens` per row
+- Reevaluation exports keep `answers[]` backward-compatible and add a dedicated
+  `reevaluation_sample_evidence[]` row for each evaluated example. Each row
+  carries the contract outcome fields, prompt contract, safe helper/provenance
+  metadata, and `generation_token_evidence` with raw IDs, raw decoded text,
+  terminal IDs removed at the declared stop boundary, and the scored decoded
+  text. Spider strategy fields (`strategy_output_relation`, `strategy_mutation`,
+  and `strategy_removed_sampled_token_ids`) are copied from the same published
+  generation evidence, including late generation-error samples.
 - Fixed-strategy GSM baselines use the local CRANE GSM source rows so
   `unconstrained`, `gcd`, `crane`, `itergen`, and `cars` are compared on the
   same questions.
