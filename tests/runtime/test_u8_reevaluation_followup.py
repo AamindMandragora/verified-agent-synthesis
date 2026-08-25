@@ -13,19 +13,28 @@ class _ShardProcess:
     provenance_mismatch_field = None
     provenance_mode = "present"
     missing_provenance_shard = None
+    dataset = "spider"
+    alias_mode = "equal"
 
     def __init__(self, command, stdout=None, stderr=None, env=None):
         del stdout, stderr, env
         output_path = Path(command[command.index("--output-json") + 1])
         shard_index = int(output_path.stem.removeprefix("part"))
-        split_path = Path(command[command.index("--spider-split-file") + 1])
+        dataset = command[command.index("--dataset") + 1]
+        split_flag = (
+            "--spider-split-file" if dataset == "spider" else "--gsm-split-file"
+        )
+        split_path = Path(command[command.index(split_flag) + 1])
         split = json.loads(split_path.read_text())
+        source_alias = (
+            "spider_source_index" if dataset == "spider" else "crane_source_index"
+        )
         rows = self.rows_by_shard[shard_index]
         answers = [
             {
                 "example_index": local_index,
                 "source_index": source_index,
-                "spider_source_index": source_index,
+                source_alias: source_index,
                 "is_correct": source_index == 3,
                 "is_syntax_valid": True,
                 "question": f"q-{source_index}",
@@ -37,6 +46,7 @@ class _ShardProcess:
             {
                 "evaluated_index": local_index,
                 "source_index": source_index,
+                source_alias: source_index,
                 "is_correct": source_index == 3,
                 "accuracy_applicable": True,
                 "is_syntax_valid": True,
@@ -48,6 +58,7 @@ class _ShardProcess:
             evidence = evidence[:-1]
         if self.source_mismatch and evidence:
             evidence[0]["source_index"] += 1
+            evidence[0][source_alias] += 1
         if self.outcome_mode == "missing":
             for row in answers + evidence:
                 row.pop("is_correct", None)
@@ -60,11 +71,26 @@ class _ShardProcess:
             evidence[0]["is_syntax_valid"] = "true"
         elif self.outcome_mode == "mismatch":
             evidence[0]["is_correct"] = not answers[0]["is_correct"]
+        if self.alias_mode == "spider_conflict" and dataset == "spider":
+            answers[0]["spider_source_index"] = answers[0]["source_index"] + 1
+        elif self.alias_mode == "gsm_conflict" and dataset == "gsm_symbolic":
+            answers[0]["crane_source_index"] = answers[0]["source_index"] + 1
+        elif self.alias_mode == "invalid_string":
+            answers[0]["source_index"] = "3"
+        elif self.alias_mode == "invalid_float":
+            answers[0]["source_index"] = 3.0
+        elif self.alias_mode == "invalid_bool":
+            answers[0]["source_index"] = True
+        elif self.alias_mode == "none_optional":
+            answers[0]["source_index"] = None
+        elif self.alias_mode == "none_only":
+            answers[0]["source_index"] = None
+            answers[0][source_alias] = None
         split_provenance = {
-            "gsm_split_file": None,
-            "gsm_split_name": None,
-            "spider_split_file": str(split_path),
-            "spider_split_name": "test",
+            "gsm_split_file": str(split_path) if dataset == "gsm_symbolic" else None,
+            "gsm_split_name": "test" if dataset == "gsm_symbolic" else None,
+            "spider_split_file": str(split_path) if dataset == "spider" else None,
+            "spider_split_name": "test" if dataset == "spider" else None,
             "bar_split_name": None,
         }
         output_path.write_text(
@@ -87,9 +113,19 @@ class _ShardProcess:
                             or self.missing_provenance_shard == shard_index
                         )
                         else {
-                            "dataset": "spider",
-                            "spider_split_file": str(split_path),
-                            "spider_split_name": "test",
+                            "dataset": dataset,
+                            "gsm_split_file": str(split_path)
+                            if dataset == "gsm_symbolic"
+                            else None,
+                            "gsm_split_name": "test"
+                            if dataset == "gsm_symbolic"
+                            else None,
+                            "spider_split_file": str(split_path)
+                            if dataset == "spider"
+                            else None,
+                            "spider_split_name": "test"
+                            if dataset == "spider"
+                            else None,
                             "evaluated_source_indices": rows,
                             "compiled_csd_path": "/compiled/GeneratedCSD.py",
                             "compiled_csd_sha256": "aaa",
@@ -135,6 +171,8 @@ def _run_sharded(
     provenance_mismatch_field=None,
     provenance_mode="present",
     missing_provenance_shard=None,
+    dataset="spider",
+    alias_mode="equal",
 ):
     from synthesis.scripts import sharded_eval_core
 
@@ -157,13 +195,15 @@ def _run_sharded(
     _ShardProcess.provenance_mismatch_field = provenance_mismatch_field
     _ShardProcess.provenance_mode = provenance_mode
     _ShardProcess.missing_provenance_shard = missing_provenance_shard
+    _ShardProcess.dataset = dataset
+    _ShardProcess.alias_mode = alias_mode
     monkeypatch.setattr(sharded_eval_core, "detect_gpu_slots", lambda *args, **kwargs: [0, 1])
     monkeypatch.setattr(sharded_eval_core.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(sharded_eval_core.subprocess, "Popen", _ShardProcess)
     return (
         sharded_eval_core.run_sharded_reevaluation(
             csd_path=str(tmp_path / "GeneratedCSD.py"),
-            dataset="spider",
+            dataset=dataset,
             sample_size=4,
             output_json=str(output_path),
             split_file=str(split_path),
@@ -285,6 +325,63 @@ def test_run_sharded_reevaluation_rejects_mixed_provenance_presence(
 ):
     with pytest.raises(ValueError, match="provenance"):
         _run_sharded(monkeypatch, tmp_path, provenance_mode="mixed")
+
+
+@pytest.mark.parametrize(
+    "alias_mode",
+    ["invalid_string", "invalid_float", "invalid_bool", "none_only"],
+)
+def test_run_sharded_reevaluation_rejects_non_integer_source_aliases(
+    monkeypatch, tmp_path, alias_mode
+):
+    with pytest.raises(ValueError, match="source|alias|integer|int"):
+        _run_sharded(monkeypatch, tmp_path, alias_mode=alias_mode)
+
+
+def test_run_sharded_reevaluation_treats_none_alias_as_absent(
+    monkeypatch, tmp_path
+):
+    rc, output_path, _ = _run_sharded(
+        monkeypatch, tmp_path, alias_mode="none_optional"
+    )
+
+    assert rc == 0
+    payload = json.loads(output_path.read_text())
+    assert [row["source_index"] for row in payload["answers"]] == [None, None, 15]
+    assert [row["spider_source_index"] for row in payload["answers"]] == [3, 9, 15]
+
+
+def test_run_sharded_reevaluation_rejects_conflicting_spider_source_aliases(
+    monkeypatch, tmp_path
+):
+    with pytest.raises(ValueError, match="source|alias|match|equal"):
+        _run_sharded(monkeypatch, tmp_path, alias_mode="spider_conflict")
+
+
+def test_run_sharded_reevaluation_rejects_conflicting_gsm_source_aliases(
+    monkeypatch, tmp_path
+):
+    with pytest.raises(ValueError, match="source|alias|match|equal"):
+        _run_sharded(
+            monkeypatch,
+            tmp_path,
+            dataset="gsm_symbolic",
+            alias_mode="gsm_conflict",
+        )
+
+
+def test_run_sharded_reevaluation_accepts_equal_multi_alias_rows(
+    monkeypatch, tmp_path
+):
+    rc, output_path, _ = _run_sharded(monkeypatch, tmp_path, alias_mode="equal")
+
+    assert rc == 0
+    payload = json.loads(output_path.read_text())
+    assert [row["source_index"] for row in payload["answers"]] == [3, 9, 15]
+    assert [row["spider_source_index"] for row in payload["answers"]] == [3, 9, 15]
+    assert [
+        row["spider_source_index"] for row in payload["reevaluation_sample_evidence"]
+    ] == [3, 9, 15]
 
 
 class _GuidanceTokenizer:

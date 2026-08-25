@@ -92,12 +92,25 @@ def slice_split(split: dict, indices_key: str, lo: int, hi: int) -> dict:
     return out
 
 
-def _row_source_index(row: dict[str, Any]) -> int | None:
-    for key in ("source_index", "spider_source_index", "crane_source_index"):
-        value = row.get(key)
-        if value is not None:
-            return int(value)
-    return None
+def _row_source_index(row: dict[str, Any]) -> int:
+    aliases = ("source_index", "spider_source_index", "crane_source_index")
+    present: list[tuple[str, int]] = []
+    for key in aliases:
+        if key not in row:
+            continue
+        value = row[key]
+        # None has historically meant that this optional alias is absent.
+        if value is None:
+            continue
+        if type(value) is not int:
+            raise ValueError(f"source alias {key} must be an integer")
+        present.append((key, value))
+    if not present:
+        raise ValueError("row has no source index alias")
+    resolved = present[0][1]
+    if any(value != resolved for _, value in present[1:]):
+        raise ValueError("source index aliases disagree")
+    return resolved
 
 
 _IMMUTABLE_PROVENANCE_FIELDS = (
