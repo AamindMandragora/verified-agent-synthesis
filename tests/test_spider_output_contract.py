@@ -2478,3 +2478,198 @@ def test_helper_trace_preserves_classmethod_cost_transitions():
         (0, 1),
         (1, 2),
     ]
+
+
+
+
+
+def test_spider_crane_budget_exhaustion_flushes_outer_full_prefix(
+    _verified_csd_helpers,
+    monkeypatch,
+):
+    """Crane's outer result owns the full rollback alignment after nested rewinds."""
+    import json
+    import sys
+    import types
+
+    import torch
+
+    from synthesis.evaluate.benchmarks.common.model_utils import _TensorizedLMBase
+    from synthesis.evaluate.benchmarks.gsm_symbolic.environment import (
+        _attach_helper_trace,
+    )
+    from synthesis.evaluate.benchmarks.gsm_symbolic.generation import (
+        _finalize_spider_generation_evidence,
+    )
+    from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
+
+    class Dafny:
+        @staticmethod
+        def Seq(value):
+            return list(value) if isinstance(value, str) else value
+
+        @staticmethod
+        def SeqWithoutIsStrInference(values):
+            return list(values)
+
+        @staticmethod
+        def CodePoint(value):
+            return value
+
+    class Tokenizer:
+        all_special_ids = {99}
+        eos_token_id = 99
+        eos_token = "eos"
+
+        def decode(self, token_ids, skip_special_tokens=False):
+            del skip_special_tokens
+            pieces = {1: "<<", 2: "bad", 99: "eos"}
+            return "".join(pieces[int(token_id)] for token_id in token_ids)
+
+        def encode(self, text, add_special_tokens=False):
+            del add_special_tokens
+            return {"<<": [1], "bad": [2], "eos": [99]}.get(text, [])
+
+    class CraneParser:
+        def IsValidPrefix(self, prefix):
+            del prefix
+            return True
+
+        def IsDeadPrefix(self, prefix):
+            del prefix
+            return False
+
+        def CompletedSymbolCount(self, prefix, unit, baseline=0):
+            del unit, baseline
+            return 1 if prefix else 0
+
+        def SymbolStartTokenIndex(self, prefix, unit, index):
+            del prefix, unit, index
+            return 0
+
+    lm = _TensorizedLMBase(
+        Dafny(), Tokenizer(), [list("<<"), list("bad"), list("eos")], [1, 2, 99]
+    )
+    lm.Tokens = lm._Tokens
+    lm._structured_prompt = SpiderPromptParts(
+        "db_id: x\nquestion: q\n", model_name="Qwen/Qwen2.5-7B-Instruct"
+    )
+    lm._generation_stop_token_ids = {99}
+
+    helpers_cls = _verified_csd_helpers()
+    helper = helpers_cls() if isinstance(helpers_cls, type) else helpers_cls
+    helper.ctor__()
+    helper_type = type(helper)
+
+    def unconstrained_step(self, lm_arg, prompt, generated):
+        del prompt, generated
+        lm_arg._record_generated_token_ids([1])
+        self.cost += 1
+        return list("<<")
+
+    def forward_until_symbol(
+        self,
+        lm_arg,
+        parser,
+        prompt,
+        cur,
+        eos_token,
+        unit,
+        num,
+        budget,
+    ):
+        del parser, prompt, cur, eos_token, unit, num, budget
+        lm_arg._record_generated_token_ids([2])
+        self.cost += 1
+        return [list("bad")]
+
+    def view_last_symbol(self, parser, cur, unit):
+        del parser, cur, unit
+        return list("bad")
+
+    def is_allowed_var_text(self, groups, text):
+        del groups, text
+        return False
+
+    monkeypatch.setattr(
+        helper_type,
+        "UnconstrainedStep",
+        unconstrained_step,
+    )
+    monkeypatch.setattr(
+        helper_type,
+        "ForwardUntilSymbol",
+        forward_until_symbol,
+    )
+    monkeypatch.setattr(helper_type, "ViewLastSymbol", view_last_symbol)
+    monkeypatch.setattr(helper_type, "IsAllowedVarText", is_allowed_var_text)
+
+    verified = sys.modules["VerifiedDecoderAgent"]
+    monkeypatch.setattr(
+        verified.default__,
+        "Contains",
+        staticmethod(
+            lambda value, needle: any(
+                list(value)[index : index + len(needle)] == list(needle)
+                for index in range(max(0, len(value) - len(needle) + 1))
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        verified.default__,
+        "RenderedEndsWith",
+        staticmethod(
+            lambda value, suffix: len(value) >= len(suffix)
+            and list(value)[-len(suffix) :] == list(suffix),
+        ),
+    )
+
+    trace_state = {"events": []}
+    _attach_helper_trace(verified, trace_state)
+
+    result = helper.CraneGeneration(
+        lm,
+        CraneParser(),
+        [],
+        3,
+        0,
+        [],
+        list("eos"),
+    )
+    strategy_text = "".join("".join(token) for token in result)
+    assert strategy_text == "<<"
+
+    pending = trace_state.pop("_pending_spider_rollback_prefix", None)
+    if pending is not None:
+        lm._align_generation_history_to_prefix(pending)
+    _finalize_spider_generation_evidence(
+        lm,
+        spider_prompt_active=True,
+        scored_output=strategy_text,
+        strategy_token_sequence=result,
+    )
+    evidence = lm._last_generation_evidence
+    event_names = [event["helper"] for event in trace_state["events"]]
+    public_trace = json.dumps(trace_state["events"], default=str)
+
+    assert {
+        "outer_pending_matches": pending == result,
+        "event_suffix": event_names[-2:],
+        "cost": helper.cost,
+        "raw_token_ids": evidence["raw_token_ids"],
+        "removed_sampled_ids": evidence["strategy_removed_sampled_token_ids"],
+        "alignment_removed": getattr(lm, "_generation_alignment_removed_token_ids", None),
+        "trace_has_backward": "BackwardToSymbol" in event_names,
+        "trace_has_raw_body": any(
+            leaked in public_trace.lower() for leaked in ("bad", "select", "sql")
+        ),
+    } == {
+        "outer_pending_matches": True,
+        "event_suffix": ["BackwardToSymbol", "CraneGeneration"],
+        "cost": 3,
+        "raw_token_ids": [1],
+        "removed_sampled_ids": [2, 2],
+        "alignment_removed": [2, 2],
+        "trace_has_backward": True,
+        "trace_has_raw_body": False,
+    }
