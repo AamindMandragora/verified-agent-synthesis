@@ -290,3 +290,124 @@ def test_guidance_without_rebuild_state_fails_without_mutation():
 
     assert lm.instruction_text == "historical prompt"
     assert lm.task_guidance is None
+
+
+def test_gsm_runner_registers_chat_guidance_and_resets_between_examples(tmp_path):
+    from synthesis.evaluate.benchmarks.common.model_utils import _TensorizedLMBase
+    from synthesis.evaluate.benchmarks.gsm_symbolic import eval_logic as gsm_eval_logic
+
+    class Dafny:
+        @staticmethod
+        def Seq(value):
+            return value
+
+        @staticmethod
+        def SeqWithoutIsStrInference(values):
+            return list(values)
+
+    class LegacyChatTokenizer:
+        eos_token = "<eos>"
+        eos_token_id = 99
+        all_special_ids = {99}
+
+        def __init__(self):
+            self.calls = []
+
+        def apply_chat_template(self, messages, **kwargs):
+            snapshot = [dict(message) for message in messages]
+            self.calls.append((snapshot, dict(kwargs)))
+            if "enable_thinking" in kwargs:
+                raise TypeError("legacy tokenizer has no thinking option")
+            return "\n".join(
+                f"{message['role']}:{message.get('content', '')}"
+                for message in messages
+            )
+
+        def decode(self, token_ids, skip_special_tokens=False):
+            del skip_special_tokens
+            return "".join("ok" if int(token_id) == 1 else "<eos>" for token_id in token_ids)
+
+        def encode(self, text, add_special_tokens=False):
+            del text, add_special_tokens
+            return [1]
+
+    class Parser:
+        @staticmethod
+        def is_complete(text):
+            return text == "ok"
+
+    class GeneratedDefault:
+        @staticmethod
+        def MyCSDStrategy(
+            lm_arg,
+            parser,
+            seq0,
+            generated_prefix,
+            start_inside,
+            current_constrained,
+            max_steps,
+            step_budget,
+            eos_token,
+        ):
+            del parser, seq0, generated_prefix, start_inside, current_constrained
+            del max_steps, step_budget, eos_token
+            if len(captures) == 0:
+                lm_arg.AppendTaskGuidance("")
+                lm_arg.AppendTaskGuidance("first guidance")
+                lm_arg.AppendTaskGuidance("second guidance")
+            captures.append(
+                {
+                    "messages": [dict(message) for message in lm_arg._chat_messages],
+                    "instruction_text": lm_arg.instruction_text,
+                    "task_guidance": lm_arg.task_guidance,
+                }
+            )
+            return (["ok"], False, [], 1)
+
+    class GeneratedCSD:
+        default__ = GeneratedDefault
+
+    tokenizer = LegacyChatTokenizer()
+    lm = _TensorizedLMBase(Dafny(), tokenizer, ["ok"], [1])
+    env = {
+        "_dafny": Dafny,
+        "GeneratedCSD": GeneratedCSD,
+        "lm": lm,
+        "parser": Parser(),
+    }
+    captures = []
+    runner = gsm_eval_logic.get_generation_runner()
+
+    first_prompt = gsm_eval_logic.format_prompt(
+        object(), {"question": "How many singers?"}
+    )
+    runner(
+        env=env,
+        prompt_text=first_prompt,
+        max_steps=8,
+        grammar_file=tmp_path / "unused.lark",
+    )
+
+    second_prompt = gsm_eval_logic.format_prompt(
+        object(), {"question": "How many albums?"}
+    )
+    runner(
+        env=env,
+        prompt_text=second_prompt,
+        max_steps=8,
+        grammar_file=tmp_path / "unused.lark",
+    )
+
+    assert len(captures) == 2
+    first_user = [message for message in captures[0]["messages"] if message["role"] == "user"][-1]
+    assert "first guidance" in first_user["content"]
+    assert "second guidance" not in first_user["content"]
+    assert captures[0]["task_guidance"] == "first guidance"
+    assert "first guidance" not in captures[1]["instruction_text"]
+    assert "second guidance" not in captures[1]["instruction_text"]
+    assert captures[1]["task_guidance"] is None
+
+    thinking_calls = [kwargs for _, kwargs in tokenizer.calls if "enable_thinking" in kwargs]
+    legacy_calls = [kwargs for _, kwargs in tokenizer.calls if "enable_thinking" not in kwargs]
+    assert len(thinking_calls) == 3
+    assert len(legacy_calls) == 3

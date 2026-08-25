@@ -150,6 +150,57 @@ def _trailing_whitespace_only(text: str) -> bool:
     return not text.strip()
 
 
+def _parser_lexical_view(text: str) -> str:
+    """Normalize parser-hostile layout without changing the scored candidate."""
+    pieces: list[str] = []
+    in_string = False
+    in_line_comment = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if in_line_comment:
+            if char in "\r\n":
+                in_line_comment = False
+                pieces.append(" ")
+                if char == "\r" and index + 1 < len(text) and text[index + 1] == "\n":
+                    index += 2
+                else:
+                    index += 1
+            else:
+                index += 1
+            continue
+        if in_string:
+            pieces.append(char)
+            if char == "'":
+                if index + 1 < len(text) and text[index + 1] == "'":
+                    pieces.append("'")
+                    index += 2
+                    continue
+                in_string = False
+            index += 1
+            continue
+        if char == "'":
+            in_string = True
+            pieces.append(char)
+            index += 1
+            continue
+        if text.startswith("--", index):
+            in_line_comment = True
+            pieces.append(" ")
+            index += 2
+            continue
+        if char in "\r\n":
+            pieces.append(" ")
+            if char == "\r" and index + 1 < len(text) and text[index + 1] == "\n":
+                index += 2
+            else:
+                index += 1
+            continue
+        pieces.append(char)
+        index += 1
+    return "".join(pieces)
+
+
 def _single_statement(text: str) -> tuple[str | None, str | None]:
     semicolons = [index for index in _outside_spans(text) if text[index] == ";"]
     if not semicolons:
@@ -180,7 +231,7 @@ def validate_bare_sql(output: str, *, parser: Any = None) -> SpiderOutputContrac
         )
     if parser is not None:
         try:
-            parser.parse(sql)
+            parser.parse(_parser_lexical_view(sql))
         except Exception:
             return SpiderOutputContractResult(
                 False,

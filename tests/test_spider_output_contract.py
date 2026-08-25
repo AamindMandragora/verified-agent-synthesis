@@ -130,11 +130,38 @@ def test_outer_whitespace_multiline_text_is_preserved_by_live_parser():
     assert result.sql == "SELECT 'left  \nright' FROM singer"
 
 
-def test_clause_newline_not_supported_by_live_parser_is_rejected():
-    result = _validate_bare_sql("SELECT name\nFROM singer", parser=_real_parser())
+def test_clause_newline_bare_sql_is_accepted_and_preserved():
+    output = "SELECT name\nFROM singer"
+    result = _validate_bare_sql(output, parser=_real_parser())
 
-    assert result.accepted is False
-    assert result.rejection_reason == "invalid_or_non_bare_sql"
+    assert result.accepted is True
+    assert result.sql == output
+    assert result.rejection_reason is None
+
+    actual, source, aux = sql_eval_logic.extract_actual(
+        _CachedRealEvaluator(), output, _example()
+    )
+    assert actual == output
+    assert source == "bare_sql"
+    assert aux["output_contract_valid"] is True
+    assert aux["output_rejection_reason"] is None
+
+
+def test_line_comment_newline_bare_sql_is_accepted_and_preserved():
+    output = "SELECT name -- selected column\r\nFROM singer"
+    result = _validate_bare_sql(output, parser=_real_parser())
+
+    assert result.accepted is True
+    assert result.sql == output
+    assert result.rejection_reason is None
+
+    actual, source, aux = sql_eval_logic.extract_actual(
+        _CachedRealEvaluator(), output, _example()
+    )
+    assert actual == output
+    assert source == "bare_sql"
+    assert aux["output_contract_valid"] is True
+    assert aux["output_rejection_reason"] is None
 
 
 def test_doubled_quote_and_semicolon_follow_live_parser_support():
