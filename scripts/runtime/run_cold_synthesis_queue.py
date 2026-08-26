@@ -308,7 +308,7 @@ EXPECTED_CELLS: dict[str, dict[str, Any]] = {
 # the same per-model budget even when this controller is stale and fails to
 # export CSD_VLLM_GPU_MEMORY_UTILIZATION.
 _MEMORY_RESERVATION_MIB_BY_MODEL = {
-    "Qwen/Qwen2.5-1.5B-Instruct": 16000,
+    "Qwen/Qwen2.5-1.5B-Instruct": 12288,
     "Qwen/Qwen2.5-7B-Instruct": 22000,
     "Qwen/Qwen2.5-14B-Instruct": 34000,
     "Qwen/Qwen3.5-2B": 14336,
