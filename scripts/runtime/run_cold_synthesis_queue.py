@@ -805,6 +805,32 @@ def expected_job_commit(job: dict[str, Any]) -> str | None:
 
 
 
+def _is_exact_hex(value: Any, length: int) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == length
+        and all(char in "0123456789abcdef" for char in value)
+    )
+
+
+def _heldout_prior_binding(job: dict[str, Any]) -> tuple[str, str] | None:
+    prior_commit = job.get("heldout_manifest_commit")
+    artifact_sha = job.get("heldout_output_json_sha256")
+    if prior_commit is None and artifact_sha is None:
+        return None
+    if prior_commit is None or artifact_sha is None:
+        raise ValueError(
+            "heldout_manifest_commit and heldout_output_json_sha256 must be provided together"
+        )
+    if not _is_exact_hex(prior_commit, 40):
+        raise ValueError("heldout_manifest_commit must be a 40-character hexadecimal hash")
+    if not _is_exact_hex(artifact_sha, 64):
+        raise ValueError(
+            "heldout_output_json_sha256 must be a 64-character hexadecimal hash"
+        )
+    return prior_commit, artifact_sha
+
+
 def stamp_job_commit_from_report(
     job: dict[str, Any], repo: Path, output_name: str
 ) -> dict[str, Any]:
@@ -1010,9 +1036,12 @@ def synthesis_was_exhausted(
 
 def heldout_is_complete(path: Path, job: dict[str, Any]) -> bool:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        artifact_bytes = path.read_bytes()
+        payload = json.loads(artifact_bytes)
+        prior_binding = _heldout_prior_binding(job)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return False
+    artifact_sha = hashlib.sha256(artifact_bytes).hexdigest()
     expected = int(job["heldout_sample_size"])
     metrics = payload.get("metrics") or {}
     if int(metrics.get("num_examples") or 0) != expected:
@@ -1038,9 +1067,16 @@ def heldout_is_complete(path: Path, job: dict[str, Any]) -> bool:
             for key in ("git_commit", "launch_commit")
             if (value := job.get(key))
         }
+        provenance_commit = str(provenance.get("manifest_commit") or "")
+        current_commit_matches = provenance_commit in allowed_commits
+        prior_commit_matches = (
+            prior_binding is not None
+            and provenance_commit == prior_binding[0]
+            and artifact_sha == prior_binding[1]
+        )
         provenance_matches = (
             provenance.get("cell_id") == job["cell_id"]
-            and str(provenance.get("manifest_commit") or "") in allowed_commits
+            and (current_commit_matches or prior_commit_matches)
             and provenance.get("dataset") == job["dataset"]
             and provenance.get("eval_model") == job["eval_model"]
             and provenance.get("compiled_csd_sha256") == compiled_hash
@@ -1146,6 +1182,10 @@ def load_manifest(path: Path) -> tuple[str, list[dict[str, Any]]]:
         missing = sorted(required - job.keys())
         if missing:
             raise ConfigError(f"manifest entry missing {missing}")
+        try:
+            _heldout_prior_binding(job)
+        except ValueError as exc:
+            raise ConfigError(f"invalid heldout prior binding: {exc}") from exc
         cell = str(job["cell_id"])
         if cell in seen:
             raise ConfigError(f"duplicate cell_id: {cell}")

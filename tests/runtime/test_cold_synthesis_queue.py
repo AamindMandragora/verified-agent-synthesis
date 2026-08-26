@@ -1134,6 +1134,86 @@ def test_existing_heldout_must_be_complete_before_restart_skips_cell(
     assert not queue.heldout_is_complete(heldout, job)
 
 
+def _complete_heldout_payload(job, csd, manifest_commit):
+    return {
+        "accuracy": 0.5,
+        "syntax_rate": 1.0,
+        "metrics": {"num_examples": job["heldout_sample_size"]},
+        "answers": [{} for _ in range(job["heldout_sample_size"])],
+        "eval_split": {
+            "gsm_split_file": None,
+            "gsm_split_name": None,
+            "spider_split_file": job["heldout_split_file"],
+            "spider_split_name": "test",
+            "bar_split_name": None,
+        },
+        "reevaluation_provenance": {
+            "cell_id": job["cell_id"],
+            "manifest_commit": manifest_commit,
+            "dataset": job["dataset"],
+            "eval_model": job["eval_model"],
+            "compiled_csd_path": str(csd.resolve()),
+            "compiled_csd_sha256": hashlib.sha256(csd.read_bytes()).hexdigest(),
+            "sample_size": job["heldout_sample_size"],
+            "max_steps": job["eval_max_steps"],
+            "step_token_budget": 1,
+            "smiles_class": None,
+        },
+    }
+
+
+def test_prior_heldout_requires_exact_manifest_commit_and_artifact_hash(tmp_path):
+    job = _job("spider")
+    current_commit = hashlib.sha1(b"current manifest").hexdigest()
+    prior_commit = hashlib.sha1(b"prior manifest").hexdigest()
+    other_commit = hashlib.sha1(b"other manifest").hexdigest()
+    job["git_commit"] = current_commit
+    job["heldout_manifest_commit"] = prior_commit
+    csd = tmp_path / "GeneratedCSD.py"
+    csd.write_text("# strategy\n", encoding="utf-8")
+    heldout = tmp_path / "heldout.json"
+    payload = _complete_heldout_payload(job, csd, prior_commit)
+    raw = json.dumps(payload).encode("utf-8")
+    heldout.write_bytes(raw)
+    job["heldout_output_json_sha256"] = hashlib.sha256(raw).hexdigest()
+
+    assert queue.heldout_is_complete(heldout, job)
+
+    missing_commit = dict(job)
+    missing_commit.pop("heldout_manifest_commit")
+    assert not queue.heldout_is_complete(heldout, missing_commit)
+
+    missing_hash = dict(job)
+    missing_hash.pop("heldout_output_json_sha256")
+    assert not queue.heldout_is_complete(heldout, missing_hash)
+
+    mismatched_commit = dict(job)
+    mismatched_commit["heldout_manifest_commit"] = other_commit
+    assert not queue.heldout_is_complete(heldout, mismatched_commit)
+
+    mismatched_hash = dict(job)
+    mismatched_hash["heldout_output_json_sha256"] = "0" * 64
+    assert not queue.heldout_is_complete(heldout, mismatched_hash)
+
+    heldout.write_bytes(raw + b"\n")
+    assert not queue.heldout_is_complete(heldout, job)
+
+
+def test_current_commit_heldout_remains_valid_without_prior_binding(tmp_path):
+    job = _job("spider")
+    current_commit = hashlib.sha1(b"current manifest").hexdigest()
+    job["git_commit"] = current_commit
+    csd = tmp_path / "GeneratedCSD.py"
+    csd.write_text("# strategy\n", encoding="utf-8")
+    heldout = tmp_path / "heldout.json"
+    heldout.write_text(
+        json.dumps(_complete_heldout_payload(job, csd, current_commit)),
+        encoding="utf-8",
+    )
+
+    assert queue.heldout_is_complete(heldout, job)
+
+
 def test_restart_preserves_exhausted_state_while_running_heldout(tmp_path, monkeypatch):
     job = _job()
     job["git_commit"] = "a" * 40
