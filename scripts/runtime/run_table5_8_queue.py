@@ -16,7 +16,10 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -27,6 +30,28 @@ from synthesis.evaluate.benchmarks.gsm_symbolic.prompts import GSM_CRANE_COT_TAS
 from synthesis.run_constants import VLLM_GPU_MEMORY_UTILIZATION_BY_MODEL
 
 LOGGER = logging.getLogger("table5-8-queue")
+cold_compiled_csd = None
+
+
+def sha256_text(value: str) -> str:
+    """Hash a short non-secret value for binding evidence without storing it."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def provider_pilots_sha256(pilots: dict[str, Any]) -> str:
+    """Hash the embedded pilot object in one stable JSON representation."""
+    return sha256_text(json.dumps(pilots, sort_keys=True, separators=(",", ":")))
+
+
+def hash_file(path: Path) -> str:
+    """Return the SHA-256 digest of a file without retaining its contents."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 class ConfigError(ValueError):
     """The manifest or runtime configuration cannot be safely launched."""
 
@@ -34,6 +59,7 @@ EVAL_MODEL = "Qwen/Qwen3.5-2B"
 GPU_SAFETY_MIB = 2_000
 CANONICAL_CRANE_COMMIT = "616379ce33ac6245933c16e6264b41f7d5800183"
 AUTHOR_TOKEN_BUDGET = 32768
+AUTHOR_REASONING_BUDGET = 4096
 BAR_BINDINGS = {
     "gsm_symbolic": {
         "min_accuracy": 13 / 49,
@@ -96,6 +122,18 @@ SOURCE_PATHS = (
     "synthesis/evaluate/benchmarks/smiles/metrics.py",
     "synthesis/evaluate/benchmarks/smiles/eval_logic.py",
     "synthesis/evaluate/benchmarks/gsm_symbolic/prompts.py",
+    "synthesis/evaluate/benchmarks/gsm_symbolic/generation.py",
+    "synthesis/evaluate/benchmarks/smiles/generation.py",
+    "synthesis/evaluate/benchmarks/sql_spider/generation.py",
+    "synthesis/evaluate/benchmarks/sql_spider/output_contract.py",
+    "synthesis/evaluate/benchmarks/smiles/environment.py",
+    "synthesis/evaluate/benchmarks/gsm_symbolic/environment.py",
+    "synthesis/evaluate/benchmarks/sql_spider/environment.py",
+    "synthesis/evaluate/baseline_store.py",
+    "synthesis/generate/prompts.py",
+    "synthesis/verify/library/GeneratedCSD.dfy",
+    "synthesis/verify/library/VerifiedAgentSynthesis.dfy",
+    "synthesis/evaluate/benchmarks/common/model_utils.py",
     "environment/benchmark_splits/gsm_symbolic_crane_proportional_49x49_seed123.json",
     "environment/benchmark_splits/spider_dev_proportional_300x300_seed334.json",
     "synthesis/evaluate/benchmarks/common/parser_utils.py",
@@ -103,6 +141,20 @@ SOURCE_PATHS = (
     ".context/run_post14b_rebar_queue.py",
     "synthesis/evaluate/baselines/crane_repo_runner.py",
 )
+
+MANIFEST_KEYS = frozenset({"version", "git_commit", "crane_commit", "crane_source_sha256", "source_sha256", "jobs", "provider_pilots", "provider_pilot_sha256"})
+JOB_KEYS = frozenset({
+    "cell_id", "table", "table_cell_id", "benchmark", "dataset", "task", "profile",
+    "generation_backend", "generation_model", "eval_model", "synthesis_max_tokens",
+    "synthesis_reasoning_budget",
+    "smiles_class", "token_budget", "beam_size", "adaptive_helper_mask",
+    "helper_selection_policy", "max_iterations", "min_accuracy", "min_syntax_rate",
+    "bar_source_path", "bar_source_sha256", "eval_sample_size", "heldout_sample_size",
+    "eval_max_steps", "eval_max_seconds", "gpu_mem_util", "memory_reservation_mib",
+    "gpu_scope", "gpu_count", "heldout_split_name", "heldout_split_file", "sample_count",
+    "output_name", "heldout_output_json", "log_file", "cold_start", "git_commit",
+    "launch_commit", "vertex_project",
+})
 
 
 def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class: str | None = None, **controls: Any) -> dict[str, Any]:
@@ -121,6 +173,7 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
         "generation_model": author["generation_model"],
         "eval_model": EVAL_MODEL,
         "synthesis_max_tokens": AUTHOR_TOKEN_BUDGET,
+        "synthesis_reasoning_budget": AUTHOR_REASONING_BUDGET,
         "smiles_class": smiles_class,
         "token_budget": controls.pop("token_budget", 1),
         "beam_size": controls.pop("beam_size", 2),
@@ -170,7 +223,7 @@ def build_scope(repo: Path) -> list[dict[str, Any]]:
 
 
 def synthesis_command(row: dict[str, Any], python: Path) -> list[str]:
-    cmd = [str(python), "-m", "synthesis.run_synthesis", "--task", row["task"], "--dataset", row["dataset"], "--min-accuracy", str(row["min_accuracy"]), "--min-syntax-rate", str(row["min_syntax_rate"]), "--max-iterations", "40", "--eval-model", EVAL_MODEL, "--eval-sample-size", str(row["eval_sample_size"]), "--eval-max-steps", str(row["eval_max_steps"]), "--eval-step-token-budget", str(row["token_budget"]), "--eval-max-seconds-per-example", "600", "--eval-min-examples-before-threshold-stop", str(row["eval_sample_size"]), "--generation-model", row["generation_model"], "--generation-backend", row["generation_backend"], "--synthesis-max-tokens", str(row["synthesis_max_tokens"]), "--device", "auto", "--vllm-gpu-memory-utilization", str(row["gpu_mem_util"]), "--refinement-beam-size", str(row["beam_size"]), "--helper-selection-policy", row["helper_selection_policy"]]
+    cmd = [str(python), "-m", "synthesis.run_synthesis", "--task", row["task"], "--dataset", row["dataset"], "--min-accuracy", str(row["min_accuracy"]), "--min-syntax-rate", str(row["min_syntax_rate"]), "--max-iterations", "40", "--eval-model", EVAL_MODEL, "--eval-sample-size", str(row["eval_sample_size"]), "--eval-max-steps", str(row["eval_max_steps"]), "--eval-step-token-budget", str(row["token_budget"]), "--eval-max-seconds-per-example", "600", "--eval-min-examples-before-threshold-stop", str(row["eval_sample_size"]), "--generation-model", row["generation_model"], "--generation-backend", row["generation_backend"], "--synthesis-max-tokens", str(row["synthesis_max_tokens"]), "--synthesizer-reasoning-budget", str(row["synthesis_reasoning_budget"]), "--device", "auto", "--vllm-gpu-memory-utilization", str(row["gpu_mem_util"]), "--refinement-beam-size", str(row["beam_size"]), "--helper-selection-policy", row["helper_selection_policy"]]
     cmd.append("--adaptive-helper-mask" if row["adaptive_helper_mask"] else "--no-adaptive-helper-mask")
     if row["dataset"] == "smiles":
         cmd += ["--smiles-classes", row["smiles_class"], "--smiles-samples-per-class", str(row["eval_sample_size"]), "--smiles-final-samples-per-class", str(row["heldout_sample_size"])]
@@ -185,16 +238,143 @@ def weighted_smiles_rate(values: Iterable[dict[str, Any]]) -> float:
     return sum(float(v["unique_valid_rate"]) * int(v["sample_count"]) for v in values) / total
 
 
-def helper_call_weight(value: dict[str, Any]) -> float:
-    """Compute CW from row-level helper evidence; no evidence means zero."""
-    calls = value.get("helper_calls")
-    if not isinstance(calls, list):
-        raise ConfigError("result is missing row-level helper_calls evidence")
-    if not calls:
-        return 0.0
-    if any(not isinstance(call, dict) or not isinstance(call.get("used"), bool) for call in calls):
-        raise ConfigError("helper_calls evidence must contain boolean used values")
-    return sum(1 for call in calls if call["used"]) / len(calls)
+def constrained_window_rate(value: dict[str, Any]) -> float:
+    """Return CW, defined by the evaluator's validated syntax/parse rate."""
+    syntax_rate = value.get("syntax_rate")
+    if not isinstance(syntax_rate, (int, float)):
+        raise ConfigError("result is missing validated syntax_rate for CW")
+    return float(syntax_rate)
+
+
+def codex_auth_probe() -> dict[str, Any]:
+    """Verify the exact author route with a tiny isolated sentinel request."""
+    executable = os.environ.get("CSD_CODEX_EXECUTABLE", "codex")
+    sentinel = "CSD_AUTH_SENTINEL_9f7a"
+    cwd = Path(tempfile.mkdtemp(prefix="tableq-codex-probe-cwd-"))
+    output = cwd / "probe.txt"
+    try:
+        result = subprocess.run(
+            [
+                executable, "exec", "--model", "gpt-5.6-sol", "--sandbox", "read-only",
+                "--ephemeral", "--ignore-user-config", "--ignore-rules",
+                "--skip-git-repo-check", "--cd", str(cwd), "--output-last-message",
+                str(output), "-",
+            ],
+            input=f"Return exactly {sentinel} and nothing else.\n",
+            capture_output=True,
+            text=True,
+                timeout=90,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"returncode": 1, "stdout": "", "stderr": type(exc).__name__}
+    try:
+        response = output.read_text(encoding="utf-8").strip()
+    except OSError:
+        response = ""
+    finally:
+        import shutil
+        shutil.rmtree(cwd, ignore_errors=True)
+    return {"returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr, "status": "ready" if result.returncode == 0 and response == sentinel else "blocked"}
+
+
+def validate_provider_pilot(
+    profile: str, pilot: Any, git_commit: str | None
+) -> str | None:
+    """Validate a one-attempt provider pilot bound to the exact code bytes."""
+    if not isinstance(pilot, dict) or pilot.get("status") != "ready":
+        return f"{profile} provider pilot is missing or not ready"
+    if not git_commit or pilot.get("git_commit") != git_commit:
+        return f"{profile} provider pilot is bound to a different code commit"
+    expected = {
+        "gpt5.6-sol": ("codex", "gpt-5.6-sol"),
+        "gemini3.1-pro": ("vertex", "gemini-3.1-pro-preview"),
+        "opus5": ("claude", "claude-opus-5"),
+    }
+    backend, model = expected[profile]
+    if pilot.get("backend") != backend or pilot.get("model") != model:
+        return f"{profile} provider pilot has the wrong route"
+    if profile == "opus5":
+        if pilot.get("config_dir") != "/home/aadivyar/.claude-csd-synthesis" or pilot.get("expected_account") != "ssdear@gmail.com":
+            return "opus5 provider pilot has the wrong account or config"
+        if pilot.get("output_sha256") != sha256_text("OPUS_ROUTE_OK"):
+            return "opus5 provider pilot sentinel does not match"
+    if pilot.get("attempt_count") != 1:
+        return f"{profile} provider pilot must use exactly one attempt"
+    if pilot.get("synthesis_status") not in {"success", "rejected"}:
+        return f"{profile} provider pilot has no synthesis result"
+    if pilot.get("verification_status") not in {"success", "rejected", "not_run"}:
+        return f"{profile} provider pilot has no verifier result"
+    if pilot.get("evaluation_status") not in {"success", "rejected", "not_run"}:
+        return f"{profile} provider pilot has no evaluation result"
+    synthesis = pilot["synthesis_status"]
+    verification = pilot["verification_status"]
+    evaluation = pilot["evaluation_status"]
+    if synthesis == "rejected" and (verification != "not_run" or evaluation != "not_run"):
+        return f"{profile} provider pilot has an impossible rejection sequence"
+    if verification == "rejected" and evaluation != "not_run":
+        return f"{profile} provider pilot has an impossible verifier sequence"
+    if verification == "not_run" and synthesis == "success":
+        return f"{profile} provider pilot did not reach the verifier"
+    if verification == "success" and evaluation == "not_run":
+        return f"{profile} provider pilot did not reach evaluation"
+    response_sha = pilot.get("response_sha256")
+    if not isinstance(response_sha, str) or len(response_sha) != 64:
+        return f"{profile} provider pilot response is not hash-bound"
+    evidence_path = Path(str(pilot.get("evidence_path") or ""))
+    evidence_sha = pilot.get("evidence_sha256")
+    if (
+        not evidence_path.is_file()
+        or not isinstance(evidence_sha, str)
+        or len(evidence_sha) != 64
+        or hash_file(evidence_path) != evidence_sha
+    ):
+        return f"{profile} provider pilot evidence is missing or changed"
+    return None
+
+
+def profile_block_reason(row: dict[str, Any], environment: dict[str, str], *, provider_pilots: dict[str, Any] | None = None, cached_probes: dict[str, dict[str, Any]] | None = None) -> str | None:
+    """Return a durable pending reason, or None when this row may be admitted."""
+    if row["profile"] == "gpt5.6-sol":
+        probe = (cached_probes or {}).get("gpt5.6-sol") or codex_auth_probe()
+        text = f"{probe.get('stdout', '')}\n{probe.get('stderr', '')}".lower()
+        if probe.get("status") != "ready" and (probe.get("returncode") != 0 or "invalid_refresh_token" in text or "logged in using chatgpt" not in text):
+            LOGGER.error("[tableq] auth-block profile=gpt5.6-sol reason=codex-local-auth")
+            return "codex local authentication is unavailable or invalid"
+    checked_environment = dict(environment)
+    if row["profile"] == "gemini3.1-pro" and row.get("vertex_project"):
+        if row["vertex_project"] != verified_adc_project(environment):
+            return "gemini3.1-pro row is not bound to the active ADC project"
+        checked_environment["GOOGLE_CLOUD_PROJECT"] = str(row["vertex_project"])
+        checked_environment["VERTEX_AI_PROJECT"] = str(row["vertex_project"])
+        checked_environment["GOOGLE_CLOUD_LOCATION"] = "global"
+    try:
+        validate_profile_gates([row], checked_environment)
+    except ConfigError as exc:
+        return str(exc)
+    pilot_reason = validate_provider_pilot(
+        row["profile"],
+        (provider_pilots or {}).get(row["profile"]),
+        row.get("git_commit"),
+    )
+    return pilot_reason
+
+
+def partition_profile_readiness(rows: list[dict[str, Any]], environment: dict[str, str], *, provider_pilots: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Keep auth-blocked rows pending while allowing ready profiles to run."""
+    ready: list[dict[str, Any]] = []
+    blocked: list[dict[str, Any]] = []
+    cached_probes: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        profile = row["profile"]
+        if profile == "gpt5.6-sol" and profile not in cached_probes:
+            cached_probes[profile] = codex_auth_probe()
+        reason = profile_block_reason(row, environment, provider_pilots=provider_pilots, cached_probes=cached_probes)
+        if reason is None:
+            ready.append(row)
+        else:
+            blocked.append(dict(row, status="pending", reason=reason))
+    return ready, blocked
 
 
 def provider_preflight() -> list[dict[str, str]]:
@@ -237,7 +417,7 @@ def choose_gpus(row: dict[str, Any], snapshot: dict[int, dict[str, int]], reserv
     return None
 
 
-def manifest_payload(repo: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
+def manifest_payload(repo: Path, rows: list[dict[str, Any]], provider_pilots: dict[str, Any] | None = None) -> dict[str, Any]:
     dirty = subprocess.run(
         ["git", "status", "--porcelain", "--", *SOURCE_PATHS],
         cwd=repo, check=True, capture_output=True, text=True,
@@ -252,9 +432,22 @@ def manifest_payload(repo: Path, rows: list[dict[str, Any]]) -> dict[str, Any]:
         if not path.is_file():
             raise ValueError(f"missing execution dependency: {relative}")
         sources[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    crane_sources = crane_source_hashes(repo)
     materialized = materialize_frozen_bar_sources(repo)
-    bound_rows = [dict(row, git_commit=commit, launch_commit=commit, bar_source_path=materialized[row["benchmark"]]) for row in rows]
-    return {"version": 1, "git_commit": commit, "crane_commit": CANONICAL_CRANE_COMMIT, "source_sha256": sources, "jobs": bound_rows}
+    vertex_project = verified_adc_project(os.environ)
+    bound_rows = [dict(row, git_commit=commit, launch_commit=commit, bar_source_path=materialized[row["benchmark"]], **({"vertex_project": vertex_project} if row["profile"] == "gemini3.1-pro" else {})) for row in rows]
+    pilots = provider_pilots or {}
+    pilot_hash = provider_pilots_sha256(pilots)
+    return {
+        "version": 1,
+        "git_commit": commit,
+        "crane_commit": CANONICAL_CRANE_COMMIT,
+        "crane_source_sha256": crane_sources,
+        "source_sha256": sources,
+        "jobs": bound_rows,
+        "provider_pilots": provider_pilots or {},
+        "provider_pilot_sha256": pilot_hash,
+    }
 
 
 def validate_frozen_bar_sources() -> None:
@@ -291,13 +484,59 @@ def validate_crane_checkout(repo: Path) -> None:
         raise ConfigError("unable to read isolated CRANE checkout") from exc
     if head != CANONICAL_CRANE_COMMIT:
         raise ConfigError(f"CRANE checkout must be {CANONICAL_CRANE_COMMIT}, got {head}")
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=crane,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if dirty:
+        raise ConfigError("isolated CRANE checkout has uncommitted or untracked files")
+
+
+def crane_source_hashes(repo: Path) -> dict[str, str]:
+    """Hash every tracked CRANE file so a clean but altered checkout is rejected."""
+    crane = repo / "legacy" / "CRANE"
+    names = subprocess.run(
+        ["git", "-C", str(crane), "ls-files", "-z"],
+        check=True,
+        capture_output=True,
+    ).stdout.decode("utf-8").split("\0")
+    return {
+        f"legacy/CRANE/{name}": hash_file(crane / name)
+        for name in names
+        if name
+    }
+
+
+def verified_adc_project(environment: dict[str, str]) -> str:
+    """Read the project bound to the configured ADC file, never an endpoint token."""
+    adc = environment.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+    if not adc:
+        return ""
+    try:
+        payload = json.loads(Path(adc).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    project = payload.get("project_id")
+    return str(project) if isinstance(project, str) and project else ""
 
 
 def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Validate a manifest before any child process or provider is started."""
+    if set(payload) != MANIFEST_KEYS:
+        raise ConfigError("manifest contains unknown or missing top-level keys")
     if payload.get("crane_commit") != CANONICAL_CRANE_COMMIT:
         raise ConfigError("manifest is not bound to the approved CRANE checkout")
     validate_crane_checkout(repo)
+    if payload.get("crane_source_sha256") != crane_source_hashes(repo):
+        raise ConfigError("CRANE source bytes differ from the manifest")
+    pilots = payload.get("provider_pilots")
+    if not isinstance(pilots, dict):
+        raise ConfigError("provider_pilots must be a JSON object")
+    if payload.get("provider_pilot_sha256") != provider_pilots_sha256(pilots):
+        raise ConfigError("embedded provider pilot evidence hash does not match")
     rows = payload.get("jobs")
     if not isinstance(rows, list) or len(rows) != 31:
         raise ConfigError("manifest must contain exactly 31 Table 5--8 jobs")
@@ -307,18 +546,23 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
         "profile", "generation_backend", "generation_model", "eval_model",
         "smiles_class", "token_budget", "beam_size", "adaptive_helper_mask",
         "helper_selection_policy", "max_iterations", "min_accuracy",
-        "min_syntax_rate", "synthesis_max_tokens", "eval_sample_size",
+        "min_syntax_rate", "synthesis_max_tokens", "synthesis_reasoning_budget",
+        "eval_sample_size",
         "heldout_sample_size", "eval_max_steps", "eval_max_seconds", "gpu_mem_util",
         "memory_reservation_mib", "gpu_scope", "gpu_count", "heldout_split_name",
         "heldout_split_file", "sample_count", "output_name", "heldout_output_json",
         "log_file", "cold_start", "bar_source_sha256",
     }
     for actual, frozen in zip(rows, expected):
+        if set(actual) - JOB_KEYS:
+            raise ConfigError(f"job contains unknown fields: {actual.get('cell_id', '<unknown>')}")
         for field in immutable_fields:
             if actual.get(field) != frozen.get(field):
                 raise ConfigError(f"manifest field {field} differs for {frozen['cell_id']}")
         if actual.get("git_commit") != payload.get("git_commit"):
             raise ConfigError(f"row commit is not bound to manifest commit: {actual['cell_id']}")
+        if actual.get("profile") == "gemini3.1-pro" and not actual.get("vertex_project"):
+            raise ConfigError(f"Vertex row is missing its approved ADC project: {actual['cell_id']}")
         copied_bar = Path(str(actual.get("bar_source_path", "")))
         if copied_bar.is_absolute() or not (repo / copied_bar).is_file() or hashlib.sha256((repo / copied_bar).read_bytes()).hexdigest() != actual.get("bar_source_sha256"):
             raise ConfigError(f"bar source is not a copied immutable artifact: {actual['cell_id']}")
@@ -348,9 +592,21 @@ def synthesis_environment(row: dict[str, Any], gpus: tuple[int, ...], inherited:
         env["CSD_CLAUDE_CONFIG_DIR"] = "/home/aadivyar/.claude-csd-synthesis"
         env["CSD_CLAUDE_EXPECTED_ACCOUNT"] = "ssdear@gmail.com"
     if row["profile"] == "gemini3.1-pro":
-        for key in ("GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI"):
+        for key in (
+            "VERTEX_AI_PROJECT", "VERTEX_AI_LOCATION", "VERTEX_AI_BASE_URL",
+            "VERTEX_AI_API_KEY", "VERTEX_AI_ACCESS_TOKEN", "GOOGLE_CLOUD_PROJECT",
+            "GOOGLE_CLOUD_LOCATION", "GOOGLE_VERTEX_LOCATION", "GOOGLE_API_KEY",
+            "GEMINI_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI",
+        ):
             env.pop(key, None)
+        project = str(row.get("vertex_project") or "")
+        if project:
+            env["VERTEX_AI_PROJECT"] = project
+            env["GOOGLE_CLOUD_PROJECT"] = project
         env["GOOGLE_CLOUD_LOCATION"] = "global"
+        env["VERTEX_AI_LOCATION"] = "global"
+        env["GOOGLE_VERTEX_LOCATION"] = "global"
+        env["VERTEX_AI_BASE_URL"] = "https://aiplatform.googleapis.com/v1"
         env["CSD_GEMINI_BACKEND"] = "vertex"
         env["CSD_GEMINI_MODEL"] = "gemini-3.1-pro-preview"
     if row["dataset"] == "smiles":
@@ -381,6 +637,25 @@ def artifact_is_new_or_replaced(path: Path, before: dict[str, Any] | None) -> bo
     return after is not None and after != before
 
 
+def expected_heldout_indices(row: dict[str, Any]) -> list[int] | None:
+    """Read the exact held-out index list from the manifest-bound split."""
+    if row["dataset"] == "smiles":
+        return None
+    split_path = Path(str(row.get("heldout_split_file", "")))
+    if not split_path.is_absolute():
+        split_path = Path.cwd() / split_path
+    try:
+        split = json.loads(split_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    indices = split.get("test_indices")
+    if not isinstance(indices, list) or len(indices) != int(row["heldout_sample_size"]):
+        return None
+    if any(type(index) is not int or index < 0 for index in indices):
+        return None
+    return indices
+
+
 def heldout_artifact_is_valid(path: Path, row: dict[str, Any]) -> bool:
     """Validate the cold artifact while honoring this row's token budget."""
     try:
@@ -390,10 +665,66 @@ def heldout_artifact_is_valid(path: Path, row: dict[str, Any]) -> bool:
         answers = payload.get("answers")
         provenance = payload.get("reevaluation_provenance") or {}
         compiled = Path(str(provenance["compiled_csd_path"]))
-        compiled_hash = hashlib.sha256(compiled.read_bytes()).hexdigest()
+        compiled_hash = hash_file(compiled)
         split = payload.get("eval_split") or {}
         prefix = "gsm" if row["dataset"] == "gsm_symbolic" else "spider"
         split_ok = row["dataset"] == "smiles" or (split.get(f"{prefix}_split_name") == "test" and str(split.get(f"{prefix}_split_file")) == str(row["heldout_split_file"]))
+        indices = provenance.get("evaluated_source_indices")
+        if not isinstance(indices, list) or len(indices) != expected or len(set(indices)) != expected:
+            return False
+        if not all(type(index) is int and index >= 0 for index in indices):
+            return False
+        expected_indices = expected_heldout_indices(row)
+        if row["dataset"] != "smiles" and (expected_indices is None or indices != expected_indices):
+            return False
+        if not isinstance(answers, list) or any(
+            not isinstance(answer, dict)
+            or not isinstance(answer.get("generated_answer"), str)
+            or not answer.get("generated_answer", "").strip()
+            for answer in answers
+        ):
+            return False
+        answer_indices = [answer.get("source_index") for answer in answers]
+        if answer_indices != indices:
+            return False
+        generated_answers = [answer["generated_answer"].strip() for answer in answers]
+        if (
+            len(set(generated_answers)) == 1
+            and float(payload.get("accuracy", -1)) == 0.0
+            and float(payload.get("syntax_rate", -1)) == 0.0
+        ):
+            return False
+        if row["dataset"] == "smiles":
+            trial = payload.get("smiles_paper_trial")
+            if not isinstance(trial, dict):
+                return False
+            unique_count = trial.get("unique_valid_count")
+            if trial.get("sample_count") != expected or type(unique_count) is not int or not 0 <= unique_count <= expected:
+                return False
+            if "unique_valid_rate" in trial and not math.isclose(float(trial["unique_valid_rate"]), unique_count / expected, rel_tol=0.0, abs_tol=1e-12):
+                return False
+        correct_flags = [answer.get("is_correct") for answer in answers]
+        syntax_flags = [answer.get("is_syntax_valid") for answer in answers]
+        if any(type(flag) is not bool for flag in (*correct_flags, *syntax_flags)):
+            return False
+        expected_accuracy = (
+            float(payload["smiles_paper_trial"]["unique_valid_count"]) / expected
+            if row["dataset"] == "smiles"
+            else sum(correct_flags) / expected
+        )
+        if not math.isclose(float(payload["accuracy"]), expected_accuracy, rel_tol=0.0, abs_tol=1e-12):
+            return False
+        if not math.isclose(float(payload["syntax_rate"]), sum(syntax_flags) / expected, rel_tol=0.0, abs_tol=1e-12):
+            return False
+        expected_manifest = row.get("manifest_commit") or row.get("git_commit")
+        if expected_manifest and provenance.get("manifest_commit") != expected_manifest:
+            return False
+        bound_compiled = row.get("compiled_csd_path")
+        if bound_compiled and Path(str(bound_compiled)).resolve() != compiled.resolve():
+            return False
+        expected_compiled_hash = row.get("compiled_sha256")
+        if expected_compiled_hash and expected_compiled_hash != compiled_hash:
+            return False
         return (
             int(metrics.get("num_examples") or 0) == expected
             and isinstance(answers, list) and len(answers) == expected
@@ -417,6 +748,24 @@ def controller_manifest_path(input_path: Path, output_path: Path) -> Path:
     if input_path.resolve() == output_path.resolve():
         raise ConfigError("controller cannot overwrite its input manifest")
     return input_path
+
+
+def validate_controller_paths(args: argparse.Namespace) -> None:
+    """Reject output collisions before any GPU or provider work starts."""
+    manifest = args.manifest.resolve()
+    log = args.log.resolve()
+    if log == manifest:
+        raise ConfigError("controller log cannot overwrite its input manifest")
+    if args.export is not None and args.export.resolve() in {manifest, log}:
+        raise ConfigError("controller export must be separate from manifest and log")
+    if not args.dry_run and args.export is None:
+        raise ConfigError("--export is required for a real controller run")
+    if (
+        not args.gpus
+        or len(set(args.gpus)) != len(args.gpus)
+        or not set(args.gpus).issubset({0, 1, 2, 3})
+    ):
+        raise ConfigError("GPU scope must be a nonempty unique subset of 0,1,2,3")
 
 
 def controller_parser() -> argparse.ArgumentParser:
@@ -464,14 +813,24 @@ def load_terminal_results(repo: Path, rows: list[dict[str, Any]]) -> list[dict[s
 
 
 def controller_main(args: argparse.Namespace) -> int:
+    validate_controller_paths(args)
+    with controller_lock(args.state_dir):
+        return _controller_main_locked(args)
+
+
+def _controller_main_locked(args: argparse.Namespace) -> int:
     repo = Path.cwd()
     manifest_bytes = args.manifest.read_bytes()
     payload = json.loads(manifest_bytes)
     rows = validate_manifest(repo, payload)
-    validate_profile_gates(rows, os.environ)
     manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+    ready_rows, blocked_rows = partition_profile_readiness(
+        rows,
+        os.environ,
+        provider_pilots=payload.get("provider_pilots"),
+    )
     args.state_dir.mkdir(parents=True, exist_ok=True)
-    write_state(args.state_dir / "controller.json", {"manifest_sha256": manifest_sha, "status": "validated", "scope": len(rows)})
+    write_state(args.state_dir / "controller.json", {"manifest_sha256": manifest_sha, "status": "validated", "scope": len(rows), "ready": len(ready_rows), "auth_blocked": len(blocked_rows)})
     logging.basicConfig(filename=args.log, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     LOGGER.info("[tableq] input manifest sha256=%s scope=%d", manifest_sha, len(rows))
     if args.dry_run:
@@ -480,13 +839,18 @@ def controller_main(args: argparse.Namespace) -> int:
             print(row["cell_id"], shlex.join(synthesis_command(row, args.python)))
         return 0
     from scripts.runtime.run_cold_synthesis_queue import gpu_memory_snapshot
-    rows = [dict(row, manifest_sha256=manifest_sha) for row in rows]
+    rows = [dict(row, manifest_sha256=manifest_sha, manifest_commit=manifest_sha) for row in ready_rows]
     results = dispatch(rows, repo=repo, python=args.python, state_dir=args.state_dir, allowed=args.gpus, snapshot=gpu_memory_snapshot, poll_seconds=args.poll_seconds)
+    for blocked in blocked_rows:
+        blocked_row = dict(blocked, manifest_sha256=manifest_sha, manifest_commit=manifest_sha)
+        write_state(_state_path(args.state_dir, blocked_row), blocked_row)
+        results.append(blocked_row)
     if any(result.get("status") == "failed" for result in results):
         return 1
+    if blocked_rows:
+        write_state(args.state_dir / "controller.json", {"manifest_sha256": manifest_sha, "status": "pending", "scope": len(rows) + len(blocked_rows), "ready": len(rows), "auth_blocked": len(blocked_rows)})
+        return 0
     values = load_terminal_results(repo, rows)
-    if args.export is None:
-        raise ConfigError("--export is required for a real controller run")
     controller_manifest_path(args.manifest, args.export)
     export_results(rows, values, args.export)
     write_state(args.state_dir / "controller.json", {"manifest_sha256": manifest_sha, "status": "complete", "scope": len(rows), "export": str(args.export)})
@@ -497,16 +861,167 @@ def _state_path(state_dir: Path, row: dict[str, Any]) -> Path:
     return state_dir / f"{row['cell_id']}.json"
 
 
-def _compiled_output(repo: Path, row: dict[str, Any]) -> Path | None:
-    explicit = row.get("compiled_csd_path")
-    if explicit:
-        path = Path(str(explicit))
-        if not path.is_absolute():
-            path = repo / path
-        return path if path.is_file() else None
+def _report_matches_row(
+    report: dict[str, Any], row: dict[str, Any], *, require_exhausted: bool
+) -> bool:
+    """Check that a synthesis report was produced by this exact queue row."""
+    config = report.get("run_configuration") or {}
+    author = config.get("author_model") or {}
+    evaluation = config.get("evaluation") or {}
+    controls = config.get("synthesis_controls") or {}
+    thresholds = config.get("thresholds") or {}
     try:
-        from scripts.runtime.run_cold_synthesis_queue import current_run_dir
-        run_dir = current_run_dir(repo, str(row["output_name"]))
+        attempts = int(report["total_attempts"])
+        max_iterations = int(row["max_iterations"])
+        exact = (
+            1 <= attempts <= max_iterations
+            and config.get("task_description") == row["task"]
+            and config.get("output_name") == row["output_name"]
+            and config.get("git_commit") == row.get("git_commit")
+            and int(config.get("max_iterations") or -1) == max_iterations
+            and author.get("backend") == row["generation_backend"]
+            and author.get("model") == row["generation_model"]
+            and int(author.get("max_new_tokens") or -1)
+            == int(row["synthesis_max_tokens"])
+            and int(author.get("reasoning_budget_tokens") or -1)
+            == int(row["synthesis_reasoning_budget"])
+            and evaluation.get("dataset") == row["dataset"]
+            and evaluation.get("eval_model") == row["eval_model"]
+            and int(evaluation.get("eval_sample_size") or -1)
+            == int(row["eval_sample_size"])
+            and int(evaluation.get("eval_max_steps") or -1)
+            == int(row["eval_max_steps"])
+            and int(evaluation.get("eval_step_token_budget") or -1)
+            == int(row["token_budget"])
+            and math.isclose(
+                float(evaluation.get("eval_max_seconds_per_example") or -1),
+                float(row["eval_max_seconds"]),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            and int(evaluation.get("min_examples_before_threshold_stop") or -1)
+            == int(row["eval_sample_size"])
+            and controls.get("adaptive_helper_mask")
+            is bool(row["adaptive_helper_mask"])
+            and controls.get("helper_selection_policy")
+            == row["helper_selection_policy"]
+            and int(controls.get("refinement_beam_size") or -1)
+            == int(row["beam_size"])
+            and math.isclose(
+                float(thresholds.get("min_accuracy") or 0.0),
+                float(row["min_accuracy"]),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            and math.isclose(
+                float(thresholds.get("min_syntax_rate") or 0.0),
+                float(row["min_syntax_rate"]),
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        )
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not exact or (require_exhausted and attempts != max_iterations):
+        return False
+    if row["dataset"] == "smiles":
+        return evaluation.get("smiles_classes") in (
+            row["smiles_class"],
+            [row["smiles_class"]],
+        )
+    split = evaluation.get("split_provenance") or {}
+    prefix = "gsm" if row["dataset"] == "gsm_symbolic" else "spider"
+    return (
+        split.get("bar_split_name") == "train"
+        and split.get(f"{prefix}_split_name") == "train"
+        and Path(str(split.get(f"{prefix}_split_file"))).name
+        == Path(str(row["heldout_split_file"])).name
+    )
+
+
+def _validated_compiled_output(
+    repo: Path,
+    output_name: str,
+    *,
+    min_accuracy: float,
+    min_syntax_rate: float,
+    job: dict[str, Any],
+) -> Path | None:
+    """Select only a compiled strategy proven to belong to this cold row."""
+    from scripts.runtime.run_cold_synthesis_queue import current_run_dir
+
+    run_dir = current_run_dir(repo, output_name)
+    if run_dir is None:
+        return None
+    success_report = run_dir / "results" / "success_report.json"
+    failure_report = run_dir / "results" / "failure_report.json"
+    report_path = success_report if success_report.is_file() else failure_report
+    if not report_path.is_file():
+        return None
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    exhausted = report_path == failure_report
+    if not _report_matches_row(report, job, require_exhausted=exhausted):
+        return None
+    if not exhausted:
+        compiled_dir = Path(str(report.get("compiled_dir") or ""))
+    else:
+        candidates: list[tuple[float, float, float, int, Path]] = []
+        for attempt in report.get("attempts") or []:
+            compilation = attempt.get("compilation") or {}
+            evaluation = attempt.get("evaluation") or {}
+            if (
+                compilation.get("success") is not True
+                or not compilation.get("output_dir")
+                or int(evaluation.get("num_examples") or 0) < 1
+            ):
+                continue
+            accuracy = float(evaluation.get("accuracy") or 0.0)
+            syntax = float(evaluation.get("syntax_rate") or 0.0)
+            shortfall = max(0.0, min_accuracy - accuracy) + max(
+                0.0, min_syntax_rate - syntax
+            )
+            candidates.append(
+                (
+                    shortfall,
+                    -accuracy,
+                    -syntax,
+                    int(attempt.get("attempt_number") or 0),
+                    Path(str(compilation["output_dir"])),
+                )
+            )
+        if not candidates:
+            return None
+        compiled_dir = min(candidates, key=lambda item: item[:4])[-1]
+    if not compiled_dir.is_absolute():
+        compiled_dir = repo / compiled_dir
+    candidate = compiled_dir / "GeneratedCSD.py"
+    return candidate if candidate.is_file() else None
+
+
+def _compiled_output(repo: Path, row: dict[str, Any]) -> Path | None:
+    try:
+        cold_compiled_csd = globals().get("cold_compiled_csd")
+        if cold_compiled_csd is None:
+            cold_compiled_csd = _validated_compiled_output
+        cold_job = dict(
+            row,
+            train_sample_size=row["eval_sample_size"],
+            train_split_file=row.get("heldout_split_file"),
+            train_split_name="train",
+        )
+        candidate = cold_compiled_csd(
+            repo,
+            str(row["output_name"]),
+            min_accuracy=float(row["min_accuracy"]),
+            min_syntax_rate=float(row["min_syntax_rate"]),
+            job=cold_job,
+        )
+        if candidate is not None:
+            return candidate
+        return None
     except (ImportError, OSError, TypeError):
         run_dir = None
     if run_dir is None:
@@ -526,6 +1041,10 @@ def run_row(row: dict[str, Any], *, repo: Path, python: Path, state_dir: Path, g
     path = _state_path(state_dir, row)
     if dry_run:
         return {"cell_id": row["cell_id"], "status": "dry_run", "command": synthesis_command(row, python)}
+    def save(payload: dict[str, Any]) -> None:
+        with state_lock(state_dir):
+            write_state(path, payload)
+
     with state_lock(state_dir):
         prior = read_state(path) or {"cell_id": row["cell_id"], "status": "pending", "phase": "synthesis"}
         if prior.get("manifest_sha256") not in (None, row.get("manifest_sha256")):
@@ -536,72 +1055,93 @@ def run_row(row: dict[str, Any], *, repo: Path, python: Path, state_dir: Path, g
                 if not output.is_absolute():
                     output = repo / output
                 current = artifact_fingerprint(output)
-                if current is None or current.get("sha256") != prior.get("heldout_sha256") or not heldout_artifact_is_valid(output, row):
+                bound_row = dict(row, compiled_csd_path=prior.get("compiled_csd_path"), compiled_sha256=prior.get("compiled_sha256"), manifest_commit=prior.get("manifest_commit"))
+                if current is None or current.get("sha256") != prior.get("heldout_sha256") or not heldout_artifact_is_valid(output, bound_row):
                     raise ConfigError(f"completed state failed artifact revalidation: {row['cell_id']}")
             return prior
         if prior.get("status") == "running" and child_is_same_process(prior):
             LOGGER.info("[tableq] surviving child cell=%s phase=%s pid=%s", row["cell_id"], prior.get("phase"), prior.get("pid"))
             return prior
         phase = str(prior.get("phase") or "synthesis")
-        env = synthesis_environment(row, gpus, os.environ, repo)
-        command = synthesis_command(row, python)
-        def start(argv: list[str]):
-            if runner is not None:
-                return runner(argv, cwd=repo, env=env)
-            return subprocess.Popen(argv, cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        recovered = _compiled_output(repo, row) if phase == "synthesis" else None
-        if recovered is not None:
-            prior = dict(prior, phase="heldout", compiled_csd_path=str(recovered))
-            write_state(path, prior)
-            phase = "heldout"
-        if phase == "synthesis":
-            before_output = None
-            process = start(command)
-            LOGGER.info("[tableq] launch cell=%s phase=synthesis gpus=%s", row["cell_id"], gpus)
-            running = dict(prior, manifest_sha256=row.get("manifest_sha256"), status="running", phase="synthesis", pid=process.pid, pid_start=process_start_identity(process.pid), output_before=before_output)
-            write_state(path, running)
-            _output, _ = process.communicate()
-            exit_code = process.returncode
-            running.pop("pid", None); running.pop("pid_start", None)
-            if exit_code != 0:
-                failed = dict(running, status="failed", exit_code=exit_code, reason="synthesis failed")
-                write_state(path, failed)
-                return failed
-            compiled = _compiled_output(repo, row)
-            if compiled is None:
-                failed = dict(running, status="failed", exit_code=1, reason="synthesis returned success without a compiled artifact")
-                write_state(path, failed)
-                return failed
-            prior = dict(running, phase="heldout", compiled_csd_path=str(compiled))
-            write_state(path, prior)
-        compiled = Path(str(prior["compiled_csd_path"]))
-        final_output = repo / str(row["heldout_output_json"])
-        final_output.parent.mkdir(parents=True, exist_ok=True)
-        before = artifact_fingerprint(final_output)
-        temporary = final_output.with_name(f".{final_output.name}.{os.getpid()}.tmp")
-        heldout_row = dict(row, heldout_output_json=str(temporary))
-        process = start(heldout_command(heldout_row, python, compiled))
-        LOGGER.info("[tableq] launch cell=%s phase=heldout gpus=%s", row["cell_id"], gpus)
-        running = dict(prior, status="running", phase="heldout", pid=process.pid, pid_start=process_start_identity(process.pid), heldout_output_before=before)
-        write_state(path, running)
+    env = synthesis_environment(row, gpus, os.environ, repo)
+    command = synthesis_command(row, python)
+    def start(argv: list[str]):
+        if runner is not None:
+            return runner(argv, cwd=repo, env=env)
+        return subprocess.Popen(argv, cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    recovered = None
+    if phase == "synthesis" and prior.get("status") == "running":
+        same_manifest = prior.get("manifest_sha256") == row.get("manifest_sha256") and prior.get("cell_id") == row.get("cell_id")
+        latest = repo / "outputs" / "generated" / str(row["output_name"]) / "latest_run.txt"
+        fresh_latest = artifact_is_new_or_replaced(latest, prior.get("output_before"))
+        if same_manifest and fresh_latest:
+            recovered = _compiled_output(repo, row)
+    if recovered is not None:
+        prior = dict(prior, phase="heldout", compiled_csd_path=str(recovered))
+        save(prior)
+        phase = "heldout"
+    elif phase == "synthesis" and prior.get("status") == "running":
+        failed = dict(prior, status="failed", reason="synthesis child ended without a new bound compiled artifact", exit_code=1)
+        failed.pop("pid", None); failed.pop("pid_start", None)
+        save(failed)
+        return failed
+
+    if phase == "synthesis":
+        latest = repo / "outputs" / "generated" / str(row["output_name"]) / "latest_run.txt"
+        before_output = artifact_fingerprint(latest)
+        process = start(command)
+        LOGGER.info("[tableq] launch cell=%s phase=synthesis gpus=%s", row["cell_id"], gpus)
+        running = dict(prior, manifest_sha256=row.get("manifest_sha256"), manifest_commit=row.get("manifest_commit") or row.get("manifest_sha256") or row.get("git_commit"), cell_id=row["cell_id"], status="running", phase="synthesis", pid=process.pid, pid_start=process_start_identity(process.pid), output_before=before_output)
+        save(running)
         _output, _ = process.communicate()
         exit_code = process.returncode
         running.pop("pid", None); running.pop("pid_start", None)
-        if exit_code != 0 or not artifact_is_new_or_replaced(temporary, None) or not heldout_artifact_is_valid(temporary, heldout_row):
-            failed = dict(running, status="failed", exit_code=exit_code or 1, reason="held-out evaluation failed or produced no artifact")
-            write_state(path, failed)
+        has_new_run = artifact_is_new_or_replaced(latest, before_output)
+        if not has_new_run:
+            failed = dict(running, status="failed", exit_code=1, reason="synthesis returned success without a new run report")
+            save(failed)
             return failed
-        temporary.replace(final_output)
-        complete = dict(
-            running,
-            status="complete",
-            exit_code=0,
-            heldout_output_json=str(final_output),
-            heldout_sha256=artifact_fingerprint(final_output)["sha256"],
-            compiled_sha256=artifact_fingerprint(compiled)["sha256"],
-        )
-        write_state(path, complete)
-        return complete
+        compiled = _compiled_output(repo, row)
+        if compiled is None:
+            failed = dict(running, status="failed", exit_code=exit_code or 1, reason="synthesis failed or produced no recoverable compiled artifact")
+            save(failed)
+            return failed
+        prior = dict(running, phase="heldout", compiled_csd_path=str(compiled), compiled_sha256=artifact_fingerprint(compiled)["sha256"], synthesis_exit_code=exit_code)
+        save(prior)
+
+    compiled = Path(str(prior["compiled_csd_path"]))
+    if prior.get("compiled_sha256") and artifact_fingerprint(compiled).get("sha256") != prior["compiled_sha256"]:
+        failed = dict(prior, status="failed", reason="compiled artifact changed before held-out evaluation", exit_code=1)
+        save(failed)
+        return failed
+    final_output = repo / str(row["heldout_output_json"])
+    final_output.parent.mkdir(parents=True, exist_ok=True)
+    before = artifact_fingerprint(final_output)
+    temporary = final_output.with_name(f".{final_output.name}.{os.getpid()}.tmp")
+    heldout_row = dict(row, heldout_output_json=str(temporary))
+    process = start(heldout_command(heldout_row, python, compiled))
+    LOGGER.info("[tableq] launch cell=%s phase=heldout gpus=%s", row["cell_id"], gpus)
+    running = dict(prior, status="running", phase="heldout", pid=process.pid, pid_start=process_start_identity(process.pid), heldout_output_before=before)
+    save(running)
+    _output, _ = process.communicate()
+    exit_code = process.returncode
+    running.pop("pid", None); running.pop("pid_start", None)
+    if exit_code != 0 or not artifact_is_new_or_replaced(temporary, None) or not heldout_artifact_is_valid(temporary, heldout_row):
+        failed = dict(running, status="failed", exit_code=exit_code or 1, reason="held-out evaluation failed or produced no artifact")
+        save(failed)
+        return failed
+    temporary.replace(final_output)
+    complete = dict(
+        running,
+        status="complete",
+        exit_code=0,
+        heldout_output_json=str(final_output),
+        heldout_sha256=artifact_fingerprint(final_output)["sha256"],
+        compiled_sha256=artifact_fingerprint(compiled)["sha256"],
+    )
+    save(complete)
+    return complete
 
 
 def dispatch(rows: list[dict[str, Any]], *, repo: Path, python: Path, state_dir: Path, allowed: tuple[int, ...], snapshot: Any, poll_seconds: float = 30.0, dry_run: bool = False) -> list[dict[str, Any]]:
@@ -612,25 +1152,47 @@ def dispatch(rows: list[dict[str, Any]], *, repo: Path, python: Path, state_dir:
     while pending:
         live = snapshot()
         next_pending: list[dict[str, Any]] = []
-        progressed = False
+        admitted: list[tuple[dict[str, Any], tuple[int, ...], int]] = []
+        surviving_child = False
         for row in pending:
+            state = read_state(_state_path(state_dir, row))
+            if state and state.get("status") == "running" and child_is_same_process(state):
+                LOGGER.info(
+                    "[tableq] poll-surviving-child cell=%s phase=%s pid=%s",
+                    row["cell_id"],
+                    state.get("phase"),
+                    state.get("pid"),
+                )
+                next_pending.append(row)
+                surviving_child = True
+                continue
             gpus = choose_gpus(row, live, reservations, live, allowed)
             if gpus is None:
                 next_pending.append(row)
                 continue
-            progressed = True
             LOGGER.info("[tableq] admission cell=%s gpus=%s", row["cell_id"], gpus)
+            demand = _demand(row, int(live[gpus[0]]["total_mib"]))
             for gpu in gpus:
-                reservations[gpu] = reservations.get(gpu, 0) + _demand(row, int(live[gpu]["total_mib"]))
-            result = run_row(row, repo=repo, python=python, state_dir=state_dir, gpus=gpus, dry_run=dry_run)
-            if result.get("status") == "running":
-                next_pending.append(row)
-            else:
-                results.append(result)
-            for gpu in gpus:
-                reservations[gpu] -= _demand(row, int(live[gpu]["total_mib"]))
+                reservations[gpu] = reservations.get(gpu, 0) + demand
+            admitted.append((row, gpus, demand))
+        if admitted:
+            with ThreadPoolExecutor(max_workers=len(admitted), thread_name_prefix="tableq") as pool:
+                futures = {
+                    pool.submit(run_row, row, repo=repo, python=python, state_dir=state_dir, gpus=gpus, dry_run=dry_run): (row, gpus, demand)
+                    for row, gpus, demand in admitted
+                }
+                for future, (row, gpus, demand) in futures.items():
+                    result = future.result()
+                    if result.get("status") == "running":
+                        next_pending.append(row)
+                    else:
+                        results.append(result)
+                    for gpu in gpus:
+                        reservations[gpu] -= demand
         pending = next_pending
-        if pending and not progressed:
+        if pending and surviving_child:
+            time.sleep(max(0.1, poll_seconds))
+        elif pending and not admitted:
             if dry_run:
                 results.extend({"cell_id": row["cell_id"], "status": "waiting", "command": synthesis_command(row, python)} for row in pending)
                 break
@@ -683,7 +1245,26 @@ def child_is_same_process(state: dict[str, Any]) -> bool:
 
 
 def lock_path(state_dir: Path) -> Path:
-    return state_dir / "table5_8.lock"
+    return state_dir / "table5_8.state.lock"
+
+
+def controller_lock_path(state_dir: Path) -> Path:
+    return state_dir / "table5_8.controller.lock"
+
+
+@contextmanager
+def controller_lock(state_dir: Path):
+    """Keep exactly one Table 5--8 controller alive for this state directory."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    handle = controller_lock_path(state_dir).open("a+", encoding="utf-8")
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ConfigError("a Table 5--8 controller is already running") from exc
+        yield handle
+    finally:
+        handle.close()
 
 
 def state_lock(state_dir: Path):
@@ -703,12 +1284,18 @@ def export_results(rows: list[dict[str, Any]], values: list[dict[str, Any]], out
         value = dict(by_id[row["cell_id"]])
         value.update({"cell_id": row["cell_id"], "table": row["table"], "table_cell_id": row["table_cell_id"], "benchmark": row["benchmark"]})
         if row["benchmark"] != "smiles":
-            metric = "execution_accuracy" if row["benchmark"] == "spider" else "accuracy"
+            metric = "accuracy"
             if not isinstance(value.get(metric), (int, float)):
                 raise ConfigError(f"missing {metric} for {row['cell_id']}")
-            value["cw"] = helper_call_weight(value)
-        elif not isinstance(value.get("unique_valid_rate"), (int, float)):
-            raise ConfigError(f"missing unique_valid_rate for {row['cell_id']}")
+            value["cw"] = constrained_window_rate(value)
+        else:
+            trial = value.get("smiles_paper_trial") or {}
+            count = trial.get("sample_count")
+            unique = trial.get("unique_valid_count")
+            if not isinstance(count, int) or count <= 0 or not isinstance(unique, int) or unique < 0 or unique > count:
+                raise ConfigError(f"missing validated smiles_paper_trial for {row['cell_id']}")
+            value["sample_count"] = count
+            value["unique_valid_rate"] = unique / count
         groups.setdefault(row["table_cell_id"], []).append(value)
     for cell_id, group in groups.items():
         item = {"table_cell_id": cell_id, "table": group[0]["table"], "benchmark": group[0]["benchmark"]}
@@ -716,7 +1303,7 @@ def export_results(rows: list[dict[str, Any]], values: list[dict[str, Any]], out
             item["unique_valid_rate"] = weighted_smiles_rate(group)
             item["sample_count"] = sum(int(v["sample_count"]) for v in group)
         else:
-            metric = "execution_accuracy" if group[0]["benchmark"] == "spider" else "accuracy"
+            metric = "accuracy"
             item[metric] = group[0][metric]
             item["cw"] = group[0]["cw"]
         cells.append(item)
@@ -733,6 +1320,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build or dry-run the Table 5--8 queue")
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--manifest", type=Path, default=None)
+    parser.add_argument("--provider-pilots", type=Path, default=None, help="JSON file containing non-secret, manifest-bound provider pilot evidence")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     rows = build_scope(args.repo)
@@ -742,7 +1330,13 @@ def main() -> int:
         for row in rows:
             print(row["cell_id"], shlex.join(synthesis_command(row, Path(sys.executable))))
         return 0
-    payload = manifest_payload(args.repo, rows)
+    provider_pilots = None
+    if args.provider_pilots is not None:
+        raw_pilots = args.provider_pilots.read_bytes()
+        provider_pilots = json.loads(raw_pilots.decode("utf-8"))
+        if not isinstance(provider_pilots, dict):
+            raise SystemExit("--provider-pilots must contain a JSON object")
+    payload = manifest_payload(args.repo, rows, provider_pilots=provider_pilots)
     target = args.manifest or args.repo / "outputs/controlled_comparison/table5_8_manifest.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
