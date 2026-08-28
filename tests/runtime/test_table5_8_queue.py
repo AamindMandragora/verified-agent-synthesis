@@ -112,9 +112,15 @@ def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, 
         "spider": {"min_accuracy": 59 / 300, "min_syntax_rate": 0.9, "source_path": str(bar_path), "source_sha256": bar_sha},
         "smiles": {"acrylates": {"min_accuracy": 0.14, "min_syntax_rate": 0.9}, "chain_extenders": {"min_accuracy": 0.20, "min_syntax_rate": 0.9}, "isocyanates": {"min_accuracy": 0.30, "min_syntax_rate": 0.9}, "source_path": str(bar_path), "source_sha256": bar_sha},
     })
+    monkeypatch.setattr(queue, "verified_adc_project", lambda environment: "paper-project")
     payload = queue.manifest_payload(tmp_path, queue.build_scope(tmp_path))
     assert payload["crane_commit"] == queue.CANONICAL_CRANE_COMMIT
     assert set(payload["source_sha256"]) == set(paths)
+    assert len(queue.validate_manifest(tmp_path, payload)) == 31
+    changed_limits = json.loads(json.dumps(payload))
+    changed_limits["jobs"][0]["effective_output_tokens"] = 1
+    with pytest.raises(queue.ConfigError, match="effective_output_tokens"):
+        queue.validate_manifest(tmp_path, changed_limits)
     (tmp_path / paths[0]).write_text("changed", encoding="utf-8")
     with pytest.raises(queue.ConfigError):
         queue.manifest_payload(tmp_path, queue.build_scope(tmp_path))
@@ -132,6 +138,9 @@ def test_environment_binds_selected_gpu_cap_and_opus_account(monkeypatch, tmp_pa
     env = queue.synthesis_environment(row, (3,), {"PATH": "/bin"}, tmp_path)
     assert env["CUDA_VISIBLE_DEVICES"] == "3"
     assert env["CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX"] == str(row["gpu_mem_util"])
+    assert env["CSD_OUTPUT_DIR"] == str(
+        tmp_path / "outputs/generated" / row["output_name"]
+    )
     assert env["CSD_CLAUDE_CONFIG_DIR"] == "/home/aadivyar/.claude-csd-synthesis"
     assert env["CSD_CLAUDE_EXPECTED_ACCOUNT"] == "ssdear@gmail.com"
 
@@ -764,7 +773,14 @@ def test_dispatch_polls_surviving_child_without_readmitting_it(tmp_path, monkeyp
     row = next(r for r in queue.build_scope(tmp_path) if r["benchmark"] == "smiles")
     snapshot = {0: {"used_mib": 0, "free_mib": 40960, "total_mib": 40960}}
     state_reads = [
-        {"status": "running", "pid": 123, "pid_start": "one"},
+        {
+            "cell_id": row["cell_id"],
+            "status": "running",
+            "pid": 123,
+            "pid_start": "one",
+            "assigned_gpus": [0],
+            "reservation_mib": 16384,
+        },
         None,
     ]
     run_calls = []
@@ -790,6 +806,187 @@ def test_dispatch_polls_surviving_child_without_readmitting_it(tmp_path, monkeyp
     assert run_calls == [row["cell_id"]]
     assert sleeps == [0.1]
     assert results[0]["status"] == "complete"
+
+
+def test_dispatch_reserves_surviving_child_before_any_new_admission(
+    tmp_path, monkeypatch
+):
+    survivor, pending = [
+        row for row in queue.build_scope(tmp_path) if row["gpu_count"] == 1
+    ][:2]
+    survivor = dict(survivor, cell_id="survivor")
+    pending = dict(pending, cell_id="pending")
+    state_dir = tmp_path / "state"
+    queue.write_state(
+        state_dir / "survivor.json",
+        {
+            "cell_id": "survivor",
+            "status": "running",
+            "phase": "synthesis",
+            "pid": 123,
+            "pid_start": "alive",
+            "assigned_gpus": [0],
+            "reservation_mib": 16384,
+        },
+    )
+    monkeypatch.setattr(
+        queue,
+        "child_is_same_process",
+        lambda state: state.get("cell_id") == "survivor",
+    )
+    launches = []
+    monkeypatch.setattr(
+        queue,
+        "run_row",
+        lambda row, **kwargs: launches.append(row["cell_id"])
+        or {"cell_id": row["cell_id"], "status": "complete"},
+    )
+    monkeypatch.setattr(
+        queue.time,
+        "sleep",
+        lambda seconds: (_ for _ in ()).throw(RuntimeError("stop after first poll")),
+    )
+    snapshot = {0: {"total_mib": 40960, "free_mib": 33000}}
+    with pytest.raises(RuntimeError, match="first poll"):
+        queue.dispatch(
+            [pending, survivor],
+            repo=tmp_path,
+            python=Path("python"),
+            state_dir=state_dir,
+            allowed=(0,),
+            snapshot=lambda: snapshot,
+            poll_seconds=0.1,
+        )
+    assert launches == []
+
+
+def test_dispatch_rechecks_admission_after_gpu_fit_before_launch(
+    tmp_path, monkeypatch
+):
+    row = next(r for r in queue.build_scope(tmp_path) if r["benchmark"] == "smiles")
+    launches = []
+    monkeypatch.setattr(
+        queue,
+        "run_row",
+        lambda candidate, **kwargs: launches.append(candidate["cell_id"]),
+    )
+
+    def block(candidate):
+        raise queue.ConfigError(f"fresh admission blocked: {candidate['cell_id']}")
+
+    snapshot = {0: {"total_mib": 40960, "free_mib": 40960}}
+    with pytest.raises(queue.ConfigError, match="fresh admission blocked"):
+        queue.dispatch(
+            [row],
+            repo=tmp_path,
+            python=Path("python"),
+            state_dir=tmp_path / "state",
+            allowed=(0,),
+            snapshot=lambda: snapshot,
+            admission_check=block,
+        )
+    assert launches == []
+
+
+def test_admission_guard_revalidates_manifest_each_time_and_caches_live_auth(
+    tmp_path, monkeypatch
+):
+    row = next(r for r in queue.build_scope(tmp_path) if r["profile"] == "opus5")
+    row["git_commit"] = "a" * 40
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text('{"fixed":true}', encoding="utf-8")
+    expected_sha = queue.hash_file(manifest)
+    validations = []
+    auth_calls = []
+    gate_calls = []
+    monkeypatch.setattr(
+        queue,
+        "validate_manifest",
+        lambda repo, payload: validations.append(payload) or [row],
+    )
+    monkeypatch.setattr(
+        queue,
+        "claude_auth_probe",
+        lambda environment: auth_calls.append(True)
+        or {
+            "status": "ready",
+            "account": "ssdear@gmail.com",
+            "config_dir": "/home/aadivyar/.claude-csd-synthesis",
+        },
+    )
+    monkeypatch.setattr(
+        queue,
+        "profile_block_reason",
+        lambda candidate, environment, **kwargs: gate_calls.append(kwargs) or None,
+    )
+    guard = queue.make_admission_guard(
+        repo=tmp_path,
+        manifest_path=manifest,
+        expected_manifest_sha256=expected_sha,
+        environment={},
+        auth_ttl_seconds=300,
+        clock=lambda: 1000.0,
+    )
+    guard(row)
+    guard(row)
+    assert len(validations) == 2
+    assert len(gate_calls) == 2
+    assert len(auth_calls) == 1
+    manifest.write_text('{"fixed":false}', encoding="utf-8")
+    with pytest.raises(queue.ConfigError, match="manifest changed"):
+        guard(row)
+
+
+def test_logged_child_uses_append_file_and_its_own_process_group(
+    tmp_path, monkeypatch
+):
+    captured = {}
+
+    class Process:
+        pid = 123
+        returncode = 0
+
+        def communicate(self):
+            return None, None
+
+    def popen(argv, **kwargs):
+        captured.update(kwargs)
+        kwargs["stdout"].write("child output\n")
+        kwargs["stdout"].flush()
+        return Process()
+
+    monkeypatch.setattr(queue.subprocess, "Popen", popen)
+    log = tmp_path / "logs/row.log"
+    process = queue.start_logged_child(
+        ["python", "child.py"], cwd=tmp_path, env={}, log_path=log
+    )
+    queue.wait_logged_child(process)
+    assert captured["stdout"] is not subprocess.PIPE
+    assert captured["stderr"] is subprocess.STDOUT
+    assert captured["start_new_session"] is True
+    assert log.read_text(encoding="utf-8") == "child output\n"
+
+
+def test_child_start_failure_becomes_durable_failed_state(tmp_path):
+    row = next(r for r in queue.build_scope(tmp_path) if r["benchmark"] == "smiles")
+
+    def runner(argv, **kwargs):
+        raise OSError("cannot start")
+
+    result = queue.run_row(
+        row,
+        repo=tmp_path,
+        python=Path("python"),
+        state_dir=tmp_path / "state",
+        gpus=(0,),
+        reservation_mib=16384,
+        runner=runner,
+    )
+    assert result["status"] == "failed"
+    assert "failed to start" in result["reason"]
+    assert queue.read_state(
+        tmp_path / "state" / f"{row['cell_id']}.json"
+    )["status"] == "failed"
 
 
 def test_provider_pilot_is_parsed_from_one_attempt_report_and_requires_fresh_binding(tmp_path, monkeypatch):
@@ -1079,6 +1276,27 @@ def test_pilot_report_requires_its_real_compiled_artifact(tmp_path):
         )
 
 
+def test_pilot_report_accepts_real_timestamped_run_directory_layout(tmp_path):
+    commit = "a" * 40
+    run_root = tmp_path / "outputs/generated/pilot_20260828_123456_deadbeef"
+    report_path = run_root / "results/failure_report.json"
+    report = _write_real_pilot_report(report_path, "opus5", commit)
+    old_compiled = Path(report["attempts"][0]["compilation"]["output_dir"])
+    compiled = run_root / "python/pilot"
+    compiled.mkdir(parents=True)
+    (compiled / "GeneratedCSD.py").write_text("compiled", encoding="utf-8")
+    report["run_configuration"]["output_name"] = "pilot"
+    report["attempts"][0]["compilation"]["output_dir"] = str(compiled)
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert old_compiled != compiled
+    pilot = queue.provider_pilot_from_report(
+        report_path, profile="opus5", git_commit=commit, environment={}
+    )
+    assert pilot["compiled_csd_sha256"] == queue.hash_file(
+        compiled / "GeneratedCSD.py"
+    )
+
+
 def test_exhaustion_rejects_duplicate_attempt_numbers(tmp_path, monkeypatch):
     row = next(
         r
@@ -1113,3 +1331,248 @@ def test_exhaustion_rejects_duplicate_attempt_numbers(tmp_path, monkeypatch):
         min_syntax_rate=0.1,
         job=row,
     ) is None
+
+
+def test_exhaustion_requires_all_declared_attempt_records(tmp_path, monkeypatch):
+    row = next(
+        r
+        for r in queue.build_scope(tmp_path)
+        if r["profile"] == "opus5" and r["benchmark"] == "gsm_symbolic"
+    )
+    row["git_commit"] = "a" * 40
+    run_dir = tmp_path / "outputs/generated" / row["output_name"] / "run"
+    (run_dir / "results").mkdir(parents=True)
+    compiled = run_dir / "compiled/GeneratedCSD.py"
+    compiled.parent.mkdir(parents=True)
+    compiled.write_text("compiled", encoding="utf-8")
+    report = {
+        "total_attempts": row["max_iterations"],
+        "attempts": [
+            {
+                "attempt_number": 1,
+                "compilation": {
+                    "success": True,
+                    "output_dir": str(compiled.parent),
+                },
+                "evaluation": {
+                    "num_examples": row["eval_sample_size"],
+                    "accuracy": 0.5,
+                    "syntax_rate": 0.9,
+                },
+            }
+        ],
+    }
+    (run_dir / "results/failure_report.json").write_text(
+        json.dumps(report), encoding="utf-8"
+    )
+    (run_dir.parent / "latest_run.txt").write_text(str(run_dir), encoding="utf-8")
+    monkeypatch.setattr(queue, "_report_matches_row", lambda *a, **k: True)
+    assert queue._validated_compiled_output(
+        tmp_path,
+        row["output_name"],
+        min_accuracy=0.1,
+        min_syntax_rate=0.1,
+        job=row,
+    ) is None
+
+
+def test_success_report_requires_full_metrics_and_run_local_compiled_path(
+    tmp_path, monkeypatch
+):
+    row = next(
+        r
+        for r in queue.build_scope(tmp_path)
+        if r["profile"] == "opus5" and r["benchmark"] == "gsm_symbolic"
+    )
+    run_dir = tmp_path / "outputs/generated" / row["output_name"] / "run"
+    (run_dir / "results").mkdir(parents=True)
+    compiled = run_dir / "python" / row["output_name"] / "GeneratedCSD.py"
+    compiled.parent.mkdir(parents=True)
+    compiled.write_text("compiled", encoding="utf-8")
+    report = {
+        "total_attempts": 1,
+        "compiled_dir": str(compiled.parent),
+        "evaluation_result": {
+            "num_examples": row["eval_sample_size"],
+            "accuracy": row["min_accuracy"],
+            "syntax_rate": row["min_syntax_rate"],
+        },
+    }
+    report_path = run_dir / "results/success_report.json"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    (run_dir.parent / "latest_run.txt").write_text(str(run_dir), encoding="utf-8")
+    monkeypatch.setattr(queue, "_report_matches_row", lambda *a, **k: True)
+    assert queue._validated_compiled_output(
+        tmp_path,
+        row["output_name"],
+        min_accuracy=row["min_accuracy"],
+        min_syntax_rate=row["min_syntax_rate"],
+        job=row,
+    ) == compiled
+
+    outside = tmp_path / "outside/GeneratedCSD.py"
+    outside.parent.mkdir()
+    outside.write_text("outside", encoding="utf-8")
+    report["compiled_dir"] = str(outside.parent)
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert queue._validated_compiled_output(
+        tmp_path,
+        row["output_name"],
+        min_accuracy=row["min_accuracy"],
+        min_syntax_rate=row["min_syntax_rate"],
+        job=row,
+    ) is None
+
+
+def test_failure_report_rejects_compiled_candidate_outside_current_run(
+    tmp_path, monkeypatch
+):
+    row = next(
+        r
+        for r in queue.build_scope(tmp_path)
+        if r["profile"] == "opus5" and r["benchmark"] == "gsm_symbolic"
+    )
+    run_dir = tmp_path / "outputs/generated" / row["output_name"] / "run"
+    (run_dir / "results").mkdir(parents=True)
+    outside = tmp_path / "outside/GeneratedCSD.py"
+    outside.parent.mkdir()
+    outside.write_text("outside", encoding="utf-8")
+    attempts = []
+    for number in range(1, row["max_iterations"] + 1):
+        attempts.append(
+            {
+                "attempt_number": number,
+                "compilation": {
+                    "success": number == 1,
+                    "output_dir": str(outside.parent) if number == 1 else None,
+                },
+                "evaluation": {
+                    "num_examples": row["eval_sample_size"],
+                    "accuracy": 0.0,
+                    "syntax_rate": 0.0,
+                },
+            }
+        )
+    (run_dir / "results/failure_report.json").write_text(
+        json.dumps({"total_attempts": row["max_iterations"], "attempts": attempts}),
+        encoding="utf-8",
+    )
+    (run_dir.parent / "latest_run.txt").write_text(str(run_dir), encoding="utf-8")
+    monkeypatch.setattr(queue, "_report_matches_row", lambda *a, **k: True)
+    assert queue._validated_compiled_output(
+        tmp_path,
+        row["output_name"],
+        min_accuracy=row["min_accuracy"],
+        min_syntax_rate=row["min_syntax_rate"],
+        job=row,
+    ) is None
+
+
+def test_failure_report_accepts_compiler_generated_suffixed_output_dir(
+    tmp_path, monkeypatch
+):
+    row = next(
+        r
+        for r in queue.build_scope(tmp_path)
+        if r["profile"] == "opus5" and r["benchmark"] == "gsm_symbolic"
+    )
+    run_dir = tmp_path / "outputs/generated" / row["output_name"] / "run"
+    (run_dir / "results").mkdir(parents=True)
+    compiled = (
+        run_dir
+        / "python"
+        / f"{row['output_name']}_20260828_123456_deadbeef"
+        / "GeneratedCSD.py"
+    )
+    compiled.parent.mkdir(parents=True)
+    compiled.write_text("compiled", encoding="utf-8")
+    attempts = []
+    for number in range(1, row["max_iterations"] + 1):
+        attempts.append(
+            {
+                "attempt_number": number,
+                "compilation": {
+                    "success": number == 1,
+                    "output_dir": str(compiled.parent) if number == 1 else None,
+                },
+                "evaluation": {
+                    "num_examples": row["eval_sample_size"],
+                    "accuracy": 0.0,
+                    "syntax_rate": 0.0,
+                },
+            }
+        )
+    (run_dir / "results/failure_report.json").write_text(
+        json.dumps({"total_attempts": row["max_iterations"], "attempts": attempts}),
+        encoding="utf-8",
+    )
+    (run_dir.parent / "latest_run.txt").write_text(str(run_dir), encoding="utf-8")
+    monkeypatch.setattr(queue, "_report_matches_row", lambda *a, **k: True)
+    assert queue._validated_compiled_output(
+        tmp_path,
+        row["output_name"],
+        min_accuracy=row["min_accuracy"],
+        min_syntax_rate=row["min_syntax_rate"],
+        job=row,
+    ) == compiled
+
+
+def test_restart_recovery_hash_pins_compiled_before_heldout_launch(
+    tmp_path, monkeypatch
+):
+    row = next(r for r in queue.build_scope(tmp_path) if r["benchmark"] == "smiles")
+    row.update(manifest_sha256="manifest", manifest_commit="manifest")
+    state_dir = tmp_path / "state"
+    state_path = state_dir / f"{row['cell_id']}.json"
+    latest = tmp_path / "outputs/generated" / row["output_name"] / "latest_run.txt"
+    latest.parent.mkdir(parents=True)
+    latest.write_text("fresh", encoding="utf-8")
+    compiled = tmp_path / "compiled/GeneratedCSD.py"
+    compiled.parent.mkdir()
+    compiled.write_text("compiled", encoding="utf-8")
+    queue.write_state(
+        state_path,
+        {
+            "cell_id": row["cell_id"],
+            "status": "running",
+            "phase": "synthesis",
+            "manifest_sha256": "manifest",
+            "manifest_commit": "manifest",
+            "pid": 123,
+            "pid_start": "old",
+            "output_before": None,
+        },
+    )
+    monkeypatch.setattr(queue, "child_is_same_process", lambda state: False)
+    monkeypatch.setattr(queue, "_compiled_output", lambda repo, candidate: compiled)
+    monkeypatch.setattr(
+        queue, "heldout_artifact_is_valid", lambda path, candidate: path.is_file()
+    )
+
+    class Process:
+        pid = 456
+        returncode = 0
+
+        def communicate(self):
+            output = Path(command[command.index("--output-json") + 1])
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text("{}", encoding="utf-8")
+            return "", ""
+
+    command = []
+
+    def runner(argv, **kwargs):
+        command[:] = argv
+        recovered = queue.read_state(state_path)
+        assert recovered["compiled_sha256"] == queue.hash_file(compiled)
+        return Process()
+
+    result = queue.run_row(
+        row,
+        repo=tmp_path,
+        python=Path("python"),
+        state_dir=state_dir,
+        gpus=(0,),
+        runner=runner,
+    )
+    assert result["status"] == "complete"

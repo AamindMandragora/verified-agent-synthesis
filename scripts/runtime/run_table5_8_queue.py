@@ -13,6 +13,7 @@ import json
 import logging
 import math
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -51,6 +52,39 @@ def hash_file(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def start_logged_child(
+    argv: list[str], *, cwd: Path, env: dict[str, str], log_path: Path
+) -> subprocess.Popen:
+    """Start one restart-safe child whose output remains in its row log."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = log_path.open("a", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            env=env,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+    except Exception:
+        handle.close()
+        raise
+    setattr(process, "_tableq_log_handle", handle)
+    return process
+
+
+def wait_logged_child(process: Any) -> tuple[Any, Any]:
+    """Wait for a child and always release the controller's log handle."""
+    try:
+        return process.communicate()
+    finally:
+        handle = getattr(process, "_tableq_log_handle", None)
+        if handle is not None:
+            handle.close()
 
 
 class ConfigError(ValueError):
@@ -342,13 +376,19 @@ def provider_pilot_from_report(
     run_root = path.parent.parent
     compiled_dir = Path(str(compilation.get("output_dir") or ""))
     compiled_csd = compiled_dir / "GeneratedCSD.py"
+    output_name = route.get("output_name")
     try:
         compiled_dir.resolve().relative_to((run_root / "python").resolve())
     except (OSError, ValueError) as exc:
         raise ConfigError("provider pilot compiled artifact is outside its run") from exc
     if (
-        route.get("output_name") != run_root.name
-        or compiled_dir.name != run_root.name
+        not isinstance(output_name, str)
+        or not output_name
+        or (
+            run_root.name != output_name
+            and not run_root.name.startswith(f"{output_name}_")
+        )
+        or compiled_dir.name != output_name
         or not compiled_csd.is_file()
     ):
         raise ConfigError("provider pilot compiled artifact is missing or unbound")
@@ -682,6 +722,68 @@ def partition_profile_readiness(
     return ready, blocked
 
 
+def make_admission_guard(
+    *,
+    repo: Path,
+    manifest_path: Path,
+    expected_manifest_sha256: str,
+    environment: dict[str, str],
+    auth_ttl_seconds: float = 300.0,
+    clock: Any = time.time,
+) -> Any:
+    """Revalidate frozen bytes, pilot freshness, and live auth before launch."""
+    cached_probes: dict[str, dict[str, Any]] = {}
+    cached_auth: dict[str, dict[str, Any]] = {}
+    checked_at: dict[str, float] = {}
+
+    def guard(row: dict[str, Any]) -> None:
+        try:
+            manifest_bytes = manifest_path.read_bytes()
+            payload = json.loads(manifest_bytes)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ConfigError("launch manifest is missing or invalid") from exc
+        current_sha = hashlib.sha256(manifest_bytes).hexdigest()
+        if current_sha != expected_manifest_sha256:
+            raise ConfigError("launch manifest changed after controller validation")
+        validated_rows = validate_manifest(repo, payload)
+        candidate = next(
+            (
+                item
+                for item in validated_rows
+                if item.get("cell_id") == row.get("cell_id")
+            ),
+            None,
+        )
+        if candidate is None:
+            raise ConfigError(f"launch row disappeared from manifest: {row.get('cell_id')}")
+
+        profile = str(candidate["profile"])
+        now = float(clock())
+        if now - checked_at.get(profile, float("-inf")) >= auth_ttl_seconds:
+            cached_probes.pop(profile, None)
+            cached_auth.pop(profile, None)
+            if profile == "gpt5.6-sol":
+                cached_probes[profile] = codex_auth_probe()
+            elif profile == "opus5":
+                cached_auth[profile] = claude_auth_probe(environment)
+            elif profile == "gemini3.1-pro":
+                cached_auth[profile] = vertex_adc_probe(environment)
+            checked_at[profile] = now
+        reason = profile_block_reason(
+            candidate,
+            environment,
+            repo=repo,
+            provider_pilots=payload.get("provider_pilots"),
+            cached_probes=cached_probes,
+            cached_auth=cached_auth,
+        )
+        if reason is not None:
+            raise ConfigError(f"fresh admission blocked for {row['cell_id']}: {reason}")
+        LOGGER.info("[tableq] fresh-admission-valid cell=%s profile=%s", row["cell_id"], profile)
+
+    return guard
+
+
 def provider_preflight() -> list[dict[str, str]]:
     """Check only local configuration; never call a paid provider."""
     claude_dir = Path(os.environ.get("CSD_CLAUDE_CONFIG_DIR", "/home/aadivyar/.claude-csd-synthesis"))
@@ -853,6 +955,7 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
         "smiles_class", "token_budget", "beam_size", "adaptive_helper_mask",
         "helper_selection_policy", "max_iterations", "min_accuracy",
         "min_syntax_rate", "synthesis_max_tokens", "synthesis_reasoning_budget",
+        "effective_output_tokens", "effective_thinking_tokens",
         "eval_sample_size",
         "heldout_sample_size", "eval_max_steps", "eval_max_seconds", "gpu_mem_util",
         "memory_reservation_mib", "gpu_scope", "gpu_count", "heldout_split_name",
@@ -893,7 +996,9 @@ def synthesis_environment(row: dict[str, Any], gpus: tuple[int, ...], inherited:
     env["CUDA_VISIBLE_DEVICES"] = ",".join(str(gpu) for gpu in gpus)
     env["CSD_VLLM_GPU_MEMORY_UTILIZATION"] = str(row["gpu_mem_util"])
     env["CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX"] = str(row["gpu_mem_util"])
-    env["CSD_OUTPUT_DIR"] = str(repo / "outputs/generated")
+    env["CSD_OUTPUT_DIR"] = str(
+        repo / "outputs" / "generated" / str(row["output_name"])
+    )
     env["CSD_OUTPUT_NAME"] = str(row["output_name"])
     if row["profile"] == "opus5":
         env["CSD_CLAUDE_CONFIG_DIR"] = "/home/aadivyar/.claude-csd-synthesis"
@@ -1136,19 +1241,39 @@ def _controller_main_locked(args: argparse.Namespace) -> int:
             LOGGER.info("[tableq] dry-run cell=%s", row["cell_id"])
             print(row["cell_id"], shlex.join(synthesis_command(row, args.python)))
         return 0
-    ready_rows, blocked_rows = partition_profile_readiness(
-        rows,
-        os.environ,
+    admission_guard = make_admission_guard(
         repo=repo,
-        provider_pilots=payload.get("provider_pilots"),
+        manifest_path=args.manifest,
+        expected_manifest_sha256=manifest_sha,
+        environment=dict(os.environ),
     )
+    ready_rows: list[dict[str, Any]] = []
+    blocked_rows: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            admission_guard(row)
+        except ConfigError as exc:
+            if not str(exc).startswith("fresh admission blocked"):
+                raise
+            blocked_rows.append(dict(row, status="pending", reason=str(exc)))
+        else:
+            ready_rows.append(row)
     args.state_dir.mkdir(parents=True, exist_ok=True)
     write_state(args.state_dir / "controller.json", {"manifest_sha256": manifest_sha, "status": "validated", "scope": len(rows), "ready": len(ready_rows), "auth_blocked": len(blocked_rows)})
     logging.basicConfig(filename=args.log, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     LOGGER.info("[tableq] input manifest sha256=%s scope=%d", manifest_sha, len(rows))
     from scripts.runtime.run_cold_synthesis_queue import gpu_memory_snapshot
     rows = [dict(row, manifest_sha256=manifest_sha, manifest_commit=manifest_sha) for row in ready_rows]
-    results = dispatch(rows, repo=repo, python=args.python, state_dir=args.state_dir, allowed=args.gpus, snapshot=gpu_memory_snapshot, poll_seconds=args.poll_seconds)
+    results = dispatch(
+        rows,
+        repo=repo,
+        python=args.python,
+        state_dir=args.state_dir,
+        allowed=args.gpus,
+        snapshot=gpu_memory_snapshot,
+        poll_seconds=args.poll_seconds,
+        admission_check=admission_guard,
+    )
     for blocked in blocked_rows:
         blocked_row = dict(blocked, manifest_sha256=manifest_sha, manifest_commit=manifest_sha)
         write_state(_state_path(args.state_dir, blocked_row), blocked_row)
@@ -1273,12 +1398,62 @@ def _validated_compiled_output(
     exhausted = report_path == failure_report
     if not _report_matches_row(report, job, require_exhausted=exhausted):
         return None
+
+    def bound_compiled_dir(raw: Any) -> Path | None:
+        compiled = Path(str(raw or ""))
+        if not compiled.is_absolute():
+            compiled = repo / compiled
+        try:
+            resolved = compiled.resolve()
+            resolved.relative_to((run_dir / "python").resolve())
+        except (OSError, ValueError):
+            return None
+        output_name = str(job["output_name"])
+        compiler_suffix = re.fullmatch(
+            rf"{re.escape(output_name)}_\d{{8}}_\d{{6}}_[0-9a-f]{{8}}",
+            resolved.name,
+        )
+        if resolved.name != output_name and compiler_suffix is None:
+            return None
+        return resolved if (resolved / "GeneratedCSD.py").is_file() else None
+
     if not exhausted:
-        compiled_dir = Path(str(report.get("compiled_dir") or ""))
+        try:
+            total_attempts = int(report.get("total_attempts"))
+            evaluation = report.get("evaluation_result") or {}
+            examples = int(evaluation.get("num_examples"))
+            accuracy = float(evaluation.get("accuracy"))
+            syntax = float(evaluation.get("syntax_rate"))
+        except (TypeError, ValueError):
+            return None
+        if (
+            type(report.get("total_attempts")) is not int
+            or not 1 <= total_attempts <= int(job["max_iterations"])
+            or examples != int(job["eval_sample_size"])
+            or not math.isfinite(accuracy)
+            or not math.isfinite(syntax)
+            or not 0.0 <= accuracy <= 1.0
+            or not 0.0 <= syntax <= 1.0
+            or accuracy < min_accuracy
+            or syntax < min_syntax_rate
+        ):
+            return None
+        compiled_dir = bound_compiled_dir(report.get("compiled_dir"))
+        if compiled_dir is None:
+            return None
     else:
+        attempts = report.get("attempts")
+        if not isinstance(attempts, list) or len(attempts) != int(job["max_iterations"]):
+            return None
+        attempt_numbers = [
+            attempt.get("attempt_number") if isinstance(attempt, dict) else None
+            for attempt in attempts
+        ]
+        if attempt_numbers != list(range(1, int(job["max_iterations"]) + 1)):
+            return None
         candidates: list[tuple[float, float, float, int, Path]] = []
         seen_attempt_numbers: set[int] = set()
-        for attempt in report.get("attempts") or []:
+        for attempt in attempts:
             compilation = attempt.get("compilation") or {}
             evaluation = attempt.get("evaluation") or {}
             try:
@@ -1306,20 +1481,21 @@ def _validated_compiled_output(
             shortfall = max(0.0, min_accuracy - accuracy) + max(
                 0.0, min_syntax_rate - syntax
             )
+            output_dir = bound_compiled_dir(compilation["output_dir"])
+            if output_dir is None:
+                continue
             candidates.append(
                 (
                     shortfall,
                     -accuracy,
                     -syntax,
                     attempt_number,
-                    Path(str(compilation["output_dir"])),
+                    output_dir,
                 )
             )
         if not candidates:
             return None
         compiled_dir = min(candidates, key=lambda item: item[:4])[-1]
-    if not compiled_dir.is_absolute():
-        compiled_dir = repo / compiled_dir
     candidate = compiled_dir / "GeneratedCSD.py"
     return candidate if candidate.is_file() else None
 
@@ -1359,7 +1535,17 @@ def _compiled_output(repo: Path, row: dict[str, Any]) -> Path | None:
     return candidates[0] if candidates else None
 
 
-def run_row(row: dict[str, Any], *, repo: Path, python: Path, state_dir: Path, gpus: tuple[int, ...], dry_run: bool = False, runner: Any = None) -> dict[str, Any]:
+def run_row(
+    row: dict[str, Any],
+    *,
+    repo: Path,
+    python: Path,
+    state_dir: Path,
+    gpus: tuple[int, ...],
+    reservation_mib: int | None = None,
+    dry_run: bool = False,
+    runner: Any = None,
+) -> dict[str, Any]:
     """Run one synthesis then its held-out evaluation with restart state."""
     path = _state_path(state_dir, row)
     if dry_run:
@@ -1382,16 +1568,26 @@ def run_row(row: dict[str, Any], *, repo: Path, python: Path, state_dir: Path, g
                 if current is None or current.get("sha256") != prior.get("heldout_sha256") or not heldout_artifact_is_valid(output, bound_row):
                     raise ConfigError(f"completed state failed artifact revalidation: {row['cell_id']}")
             return prior
+        if prior.get("status") == "starting":
+            raise ConfigError(
+                f"ambiguous prelaunch state requires inspection: {row['cell_id']}"
+            )
         if prior.get("status") == "running" and child_is_same_process(prior):
             LOGGER.info("[tableq] surviving child cell=%s phase=%s pid=%s", row["cell_id"], prior.get("phase"), prior.get("pid"))
             return prior
         phase = str(prior.get("phase") or "synthesis")
     env = synthesis_environment(row, gpus, os.environ, repo)
     command = synthesis_command(row, python)
+    log_path = repo / str(row["log_file"])
+    reserved_mib = int(
+        reservation_mib
+        if reservation_mib is not None
+        else row["memory_reservation_mib"]
+    )
     def start(argv: list[str]):
         if runner is not None:
             return runner(argv, cwd=repo, env=env)
-        return subprocess.Popen(argv, cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        return start_logged_child(argv, cwd=repo, env=env, log_path=log_path)
 
     recovered = None
     if phase == "synthesis" and prior.get("status") == "running":
@@ -1401,10 +1597,19 @@ def run_row(row: dict[str, Any], *, repo: Path, python: Path, state_dir: Path, g
         if same_manifest and fresh_latest:
             recovered = _compiled_output(repo, row)
     if recovered is not None:
-        prior = dict(prior, phase="heldout", compiled_csd_path=str(recovered))
-        save(prior)
-        phase = "heldout"
-    elif phase == "synthesis" and prior.get("status") == "running":
+        recovered_fingerprint = artifact_fingerprint(recovered)
+        if recovered_fingerprint is None:
+            recovered = None
+        else:
+            prior = dict(
+                prior,
+                phase="heldout",
+                compiled_csd_path=str(recovered),
+                compiled_sha256=recovered_fingerprint["sha256"],
+            )
+            save(prior)
+            phase = "heldout"
+    if recovered is None and phase == "synthesis" and prior.get("status") == "running":
         failed = dict(prior, status="failed", reason="synthesis child ended without a new bound compiled artifact", exit_code=1)
         failed.pop("pid", None); failed.pop("pid_start", None)
         save(failed)
@@ -1413,11 +1618,41 @@ def run_row(row: dict[str, Any], *, repo: Path, python: Path, state_dir: Path, g
     if phase == "synthesis":
         latest = repo / "outputs" / "generated" / str(row["output_name"]) / "latest_run.txt"
         before_output = artifact_fingerprint(latest)
-        process = start(command)
+        starting = dict(
+            prior,
+            manifest_sha256=row.get("manifest_sha256"),
+            manifest_commit=row.get("manifest_commit")
+            or row.get("manifest_sha256")
+            or row.get("git_commit"),
+            cell_id=row["cell_id"],
+            status="starting",
+            phase="synthesis",
+            assigned_gpus=list(gpus),
+            reservation_mib=reserved_mib,
+            log_file=str(log_path),
+            output_before=before_output,
+        )
+        save(starting)
+        try:
+            process = start(command)
+        except Exception as exc:
+            failed = dict(
+                starting,
+                status="failed",
+                exit_code=1,
+                reason=f"synthesis child failed to start: {type(exc).__name__}",
+            )
+            save(failed)
+            return failed
         LOGGER.info("[tableq] launch cell=%s phase=synthesis gpus=%s", row["cell_id"], gpus)
-        running = dict(prior, manifest_sha256=row.get("manifest_sha256"), manifest_commit=row.get("manifest_commit") or row.get("manifest_sha256") or row.get("git_commit"), cell_id=row["cell_id"], status="running", phase="synthesis", pid=process.pid, pid_start=process_start_identity(process.pid), output_before=before_output)
+        running = dict(
+            starting,
+            status="running",
+            pid=process.pid,
+            pid_start=process_start_identity(process.pid),
+        )
         save(running)
-        _output, _ = process.communicate()
+        _output, _ = wait_logged_child(process)
         exit_code = process.returncode
         running.pop("pid", None); running.pop("pid_start", None)
         has_new_run = artifact_is_new_or_replaced(latest, before_output)
@@ -1441,7 +1676,12 @@ def run_row(row: dict[str, Any], *, repo: Path, python: Path, state_dir: Path, g
         failed.pop("pid_start", None)
         save(failed)
         return failed
-    if prior.get("compiled_sha256") and compiled_fingerprint["sha256"] != prior["compiled_sha256"]:
+    expected_compiled_sha = prior.get("compiled_sha256")
+    if not isinstance(expected_compiled_sha, str) or len(expected_compiled_sha) != 64:
+        failed = dict(prior, status="failed", reason="compiled artifact has no state-bound hash", exit_code=1)
+        save(failed)
+        return failed
+    if compiled_fingerprint["sha256"] != expected_compiled_sha:
         failed = dict(prior, status="failed", reason="compiled artifact changed before held-out evaluation", exit_code=1)
         save(failed)
         return failed
@@ -1450,11 +1690,36 @@ def run_row(row: dict[str, Any], *, repo: Path, python: Path, state_dir: Path, g
     before = artifact_fingerprint(final_output)
     temporary = final_output.with_name(f".{final_output.name}.{os.getpid()}.tmp")
     heldout_row = dict(row, heldout_output_json=str(temporary))
-    process = start(heldout_command(heldout_row, python, compiled))
+    starting = dict(
+        prior,
+        status="starting",
+        phase="heldout",
+        assigned_gpus=list(gpus),
+        reservation_mib=reserved_mib,
+        log_file=str(log_path),
+        heldout_output_before=before,
+    )
+    save(starting)
+    try:
+        process = start(heldout_command(heldout_row, python, compiled))
+    except Exception as exc:
+        failed = dict(
+            starting,
+            status="failed",
+            exit_code=1,
+            reason=f"held-out child failed to start: {type(exc).__name__}",
+        )
+        save(failed)
+        return failed
     LOGGER.info("[tableq] launch cell=%s phase=heldout gpus=%s", row["cell_id"], gpus)
-    running = dict(prior, status="running", phase="heldout", pid=process.pid, pid_start=process_start_identity(process.pid), heldout_output_before=before)
+    running = dict(
+        starting,
+        status="running",
+        pid=process.pid,
+        pid_start=process_start_identity(process.pid),
+    )
     save(running)
-    _output, _ = process.communicate()
+    _output, _ = wait_logged_child(process)
     exit_code = process.returncode
     running.pop("pid", None); running.pop("pid_start", None)
     if exit_code != 0 or not artifact_is_new_or_replaced(temporary, None) or not heldout_artifact_is_valid(temporary, heldout_row):
@@ -1474,19 +1739,46 @@ def run_row(row: dict[str, Any], *, repo: Path, python: Path, state_dir: Path, g
     return complete
 
 
-def dispatch(rows: list[dict[str, Any]], *, repo: Path, python: Path, state_dir: Path, allowed: tuple[int, ...], snapshot: Any, poll_seconds: float = 30.0, dry_run: bool = False) -> list[dict[str, Any]]:
+def dispatch(
+    rows: list[dict[str, Any]],
+    *,
+    repo: Path,
+    python: Path,
+    state_dir: Path,
+    allowed: tuple[int, ...],
+    snapshot: Any,
+    poll_seconds: float = 30.0,
+    dry_run: bool = False,
+    admission_check: Any = None,
+) -> list[dict[str, Any]]:
     """Dispatch only when a scoped GPU fits; keep polling while work remains."""
     results: list[dict[str, Any]] = []
     pending = list(rows)
-    reservations: dict[int, int] = {}
     while pending:
         live = snapshot()
         next_pending: list[dict[str, Any]] = []
         admitted: list[tuple[dict[str, Any], tuple[int, ...], int]] = []
+        reservations: dict[int, int] = {}
+        survivor_cells: set[str] = set()
         surviving_child = False
         for row in pending:
             state = read_state(_state_path(state_dir, row))
             if state and state.get("status") == "running" and child_is_same_process(state):
+                assigned = state.get("assigned_gpus")
+                demand = state.get("reservation_mib")
+                if (
+                    not isinstance(assigned, list)
+                    or len(assigned) != int(row.get("gpu_count", 1))
+                    or any(type(gpu) is not int or gpu not in allowed for gpu in assigned)
+                    or type(demand) is not int
+                    or demand <= 0
+                ):
+                    raise ConfigError(
+                        f"surviving child has no valid GPU reservation: {row['cell_id']}"
+                    )
+                for gpu in assigned:
+                    reservations[gpu] = reservations.get(gpu, 0) + demand
+                survivor_cells.add(str(row["cell_id"]))
                 LOGGER.info(
                     "[tableq] poll-surviving-child cell=%s phase=%s pid=%s",
                     row["cell_id"],
@@ -1496,10 +1788,20 @@ def dispatch(rows: list[dict[str, Any]], *, repo: Path, python: Path, state_dir:
                 next_pending.append(row)
                 surviving_child = True
                 continue
+        for row in pending:
+            if str(row["cell_id"]) in survivor_cells:
+                continue
             gpus = choose_gpus(row, live, reservations, live, allowed)
             if gpus is None:
                 next_pending.append(row)
                 continue
+            if admission_check is not None:
+                admission_check(row)
+                live = snapshot()
+                gpus = choose_gpus(row, live, reservations, live, allowed)
+                if gpus is None:
+                    next_pending.append(row)
+                    continue
             LOGGER.info("[tableq] admission cell=%s gpus=%s", row["cell_id"], gpus)
             demand = _demand(row, int(live[gpus[0]]["total_mib"]))
             for gpu in gpus:
@@ -1508,7 +1810,16 @@ def dispatch(rows: list[dict[str, Any]], *, repo: Path, python: Path, state_dir:
         if admitted:
             with ThreadPoolExecutor(max_workers=len(admitted), thread_name_prefix="tableq") as pool:
                 futures = {
-                    pool.submit(run_row, row, repo=repo, python=python, state_dir=state_dir, gpus=gpus, dry_run=dry_run): (row, gpus, demand)
+                    pool.submit(
+                        run_row,
+                        row,
+                        repo=repo,
+                        python=python,
+                        state_dir=state_dir,
+                        gpus=gpus,
+                        reservation_mib=demand,
+                        dry_run=dry_run,
+                    ): (row, gpus, demand)
                     for row, gpus, demand in admitted
                 }
                 for future, (row, gpus, demand) in futures.items():
@@ -1517,8 +1828,6 @@ def dispatch(rows: list[dict[str, Any]], *, repo: Path, python: Path, state_dir:
                         next_pending.append(row)
                     else:
                         results.append(result)
-                    for gpu in gpus:
-                        reservations[gpu] -= demand
         pending = next_pending
         if pending and surviving_child:
             time.sleep(max(0.1, poll_seconds))
