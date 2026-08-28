@@ -732,8 +732,11 @@ def _run_rerun_row(row: dict[str, Any], *, repo: Path, python: Path, claims_dir:
                     status = "finished" if code == 0 else "failed"
                     _write_claim_spec(claims_dir, identity, {"status": status, "finished_at": utc_now(), "exit_code": code})
                     return {"status": status, "cell_id": identity, "exit_code": code, "reattached": True}
-        _write_claim_spec(claims_dir, identity, {"status": "pending", "reason": "surviving_rerun_child_finished_without_reattach"})
-        return {"status": "pending", "cell_id": identity, "reason": "surviving_rerun_child_finished_without_reattach"}
+        reason = "surviving_rerun_child_finished_without_recoverable_report"
+        _write_claim_spec(claims_dir, identity, {"status": "failed", "reason": reason, "finished_at": utc_now()})
+        if state_path is not None:
+            _state_write(state_path, {"cell_id": identity, "status": "failed", "phase": "synthesis", "reason": reason, "manifest_sha256": manifest_sha256})
+        return {"status": "failed", "cell_id": identity, "reason": reason}
     if row.get("claim_status") in {"started", "running"}:
         # A restarted controller must consume a completed report/held-out
         # artifact, or fail closed. It must not spend a second author attempt

@@ -128,6 +128,23 @@ def test_restart_after_synthesis_child_death_recovers_csd_and_runs_heldout(monke
     assert result["reattached"] is True
 
 
+def test_dead_synthesis_child_without_report_fails_durably(monkeypatch, tmp_path: Path):
+    row, identity, claims, state = _started_rerun_fixture(tmp_path)
+    monkeypatch.setattr(queue, "_child_matches", lambda payload: False)
+    result = queue.run_row(
+        row,
+        repo=tmp_path,
+        python=Path("/env/python"),
+        claims_dir=claims,
+        manifest_sha256="m" * 64,
+        state_dir=state,
+        runner=lambda *args, **kwargs: pytest.fail("must not start a replacement author cycle"),
+    )
+    assert result["status"] == "failed"
+    claim = next(claims.glob("*/rerun.json"))
+    assert json.loads(claim.read_text(encoding="utf-8"))["status"] == "failed"
+
+
 def test_restart_during_heldout_waits_and_validates_without_author_retry(monkeypatch, tmp_path: Path):
     row, identity, claims, state = _started_rerun_fixture(tmp_path)
     row["claim_status"] = "running"
