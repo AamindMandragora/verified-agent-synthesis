@@ -617,13 +617,20 @@ class StrategyGenerator:
             tempfile.TemporaryDirectory(prefix="csd-codex-auth-cwd-") as cwd_name,
             tempfile.TemporaryDirectory(prefix="csd-codex-auth-home-") as home_name,
         ):
-            returncode, stdout, _stderr, duration = self._run_codex_process(
+            returncode, stdout, stderr, duration = self._run_codex_process(
                 [executable, "login", "status"],
                 input_bytes=b"",
                 cwd=Path(cwd_name),
                 home=Path(home_name),
             )
-        status_text = stdout.decode("utf-8", "replace").strip().lower()
+        # The CLI has emitted the login status on stderr in some versions.
+        # Combine the two status streams only for this fixed phrase; never
+        # log or expose the account output.
+        status_text = (
+            stdout.decode("utf-8", "replace")
+            + "\n"
+            + stderr.decode("utf-8", "replace")
+        ).lower()
         if returncode != 0 or "logged in using chatgpt" not in status_text:
             LOGGER.error(
                 "[codex] provider=codex model=%s status=login-rejected duration_seconds=%.3f",

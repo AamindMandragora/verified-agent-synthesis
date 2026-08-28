@@ -124,3 +124,28 @@ never add warm-start inputs, and never delete an interrupted or failed claim.
 - Bind every direct runtime dependency, including `crane_repo_runner.py`, GSM
   and SMILES dataset loaders, and `.context/run_post14b_rebar_queue.py`.
   Startup rejects any staged or unstaged tracked worktree change.
+
+## Paper Tables 5--8 campaign queue
+
+`run_table5_8_queue.py` is the separate 31-run campaign for the missing
+Table 5 backend cells and Tables 6--8 ablations. It uses exact profiles
+`gpt5.6-sol`/Codex, `gemini3.1-pro`/Vertex, and `opus5`/Claude Code, and always
+evaluates with `Qwen/Qwen3.5-2B`. Table 5 has 15 runs (the three SMILES class
+rows are combined with sample-count weighting); Tables 6--8 have 6, 6, and 4
+cold 40-attempt runs. The synthesis command uses the canonical train split
+selected inside `run_synthesis`; held-out commands use the matching canonical
+test split and an isolated output file.
+
+The manifest records the full commit, CRANE commit, and SHA-256 for every
+direct runtime dependency. A dirty dependency is a launch error. State is
+written by replacement under a file lock and records `phase`, PID, and process
+start identity. A restart waits for a surviving child and cannot treat an
+unchanged pre-existing held-out file as this run's result.
+
+GPU admission intersects the command-line GPU list with each row's scope and
+requires every selected GPU to fit `max(memory_reservation_mib,
+ceil(gpu_mem_util * total_memory)) + 2,000 MiB`, including earlier worker
+reservations. When no row fits, the controller polls rather than exiting.
+Provider preflight is local-only; it reports configuration presence without
+calling Codex, Vertex, or Claude. Use `--dry-run` to print exact commands; it
+does not write claims or start a provider/GPU job.

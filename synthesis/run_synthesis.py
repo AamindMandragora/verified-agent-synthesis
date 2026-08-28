@@ -198,6 +198,33 @@ Examples:
     )
 
     parser.add_argument(
+        "--refinement-beam-size",
+        type=int,
+        default=2,
+        help="Number of refinement candidates sampled per feedback step.",
+    )
+    parser.add_argument(
+        "--helper-selection-policy",
+        choices=["bandit"],
+        default="bandit",
+        help="Helper selection policy used by the feedback loop.",
+    )
+    mask_group = parser.add_mutually_exclusive_group()
+    mask_group.add_argument(
+        "--adaptive-helper-mask",
+        dest="adaptive_helper_mask",
+        action="store_true",
+        default=True,
+        help="Enable empirical helper masking.",
+    )
+    mask_group.add_argument(
+        "--no-adaptive-helper-mask",
+        dest="adaptive_helper_mask",
+        action="store_false",
+        help="Disable empirical helper masking.",
+    )
+
+    parser.add_argument(
         "--eval-max-seconds-per-example",
         type=float,
         default=90.0,
@@ -548,6 +575,9 @@ Examples:
         eval_max_seconds_per_example=args.eval_max_seconds_per_example,
         max_attempt_seconds=args.max_attempt_seconds,
         min_examples_before_threshold_stop=args.eval_min_examples_before_threshold_stop,
+        adaptive_helper_mask=args.adaptive_helper_mask,
+        helper_selection_policy=args.helper_selection_policy,
+        refinement_beam_size=args.refinement_beam_size,
     )
 
     initial_strategy_code = None

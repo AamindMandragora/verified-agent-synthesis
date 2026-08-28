@@ -104,14 +104,15 @@ def test_run_synthesis_help_advertises_ucb_budget_and_beam_defaults():
     # New provider-agnostic thinking budget replaced the anthropic-* flags.
     assert "--synthesizer-reasoning-budget" in help_text
     assert "Default: 4096." in " ".join(help_text.split())
+    # The single fair helper-selection contract is intentionally public again.
+    assert "--helper-selection-policy {bandit}" in " ".join(help_text.split())
+    assert "--eval-min-examples-before-threshold-stop" in help_text
     # 2026-07-17 simplification: these knobs are constants/env now, not flags.
     for gone in (
         "--claude-config-dir",
         "--claude-expected-account",
-        "--helper-selection-policy",
         "--restart-after-stuck-iters",
         "--anthropic-thinking",
-        "--eval-min-examples-before-threshold-stop",
         "--output-name",
         "--temperature",
         "--eval-backend",
@@ -628,7 +629,7 @@ def _assert_flag_values(cmd, expected):
             "",
             "600",
             "52",
-            "Generate a single valid SQL query as exactly `SQL: <<YOUR QUERY>>`, using only the provided schema context.",
+            "Generate a single valid SQL query using only the provided schema context. Only output the SQL query.",
         ),
     ],
 )
@@ -732,7 +733,7 @@ def test_full_test_runner_ablation_e_command_forwards_complete_launch_contract(t
     _assert_flag_values(
         cmd,
         {
-            "--task": "Generate a single valid SQL query as exactly `SQL: <<YOUR QUERY>>`, using only the provided schema context.",
+            "--task": "Generate a single valid SQL query using only the provided schema context. Only output the SQL query.",
             "--dataset": "spider",
             "--generation-backend": "openai",
             "--generation-model": "gpt-5.5",
@@ -783,9 +784,10 @@ def test_full_test_runner_default_matrix_sections_cover_gsm_and_sql_not_cars_dat
     assert any(entry == ("metadecode", "spider") for entry in seen)
 
 
-def test_full_test_runner_spider_task_names_visible_delimiters():
+def test_full_test_runner_spider_task_names_require_bare_sql():
     repo_root = Path(__file__).resolve().parents[1]
     text = (repo_root / "run_all_tests.py").read_text()
 
-    assert "SQL: <<YOUR QUERY>>" in text
+    assert "Only output the SQL query." in text
+    assert "SQL: <<YOUR QUERY>>" not in text
     assert "You may optionally reason" not in text

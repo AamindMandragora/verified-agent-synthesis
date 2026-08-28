@@ -16,6 +16,7 @@ def _fake_codex(
     tmp_path: Path,
     *,
     login_output: str = "Logged in using ChatGPT",
+    login_stderr: str = "",
     generation_output: str = "generated strategy",
     generation_sleep_seconds: float = 0,
 ) -> tuple[Path, Path]:
@@ -32,6 +33,7 @@ import time
 
 if sys.argv[1:] == [\"login\", \"status\"]:
     print({login_output!r})
+    print({login_stderr!r}, file=sys.stderr)
     raise SystemExit(0)
 
 args = sys.argv[1:]
@@ -84,6 +86,19 @@ def test_codex_requires_chatgpt_login_before_generation(tmp_path):
         generator._generate_text("system prompt", "user prompt")
 
     assert not capture_path.exists()
+
+
+def test_codex_accepts_chatgpt_login_reported_on_stderr(tmp_path):
+    executable, capture_path = _fake_codex(
+        tmp_path,
+        login_output="",
+        login_stderr="Logged in using ChatGPT",
+        generation_output="stderr-authenticated result",
+    )
+    generator = _generator(tmp_path, executable)
+
+    assert generator._generate_text("system", "user") == "stderr-authenticated result"
+    assert capture_path.exists()
 
 
 def test_codex_uses_isolated_read_only_exec_and_exact_final_message(tmp_path, monkeypatch, caplog):

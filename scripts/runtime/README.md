@@ -52,3 +52,23 @@ identity. On restart, a completed synthesis report is recovered through the
 cold queue's success/exhaustion selection, while a held-out child is waited
 for or restarted only from its hash-pinned compiled CSD. No author attempt is
 repeated merely because the controller restarted.
+
+## Tables 5--8 synthesis queue
+
+The missing Table 5--8 synthesis cells are described by
+`run_table5_8_queue.py`. It builds exactly 31 rows: 15 Table 5 backend runs,
+6 Table 6 token-budget runs, 6 Table 7 beam-size runs, and 4 Table 8 mask
+runs. All rows use the exact `Qwen/Qwen3.5-2B` evaluator and 40 cold
+iterations. Table 5 SMILES results are exported as one sample-count-weighted
+value per author profile.
+
+```bash
+python scripts/runtime/run_table5_8_queue.py --dry-run
+```
+
+The dry run prints executable commands without calling providers or claiming
+work. A real manifest binds the current commit, the approved CRANE commit,
+and hashes for every runtime dependency. The controller records synthesis and
+held-out phases in locked, replace-written state files, preserves output
+provenance, and waits for free GPUs instead of forcing a dispatch. Provider
+preflight only checks local configuration; it does not spend credits.
