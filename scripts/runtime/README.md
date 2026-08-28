@@ -46,3 +46,9 @@ artifact. GSM and Spider trigger a single atomic cold 40-iteration rerun when
 accuracy **or** syntax is strictly higher; SMILES uses strict unique-valid
 rate. Ties do not trigger. The existing post-14B claim helper is used, and a
 claim is never removed after an interruption or failure.
+
+Rerun state records `phase=synthesis` or `phase=heldout` plus child PID/start
+identity. On restart, a completed synthesis report is recovered through the
+cold queue's success/exhaustion selection, while a held-out child is waited
+for or restarted only from its hash-pinned compiled CSD. No author attempt is
+repeated merely because the controller restarted.

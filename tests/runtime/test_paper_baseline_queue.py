@@ -98,6 +98,54 @@ def test_exhausted_cold_rerun_selects_best_compiled_attempt(monkeypatch, tmp_pat
     assert queue._select_rerun_csd(row, tmp_path, 1) == selected
 
 
+def _started_rerun_fixture(tmp_path: Path):
+    row = queue.build_scope(tmp_path)[0]
+    identity = queue.affected_row_id(row)
+    row.update({"job_kind": "rerun", "cell_id": f"rerun-{identity}", "rerun_identity": identity,
+                "rerun_command": ["true"], "assigned_gpu": 2, "claim_status": "running",
+                "thresholds": {"min_accuracy": 0.5, "min_syntax_rate": 0.9}})
+    claims = tmp_path / "claims"
+    queue.claim_rerun(claims, identity, "m" * 64, {"command": ["true"], "status": "running"})
+    state = tmp_path / "state"
+    (state / f"rerun-{identity}.json").parent.mkdir(parents=True)
+    (state / f"rerun-{identity}.json").write_text(json.dumps({
+        "cell_id": identity, "status": "running", "phase": "synthesis", "pid": 999999,
+    }), encoding="utf-8")
+    return row, identity, claims, state
+
+
+def test_restart_after_synthesis_child_death_recovers_csd_and_runs_heldout(monkeypatch, tmp_path: Path):
+    row, identity, claims, state = _started_rerun_fixture(tmp_path)
+    selected = tmp_path / "GeneratedCSD.py"
+    selected.write_text("# recovered\n", encoding="utf-8")
+    monkeypatch.setattr(queue, "_child_matches", lambda payload: False)
+    monkeypatch.setattr(queue, "_select_rerun_csd", lambda row, repo, code: selected if code == 0 else None)
+    monkeypatch.setattr(queue, "_run_heldout_rerun", lambda *args, **kwargs: 0)
+    result = queue.run_row(row, repo=tmp_path, python=Path("/env/python"), claims_dir=claims,
+                           manifest_sha256="m" * 64, state_dir=state,
+                           runner=lambda *args, **kwargs: pytest.fail("must not restart synthesis"))
+    assert result["status"] == "finished"
+    assert result["reattached"] is True
+
+
+def test_restart_during_heldout_waits_and_validates_without_author_retry(monkeypatch, tmp_path: Path):
+    row, identity, claims, state = _started_rerun_fixture(tmp_path)
+    row["claim_status"] = "running"
+    csd = tmp_path / "GeneratedCSD.py"
+    csd.write_text("# heldout\n", encoding="utf-8")
+    state_path = state / f"rerun-{identity}.json"
+    state_path.write_text(json.dumps({"cell_id": identity, "status": "running", "phase": "heldout",
+                                      "pid": 999999, "csd_path": str(csd), "csd_sha256": queue.sha256_file(csd)}), encoding="utf-8")
+    monkeypatch.setattr(queue, "_child_matches", lambda payload: False)
+    monkeypatch.setattr(queue.cold_queue, "heldout_is_complete", lambda path, job: False)
+    monkeypatch.setattr(queue, "_run_heldout_rerun", lambda *args, **kwargs: 0)
+    result = queue.run_row(row, repo=tmp_path, python=Path("/env/python"), claims_dir=claims,
+                           manifest_sha256="m" * 64, state_dir=state,
+                           runner=lambda *args, **kwargs: pytest.fail("must not retry author"))
+    assert result["status"] == "finished"
+    assert result["reattached"] is True
+
+
 def test_real_row_receives_assigned_gpu_and_memory_cap(monkeypatch, tmp_path: Path):
     row = queue.build_scope(tmp_path)[0]
     row["output_json"] = str(tmp_path / "output.json")

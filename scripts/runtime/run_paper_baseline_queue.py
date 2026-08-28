@@ -64,8 +64,11 @@ SOURCE_PATHS = (
     "scripts/runtime/run_cold_synthesis_queue.py",
     "synthesis/evaluate/run_legacy_fixed_strategy.py",
     "synthesis/evaluate/benchmarks/gsm_symbolic/eval_logic.py",
+    "synthesis/evaluate/benchmarks/gsm_symbolic/dataset.py",
+    "synthesis/evaluate/baselines/crane_repo_runner.py",
     "synthesis/evaluate/benchmarks/sql_spider/eval_logic.py",
     "synthesis/evaluate/benchmarks/smiles/eval_logic.py",
+    "synthesis/evaluate/benchmarks/smiles/dataset.py",
     "synthesis/evaluate/benchmarks/smiles/metrics.py",
     "synthesis/run_synthesis.py",
     "synthesis/generate/generator.py",
@@ -77,6 +80,7 @@ SOURCE_PATHS = (
     "synthesis/scripts/reevaluate_compiled_csd.py",
     "synthesis/evaluate/metrics.py",
     "synthesis/prompt_rendering/models/feedback_loop.py",
+    ".context/run_post14b_rebar_queue.py",
 )
 CRANE_COMMIT = "616379ce33ac6245933c16e6264b41f7d5800183"
 
@@ -125,8 +129,11 @@ def _crane_commit(repo: Path) -> str:
 
 def _dirty_source_paths(repo: Path) -> set[str]:
     dirty: set[str] = set()
+    # Startup is only safe from a fully committed checkout: a changed
+    # dependency outside SOURCE_PATHS can still alter provider or evaluator
+    # behavior, so reject every tracked staged/unstaged change.
     for diff_args in (("git", "diff", "--name-only"), ("git", "diff", "--cached", "--name-only")):
-        result = subprocess.run([*diff_args, "--", *SOURCE_PATHS], cwd=repo, text=True, capture_output=True, check=False)
+        result = subprocess.run(list(diff_args), cwd=repo, text=True, capture_output=True, check=False)
         dirty.update(line for line in result.stdout.splitlines() if line)
     return dirty
 
@@ -273,8 +280,8 @@ def write_manifest(repo: Path, path: Path, binding_path: Path | None = None) -> 
         raise ValueError("manifest requires a cleanly identified git commit")
     if _dirty_source_paths(repo):
         raise ValueError("manifest cannot be built from dirty fixed-queue source")
-    if any(not row["source_hashes"] for row in rows):
-        raise ValueError("manifest requires hashes for all fixed evaluator sources")
+    if any(set(row["source_hashes"]) != set(SOURCE_PATHS) for row in rows):
+        raise ValueError("manifest requires hashes for every direct runtime dependency")
     if any(row["crane_commit"] != CRANE_COMMIT for row in rows):
         raise ValueError(f"manifest requires CRANE commit {CRANE_COMMIT}")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -296,8 +303,8 @@ def load_manifest(path: Path, repo: Path) -> tuple[str, list[dict[str, Any]]]:
     if live_commit and live_commit != commit:
         raise ValueError(f"manifest commit {commit} does not match live commit {live_commit}")
     expected_hashes = payload.get("source_hashes")
-    if not isinstance(expected_hashes, dict) or not expected_hashes:
-        raise ValueError("manifest must bind fixed evaluator source hashes")
+    if not isinstance(expected_hashes, dict) or set(expected_hashes) != set(SOURCE_PATHS):
+        raise ValueError("manifest must bind every direct runtime dependency")
     for relative, expected in expected_hashes.items():
         source = repo / str(relative)
         if not source.is_file() or sha256_file(source) != expected:
@@ -676,12 +683,16 @@ def _select_rerun_csd(row: dict[str, Any], repo: Path, exit_code: int) -> Path |
     return None
 
 
-def _run_heldout_rerun(row: dict[str, Any], *, repo: Path, python: Path, env: dict[str, str], runner: Callable[..., Any], csd: Path) -> int:
+def _run_heldout_rerun(row: dict[str, Any], *, repo: Path, python: Path, env: dict[str, str], runner: Callable[..., Any], csd: Path, state_path: Path | None = None, state_payload: dict[str, Any] | None = None) -> int:
     holdout = rerun_job(row, repo)
     holdout_path = Path(holdout["heldout_output_json"])
     holdout_path.parent.mkdir(parents=True, exist_ok=True)
     command = cold_queue.heldout_command(holdout, python, csd)
-    result = _default_run(command, repo=repo, env=env, state_path=None, state_payload={}) if runner is subprocess.run else runner(command, cwd=repo, env=env, check=False)
+    payload = dict(state_payload or {})
+    payload.update({"phase": "heldout", "csd_path": str(csd), "csd_sha256": sha256_file(csd)})
+    if state_path is not None:
+        _state_write(state_path, payload)
+    result = _default_run(command, repo=repo, env=env, state_path=state_path, state_payload=payload) if runner is subprocess.run else runner(command, cwd=repo, env=env, check=False)
     code = int(getattr(result, "returncode", result if isinstance(result, int) else 1))
     return code if code != 0 or not cold_queue.heldout_is_complete(holdout_path, holdout) else 0
 
@@ -691,18 +702,38 @@ def _run_rerun_row(row: dict[str, Any], *, repo: Path, python: Path, claims_dir:
     holdout = rerun_job(row, repo)
     holdout_path = Path(holdout["heldout_output_json"])
     prior_state = _read_state(state_dir / f"rerun-{identity}.json") if state_dir is not None else None
+    state_path = state_dir / f"rerun-{identity}.json" if state_dir is not None else None
     if prior_state and prior_state.get("status") == "running":
         if _child_matches(prior_state):
             LOG.info("[paperq] waiting for surviving rerun child identity=%s pid=%s", identity, prior_state.get("pid"))
             while _child_matches(prior_state):
                 time.sleep(1.0)
-        if cold_queue.heldout_is_complete(holdout_path, holdout):
+        if prior_state.get("phase") == "heldout" and cold_queue.heldout_is_complete(holdout_path, holdout):
             _write_claim_spec(claims_dir, identity, {"status": "finished", "finished_at": utc_now(), "exit_code": 0})
             if state_dir is not None:
                 _state_write(state_dir / f"rerun-{identity}.json", {"cell_id": identity, "status": "finished", "exit_code": 0, "manifest_sha256": manifest_sha256})
             return {"status": "finished", "cell_id": identity, "exit_code": 0, "reattached": True}
-        _write_claim_spec(claims_dir, identity, {"status": "failed", "reason": "surviving_rerun_child_finished_without_reattach"})
-        return {"status": "failed", "cell_id": identity, "reason": "surviving_rerun_child_finished_without_reattach"}
+        if prior_state.get("phase") == "heldout":
+            csd_path = Path(str(prior_state.get("csd_path", "")))
+            if csd_path.is_file() and str(prior_state.get("csd_sha256", "")) == sha256_file(csd_path):
+                env = dict(os.environ)
+                env.update({"CUDA_VISIBLE_DEVICES": str(row["assigned_gpu"]), "CSD_VLLM_GPU_MEMORY_UTILIZATION": str(row["gpu_mem_util"]), "CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX": str(row["gpu_mem_util"]), "CSD_CLAUDE_CONFIG_DIR": "/home/aadivyar/.claude-csd-synthesis", "CSD_CLAUDE_EXPECTED_ACCOUNT": "ssdear@gmail.com", "CSD_OUTPUT_NAME": rerun_output_name(row)})
+                code = _run_heldout_rerun(row, repo=repo, python=python, env=env, runner=runner, csd=csd_path, state_path=state_path, state_payload={"cell_id": identity, "status": "running", "manifest_sha256": manifest_sha256})
+                status = "finished" if code == 0 else "failed"
+                _write_claim_spec(claims_dir, identity, {"status": status, "finished_at": utc_now(), "exit_code": code})
+                return {"status": status, "cell_id": identity, "exit_code": code, "reattached": True}
+        if prior_state.get("phase") == "synthesis":
+            for completed_code in (0, 1):
+                csd = _select_rerun_csd(row, repo, completed_code)
+                if csd is not None:
+                    env = dict(os.environ)
+                    env.update({"CUDA_VISIBLE_DEVICES": str(row["assigned_gpu"]), "CSD_VLLM_GPU_MEMORY_UTILIZATION": str(row["gpu_mem_util"]), "CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX": str(row["gpu_mem_util"]), "CSD_CLAUDE_CONFIG_DIR": "/home/aadivyar/.claude-csd-synthesis", "CSD_CLAUDE_EXPECTED_ACCOUNT": "ssdear@gmail.com", "CSD_OUTPUT_NAME": rerun_output_name(row)})
+                    code = _run_heldout_rerun(row, repo=repo, python=python, env=env, runner=runner, csd=csd, state_path=state_path, state_payload={"cell_id": identity, "status": "running", "manifest_sha256": manifest_sha256})
+                    status = "finished" if code == 0 else "failed"
+                    _write_claim_spec(claims_dir, identity, {"status": status, "finished_at": utc_now(), "exit_code": code})
+                    return {"status": status, "cell_id": identity, "exit_code": code, "reattached": True}
+        _write_claim_spec(claims_dir, identity, {"status": "pending", "reason": "surviving_rerun_child_finished_without_reattach"})
+        return {"status": "pending", "cell_id": identity, "reason": "surviving_rerun_child_finished_without_reattach"}
     if row.get("claim_status") in {"started", "running"}:
         # A restarted controller must consume a completed report/held-out
         # artifact, or fail closed. It must not spend a second author attempt
@@ -715,7 +746,7 @@ def _run_rerun_row(row: dict[str, Any], *, repo: Path, python: Path, claims_dir:
             if csd is not None:
                 env = dict(os.environ)
                 env.update({"CUDA_VISIBLE_DEVICES": str(row["assigned_gpu"]), "CSD_VLLM_GPU_MEMORY_UTILIZATION": str(row["gpu_mem_util"]), "CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX": str(row["gpu_mem_util"]), "CSD_CLAUDE_CONFIG_DIR": "/home/aadivyar/.claude-csd-synthesis", "CSD_CLAUDE_EXPECTED_ACCOUNT": "ssdear@gmail.com", "CSD_OUTPUT_NAME": rerun_output_name(row)})
-                code = _run_heldout_rerun(row, repo=repo, python=python, env=env, runner=runner, csd=csd)
+                code = _run_heldout_rerun(row, repo=repo, python=python, env=env, runner=runner, csd=csd, state_path=state_path, state_payload={"cell_id": identity, "status": "running", "manifest_sha256": manifest_sha256})
                 status = "finished" if code == 0 else "failed"
                 _write_claim_spec(claims_dir, identity, {"status": status, "finished_at": utc_now(), "exit_code": code})
                 return {"status": status, "cell_id": identity, "exit_code": code, "reattached": True}
@@ -738,9 +769,9 @@ def _run_rerun_row(row: dict[str, Any], *, repo: Path, python: Path, claims_dir:
     if row["dataset"] == "smiles":
         env["CSD_CONSTRAINED_TEMPERATURE"] = "0.7"
     if state_dir is not None:
-        _state_write(state_dir / f"rerun-{identity}.json", {"cell_id": identity, "status": "running", "manifest_sha256": manifest_sha256, "started_at": utc_now()})
+        _state_write(state_path, {"cell_id": identity, "status": "running", "phase": "synthesis", "manifest_sha256": manifest_sha256, "started_at": utc_now()})
     if runner is subprocess.run:
-        result = _default_run(command, repo=repo, env=env, state_path=state_dir / f"rerun-{identity}.json" if state_dir is not None else None, state_payload={"cell_id": identity, "status": "running", "manifest_sha256": manifest_sha256, "started_at": utc_now()})
+        result = _default_run(command, repo=repo, env=env, state_path=state_path, state_payload={"cell_id": identity, "status": "running", "phase": "synthesis", "manifest_sha256": manifest_sha256, "started_at": utc_now()})
     else:
         result = runner(command, cwd=repo, env=env, check=False)
     code = int(getattr(result, "returncode", result if isinstance(result, int) else 1))
@@ -751,7 +782,7 @@ def _run_rerun_row(row: dict[str, Any], *, repo: Path, python: Path, claims_dir:
             status = "failed"
             code = 4
         else:
-            heldout_code = _run_heldout_rerun(row, repo=repo, python=python, env=env, runner=runner, csd=csd)
+            heldout_code = _run_heldout_rerun(row, repo=repo, python=python, env=env, runner=runner, csd=csd, state_path=state_path, state_payload={"cell_id": identity, "status": "running", "manifest_sha256": manifest_sha256})
             if heldout_code != 0:
                 status = "failed"
                 code = heldout_code or 5

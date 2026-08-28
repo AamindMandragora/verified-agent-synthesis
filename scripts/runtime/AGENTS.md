@@ -117,3 +117,10 @@ never add warm-start inputs, and never delete an interrupted or failed claim.
   through this same allocator, with the stored strict thresholds and a final
   validated held-out artifact. A surviving child is waited for and reattached
   by its PID start identity; it is never duplicated.
+- Rerun state must record the active `synthesis` or `heldout` phase. A
+  controller restart after synthesis must recover the success or exhausted
+  best attempt through the cold queue before held-out evaluation; a restart
+  during held-out must wait for or re-run only the hash-pinned held-out step.
+- Bind every direct runtime dependency, including `crane_repo_runner.py`, GSM
+  and SMILES dataset loaders, and `.context/run_post14b_rebar_queue.py`.
+  Startup rejects any staged or unstaged tracked worktree change.
