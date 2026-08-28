@@ -86,3 +86,34 @@ Cold-queue and babysitter runtime scripts. Repo-wide rules live in `../../AGENTS
 Repair agents run in the sibling worktree
 (`~/csd-generation-babysitter-repair`), never by checking out branches on the
 live cold-queue tree.
+
+## Paper baseline held-out queue
+
+`run_paper_baseline_queue.py` is the bounded 2026-08-28 fixed-baseline queue.
+Keep its 38-row scope exact: six GSM Qwen3.5-2B/4B rows for unconstrained,
+GCD, and IterGen; two Spider Qwen3.5-2B/4B CARS rows; and the 30 requested
+SMILES rows. Every row must retain its canonical split hash, exact model and
+strategy, sample count, and isolated output path. Do not broaden the manifest
+or silently accept an existing JSON without complete provenance validation.
+
+The allocator must use live `nvidia-smi` memory, all worker reservations, and
+the 2,000 MiB margin, and must filter to the manifest GPU scope. It must never
+evict or stop another user's process. Dry-run mode prints both fixed-evaluator
+and possible cold-rerun commands without claiming or calling anything.
+
+After a valid baseline result, compare the frozen same-row metaDecode artifact:
+GSM/Spider trigger on strict accuracy or syntax improvement; SMILES triggers on
+strict unique-valid improvement. Ties do not trigger. Use the existing
+post-14B atomic claim helper for at most one cold 40-iteration rerun per row,
+never add warm-start inputs, and never delete an interrupted or failed claim.
+
+- Manifest creation requires an external exact binding map for all 38 frozen
+  metaDecode rows. Check each bound file's SHA-256 and same-row provenance
+  before writing the manifest; do not auto-discover or leave blank bindings.
+- Bind the manifest to the full current commit and hashes of the queue,
+  evaluator, and benchmark scoring sources. Refuse startup when those hashes
+  change or the fixed source files are dirty.
+- A baseline win must schedule and run the claimed cold 40-attempt rerun
+  through this same allocator, with the stored strict thresholds and a final
+  validated held-out artifact. A surviving child is waited for and reattached
+  by its PID start identity; it is never duplicated.

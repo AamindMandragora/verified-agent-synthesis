@@ -27,7 +27,8 @@ It provides an end-to-end loop that produces candidate CSD strategies, proves co
   - **GSM-Symbolic:** the only supported data source is local CRANE-style
     JSONs (vendored `legacy/CRANE/src/gsm_symbolic`). HuggingFace loading has
     been removed.
-  - Generation backends: `openai` (default), `claude` (Claude Code Max),
+  - Generation backends: `openai` (default), `codex` (authenticated Codex CLI,
+    fixed `gpt-5.6-sol`), `claude` (Claude Code Max),
     `claude-bedrock`, `anthropic`, plus local HuggingFace/vLLM for targeted
     experiments (a large reasoning author is enforced for real synthesis).
   - **BYOD (bring your own credentials):** API keys are never CLI flags —

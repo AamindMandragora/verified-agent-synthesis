@@ -43,7 +43,7 @@ DEFAULT_STRATEGIES = "unconstrained,gcd,crane,itergen,metadecode,cars"
 DEFAULT_TOKEN_BUDGETS = "1,2,4"
 DEFAULT_SYNTH_ITERS = "3,5,10,30,40"
 DEFAULT_MAIN_SYNTH_ITERS = "40"
-DEFAULT_GEN_MODELS = "sonnet4.6,gpt5.5,gemini"
+DEFAULT_GEN_MODELS = "sonnet4.6,gpt5.6-sol,gemini"
 DEFAULT_STEP_BUDGETS = "256,512,900,1024"
 DEFAULT_GSM_MAX_STEPS = "900"
 DEFAULT_GPU3_RETRY_QUEUE = ROOT_DIR / "outputs" / "gpu3_retry_queue.jsonl"
@@ -658,6 +658,8 @@ class Runner:
         )
         if profile == "gpt5.5":
             return "openai", openai_gpt
+        if profile == "gpt5.6-sol":
+            return "codex", "gpt-5.6-sol"
         if profile == "opus4.7":
             if self.env.get("CSD_OPUS47_BACKEND", "").strip().lower() == "bedrock":
                 raise ValueError(
@@ -709,7 +711,7 @@ class Runner:
             )
         raise ValueError(
             f"Unknown generation profile: {profile}. "
-            "Allowed profiles are sonnet4.6, opus4.7, gpt5.5, and gemini."
+            "Allowed profiles are sonnet4.6, opus4.7, gpt5.5, gpt5.6-sol, and gemini."
         )
 
     def baseline_case_key(

@@ -765,3 +765,127 @@ cells report `parallel dispatch: 2 worker shard(s) started`. Four simultaneous
 held approximately 33.9, 16.4, 16.4, and 33.9 GiB respectively. This confirms
 two concurrent cells with two active, disjoint vLLM workers each. The service
 remained active after the check.
+
+### H124 preregistration — 2026-08-28T16:55Z
+
+H124 hypothesis: the requested missing fixed-strategy held-out cells can be
+measured on the corrected evaluator contract without another prompt, grammar,
+scorer, split, or strategy change. The live artifact gaps are measurements to
+complete, not evidence that the adapters need another semantic fix.
+
+Single variable: fixed strategy identity within each preregistered row. Run
+Unconstrained, GCD, and IterGen for GSM Qwen3.5-2B/4B; CARS for Spider
+Qwen3.5-2B/4B; and exactly the 30 blank SMILES method/model/class cells. Keep
+the current token-0 Spider contract, canonical held-out splits, sample counts,
+model rendering, scoring, temperatures, and generation budgets fixed. Do not
+replace the 18 already-filled Qwen3.5 SMILES baseline cells.
+
+Prior: **85%** that every adapter now emits a complete, recomputable artifact;
+the main risk is runtime length or an old baseline-specific integration gap.
+
+Falsifiable prediction: a one-example real-adapter pilot for each benchmark
+family writes nonblank row evidence with the intended source index, parser
+result, primary score, and syntax/validity field. Full runs then produce the
+exact requested sample counts without mixed provenance. A blank/repeated exact
+0/0 batch, wrong split, missing row evidence, or evaluator-contract error
+refutes H124 and stops that adapter family before paper entry.
+
+### H125 preregistration — 2026-08-28T16:55Z
+
+H125 hypothesis: changing only the synthesis author among GPT-5.6 Sol through
+Codex, Gemini 3.1 Pro Preview through Vertex AI, and the live normal Opus route
+will yield a fair Table 5 comparison under one common Qwen3.5-2B evaluation
+setup.
+
+Single variable: author model/route. Hold task, evaluator Qwen/Qwen3.5-2B,
+train and held-out data, cold-start policy, 40-attempt cap, adaptive helper
+mask, bandit policy, beam size, token budget, verification, and all thresholds
+fixed. The SMILES paper value is the sample-count-weighted mean of acrylates,
+chain extenders, and isocyanates. GPT-5.6 Sol must run through `codex exec`;
+Gemini must use Vertex model `gemini-3.1-pro-preview` in `global`; Opus must use
+the exact live verified normal profile and model.
+
+Prior: **70%** that all three provider routes pass a real one-attempt pilot and
+produce provenance-bound terminal artifacts; provider auth/model drift is the
+main risk.
+
+Falsifiable prediction: each pilot records the exact requested provider/model,
+returns one parseable synthesis-author response through the existing verifier,
+and reaches normal evaluation or a normal strategy-rejection outcome without
+an auth, unsupported-model, output-extraction, or secret-logging failure. Any
+route that cannot do so is repaired and repiloted before its five full runs.
+
+### H126 preregistration — 2026-08-28T16:55Z
+
+H126 hypothesis: with Qwen3.5-2B and the normal Opus author fixed, symbol-level
+per-step budgets `b=2` or `b=4` will reduce constrained work relative to token
+level `b=1` while preserving or improving held-out accuracy on GSM and Spider.
+
+Single variable: per-step token budget `b` in `{1,2,4}`. Hold beam size 2,
+adaptive masking on, bandit selection, author, evaluator, splits, cold start,
+40-attempt synthesis cap, prompts, verifier, and scoring fixed.
+
+Prior: **60%**. Larger steps should need fewer constrained decisions, but may
+reduce fine-grained correction and therefore hurt accuracy.
+
+Falsifiable prediction: at least one of `b=2` or `b=4` has lower constrained
+work than `b=1` on both tasks and does not reduce accuracy on both tasks. If
+both larger budgets fail that condition, H126 is refuted; report the measured
+tradeoff without changing another setting.
+
+### H127 preregistration — 2026-08-28T16:55Z
+
+H127 hypothesis: beam refinement `B=2` or `B=4` improves held-out accuracy over
+`B=1` on at least one of GSM or Spider, with the expected increase in
+constrained work.
+
+Single variable: refinement beam size `B` in `{1,2,4}`. Hold Qwen3.5-2B,
+normal Opus author, adaptive masking on, bandit selection, token budget, splits,
+cold start, 40 attempts, prompts, verifier, and scoring fixed.
+
+Prior: **70%** that a wider beam recovers at least one accuracy gain; the risk
+is that the synthesized strategy dominates and extra refinement only adds work.
+
+Falsifiable prediction: `B=2` or `B=4` strictly exceeds `B=1` accuracy on at
+least one task, and mean constrained work is nondecreasing for at least one
+wider-beam comparison. Otherwise H127 is refuted.
+
+### H128 preregistration — 2026-08-28T16:55Z
+
+H128 hypothesis: adaptive helper masking reduces constrained work without
+lowering held-out accuracy on both GSM and Spider under the fixed `B=2`,
+bandit, Qwen3.5-2B, and normal Opus setup.
+
+Single variable: adaptive helper mask off versus on. Hold beam size 2, bandit
+selection, token budget, author, evaluator, splits, cold start, 40 attempts,
+prompts, verifier, and scoring fixed.
+
+Prior: **75%** because empirical masking should remove low-value helper choices;
+the risk is masking a useful helper early in search.
+
+Falsifiable prediction: mask-on has lower constrained work on at least one task
+and is not less accurate on both tasks. If it is less accurate on both or never
+reduces constrained work, H128 is refuted.
+
+### H129 preregistration — 2026-08-28T16:55Z
+
+H129 hypothesis: a durable comparison controller can implement the user's
+post-baseline policy without duplicate or unbounded synthesis: when a newly
+measured baseline strictly exceeds same-row metaDecode accuracy or syntax on
+GSM/Spider, or unique-valid rate on SMILES, it claims exactly one new cold
+40-attempt metaDecode cycle for that row.
+
+Single variable: comparison outcome relative to the frozen same-row metaDecode
+artifact. Ties do not trigger. Keep author/evaluator/split settings from the
+manifest, ban synthesis warm starts, and allow at most one durable claim even
+after interruption or restart.
+
+Prior: **95%** because the existing post-14B runner already has atomic one-claim
+semantics, but it does not yet consume these new held-out artifacts or the
+accuracy-or-syntax trigger.
+
+Falsifiable prediction: tests first fail on the missing campaign comparison
+path, then pass for strict accuracy wins, strict syntax wins, SMILES UV wins,
+ties, malformed/mixed artifacts, restarts, concurrent claims, and a hard second
+cycle rejection. A paid-call-free dry run prints only the exact eligible rows
+and never prints a warm-start synthesis command.

@@ -324,6 +324,12 @@ def test_full_test_runner_resolves_direct_gemini_profile(tmp_path):
     assert runner.resolve_gen_profile("gemini") == ("gemini", "gemini-3-pro-preview")
 
 
+def test_full_test_runner_resolves_gpt56_sol_through_codex(tmp_path):
+    runner = _matrix_runner(tmp_path)
+
+    assert runner.resolve_gen_profile("gpt5.6-sol") == ("codex", "gpt-5.6-sol")
+
+
 def test_openai_generation_profile_is_skipped_when_api_key_is_missing(tmp_path):
     runner = _matrix_runner(tmp_path)
     runner.env.pop("OPENAI_API_KEY", None)

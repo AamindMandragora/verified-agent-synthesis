@@ -45,10 +45,16 @@ LOGGER = logging.getLogger(__name__)
 
 CLAUDE_CODE_MODEL = "claude-opus-5"
 CLAUDE_ACCESS_ERROR_MARKER = "[claude-author-access]"
+CODEX_MODEL = "gpt-5.6-sol"
+CODEX_ACCESS_ERROR_MARKER = "[codex-author-access]"
 
 
 class ClaudeTransientError(RuntimeError):
     """A temporary Claude transport failure that must not consume an attempt."""
+
+
+class CodexTransientError(RuntimeError):
+    """A temporary Codex CLI failure that must not consume an attempt."""
 
 
 class StrategyGenerator:
@@ -90,6 +96,11 @@ class StrategyGenerator:
         claude_retry_delay_seconds: Optional[float] = None,
         claude_telemetry_dir: Optional[str] = None,
         claude_author_lock_file: Optional[str] = None,
+        codex_executable: Optional[str] = None,
+        codex_timeout_seconds: Optional[float] = None,
+        codex_max_retries: Optional[int] = None,
+        codex_retry_delay_seconds: Optional[float] = None,
+        codex_author_lock_file: Optional[str] = None,
     ):
         """
         Initialize the strategy generator.
@@ -112,11 +123,18 @@ class StrategyGenerator:
         """
         self.backend = normalize_generation_backend(backend)
         self.model_name = model_name or (
-            CLAUDE_CODE_MODEL if self.backend == "claude" else self.DEFAULT_MODEL
+            CLAUDE_CODE_MODEL if self.backend == "claude" else (
+                CODEX_MODEL if self.backend == "codex" else self.DEFAULT_MODEL
+            )
         )
         if self.backend == "claude" and self.model_name != CLAUDE_CODE_MODEL:
             raise ValueError(
                 f"Claude Code synthesis requires model {CLAUDE_CODE_MODEL!r}; "
+                f"got {self.model_name!r}"
+            )
+        if self.backend == "codex" and self.model_name != CODEX_MODEL:
+            raise ValueError(
+                f"Codex synthesis requires model {CODEX_MODEL!r}; "
                 f"got {self.model_name!r}"
             )
         self.max_new_tokens = max_new_tokens
@@ -192,6 +210,30 @@ class StrategyGenerator:
         if self.claude_max_retries < 0:
             raise ValueError("claude_max_retries must be non-negative")
         self._claude_account_verified = False
+        self.codex_executable = (
+            codex_executable or os.environ.get("CSD_CODEX_EXECUTABLE") or "codex"
+        )
+        if codex_timeout_seconds is None:
+            codex_timeout_seconds = float(os.environ.get("CSD_CODEX_TIMEOUT_SECONDS", "1800"))
+        if codex_max_retries is None:
+            codex_max_retries = int(os.environ.get("CSD_CODEX_MAX_RETRIES", "2"))
+        if codex_retry_delay_seconds is None:
+            codex_retry_delay_seconds = float(os.environ.get("CSD_CODEX_RETRY_DELAY_SECONDS", "30"))
+        self.codex_timeout_seconds = float(codex_timeout_seconds)
+        self.codex_max_retries = int(codex_max_retries)
+        self.codex_retry_delay_seconds = float(codex_retry_delay_seconds)
+        self.codex_author_lock_file = Path(
+            codex_author_lock_file
+            or os.environ.get("CSD_CODEX_AUTHOR_LOCK_FILE")
+            or Path(tempfile.gettempdir()) / "csd-codex-author.lock"
+        ).expanduser().resolve()
+        if self.codex_timeout_seconds <= 0:
+            raise ValueError("codex_timeout_seconds must be positive")
+        if self.codex_max_retries < 0:
+            raise ValueError("codex_max_retries must be non-negative")
+        if self.codex_retry_delay_seconds < 0:
+            raise ValueError("codex_retry_delay_seconds must be non-negative")
+        self._codex_account_verified = False
 
         # Auto-detect device
         if device is None:
@@ -324,6 +366,9 @@ class StrategyGenerator:
         """Lazy-load the selected backend."""
         if self.backend == "claude":
             self._verify_claude_account()
+            return
+        if self.backend == "codex":
+            self._verify_codex_account()
             return
 
         if self.backend == "openai":
@@ -460,6 +505,227 @@ class StrategyGenerator:
                 f"Claude Code executable not found: {self.claude_executable!r}"
             )
         return executable
+
+    def _resolved_codex_executable(self) -> str:
+        """Resolve the configured Codex executable without invoking a shell."""
+        executable = shutil.which(self.codex_executable)
+        if executable is None:
+            raise ValueError(f"Codex executable not found: {self.codex_executable!r}")
+        return executable
+
+    def _codex_environment(self, home: Path) -> dict[str, str]:
+        """Pass only non-secret process settings plus the configured Codex auth home."""
+        allowed = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR")
+        environment = {name: os.environ[name] for name in allowed if name in os.environ}
+        environment["HOME"] = str(home)
+        # Keep authentication available while the process's ordinary HOME is
+        # disposable.  --ignore-user-config prevents this directory's config
+        # and rules from affecting the isolated invocation.
+        environment["CODEX_HOME"] = os.environ.get(
+            "CODEX_HOME", str(Path.home() / ".codex")
+        )
+        return environment
+
+    @staticmethod
+    def _safe_codex_error(error: object, *, limit: int = 500) -> str:
+        """Return a short error category without exposing provider output or tokens."""
+        text = re.sub(r"\s+", " ", str(error)).strip().lower()
+        if any(marker in text for marker in ("login", "auth", "credential", "subscription")):
+            return "authentication"
+        if any(marker in text for marker in ("rate", "quota", "limit", "credit")):
+            return "quota"
+        return text[:limit] if text else "unknown"
+
+    @staticmethod
+    def _stop_codex_process_group(process: subprocess.Popen) -> None:
+        """Stop Codex and all descendants in its dedicated process group."""
+        process_group = process.pid
+        try:
+            os.killpg(process_group, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(process_group, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            try:
+                os.killpg(process_group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
+
+    def _run_codex_process(
+        self,
+        argv: list[str],
+        *,
+        input_bytes: bytes,
+        cwd: Path,
+        home: Path,
+    ) -> tuple[int, bytes, bytes, float]:
+        """Run one bounded Codex command and clean up its process group."""
+        started = time.monotonic()
+        process = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            env=self._codex_environment(home),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            stdout, stderr = process.communicate(
+                input=input_bytes,
+                timeout=self.codex_timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            self._stop_codex_process_group(process)
+            duration = time.monotonic() - started
+            LOGGER.error(
+                "[codex] provider=codex model=%s status=timeout duration_seconds=%.3f",
+                self.model_name,
+                duration,
+            )
+            raise CodexTransientError("Codex execution timed out") from exc
+        except BaseException:
+            self._stop_codex_process_group(process)
+            raise
+        return process.returncode, stdout, stderr, time.monotonic() - started
+
+    def _acquire_codex_author_lock(self):
+        """Serialize calls made through the account-wide Codex login."""
+        lock_path = self.codex_author_lock_file
+        lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        lock = os.fdopen(descriptor, "w")
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        return lock
+
+    def _verify_codex_account(self) -> None:
+        """Require the local Codex CLI to report a ChatGPT login before generation."""
+        if self._codex_account_verified:
+            return
+        executable = self._resolved_codex_executable()
+        with (
+            tempfile.TemporaryDirectory(prefix="csd-codex-auth-cwd-") as cwd_name,
+            tempfile.TemporaryDirectory(prefix="csd-codex-auth-home-") as home_name,
+        ):
+            returncode, stdout, _stderr, duration = self._run_codex_process(
+                [executable, "login", "status"],
+                input_bytes=b"",
+                cwd=Path(cwd_name),
+                home=Path(home_name),
+            )
+        status_text = stdout.decode("utf-8", "replace").strip().lower()
+        if returncode != 0 or "logged in using chatgpt" not in status_text:
+            LOGGER.error(
+                "[codex] provider=codex model=%s status=login-rejected duration_seconds=%.3f",
+                self.model_name,
+                duration,
+            )
+            raise ValueError(
+                f"{CODEX_ACCESS_ERROR_MARKER} Codex login status must report ChatGPT login"
+            )
+        self._codex_account_verified = True
+        LOGGER.info(
+            "[codex] provider=codex model=%s status=login-verified duration_seconds=%.3f",
+            self.model_name,
+            duration,
+        )
+
+    def _generate_codex(self, system_prompt: str, user_prompt: str) -> str:
+        """Generate through an isolated, read-only, ephemeral Codex CLI session."""
+        self._verify_codex_account()
+        executable = self._resolved_codex_executable()
+        prompt = system_prompt + "\n\n" + user_prompt
+        prompt_bytes = prompt.encode("utf-8")
+        request_hash = hashlib.sha256(prompt_bytes).hexdigest()
+        LOGGER.info(
+            "[codex] provider=codex model=%s prompt_bytes=%d prompt_sha256=%s",
+            self.model_name,
+            len(prompt_bytes),
+            request_hash,
+        )
+        last_error: CodexTransientError | None = None
+        for retry_number in range(self.codex_max_retries + 1):
+            lock = self._acquire_codex_author_lock()
+            try:
+                with (
+                    tempfile.TemporaryDirectory(prefix="csd-codex-cwd-") as cwd_name,
+                    tempfile.TemporaryDirectory(prefix="csd-codex-home-") as home_name,
+                    tempfile.TemporaryDirectory(prefix="csd-codex-output-") as output_dir_name,
+                ):
+                    cwd = Path(cwd_name)
+                    output_path = Path(output_dir_name) / "last-message.txt"
+                    argv = [
+                        executable,
+                        "exec",
+                        "--model",
+                        CODEX_MODEL,
+                        "--sandbox",
+                        "read-only",
+                        "--ephemeral",
+                        "--ignore-user-config",
+                        "--ignore-rules",
+                        "--skip-git-repo-check",
+                        "--cd",
+                        str(cwd),
+                        "--output-last-message",
+                        str(output_path),
+                        "-",
+                    ]
+                    returncode, _stdout, stderr, duration = self._run_codex_process(
+                        argv,
+                        input_bytes=prompt_bytes,
+                        cwd=cwd,
+                        home=Path(home_name),
+                    )
+                    if returncode != 0:
+                        category = self._safe_codex_error(stderr)
+                        if category == "authentication":
+                            raise RuntimeError(
+                                f"{CODEX_ACCESS_ERROR_MARKER} Codex authentication failed"
+                            )
+                        raise CodexTransientError("Codex execution failed")
+                    if not output_path.is_file():
+                        raise CodexTransientError("Codex did not write a final message")
+                    output_bytes = output_path.read_bytes()
+                    if not output_bytes.strip():
+                        raise CodexTransientError("Codex final message was empty")
+                    output = output_bytes.decode("utf-8").strip()
+                    LOGGER.info(
+                        "[codex] provider=codex model=%s status=success output_bytes=%d "
+                        "output_sha256=%s duration_seconds=%.3f retry=%d",
+                        self.model_name,
+                        len(output_bytes),
+                        hashlib.sha256(output_bytes).hexdigest(),
+                        duration,
+                        retry_number,
+                    )
+                    return output
+            except CodexTransientError as exc:
+                last_error = exc
+                LOGGER.warning(
+                    "[codex] provider=codex model=%s status=retry retry=%d/%d request_sha256=%s",
+                    self.model_name,
+                    retry_number,
+                    self.codex_max_retries,
+                    request_hash,
+                )
+            finally:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+                lock.close()
+            if last_error is not None and retry_number < self.codex_max_retries:
+                time.sleep(self.codex_retry_delay_seconds)
+        assert last_error is not None
+        raise last_error
 
     def _claude_environment(self, home: Path) -> dict[str, str]:
         """Build the small environment passed to the isolated Claude process."""
@@ -1177,6 +1443,9 @@ class StrategyGenerator:
             {"role": "user", "content": user_prompt}
         ]
 
+        if self.backend == "codex":
+            return self._generate_codex(system_prompt, user_prompt)
+
         if self.backend == "claude":
             output = self._generate_claude(system_prompt, user_prompt)
             self._log_prompt_io(system_prompt, user_prompt, output)
@@ -1669,6 +1938,18 @@ class StrategyGenerator:
         rationale = rationale.strip()
         if not rationale:
             return ""
+        if self.backend == "codex":
+            system_prompt, user_prompt = self._rationale_summary_messages(rationale)
+            try:
+                return self._clean_rationale_summary(
+                    self._generate_codex(system_prompt, user_prompt)
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "[codex] rationale summary failed status=fallback error_category=%s",
+                    self._safe_codex_error(exc),
+                )
+                return rationale
         if self.backend == "claude":
             system_prompt, user_prompt = self._rationale_summary_messages(rationale)
             try:

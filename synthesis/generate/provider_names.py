@@ -9,6 +9,7 @@ GENERATION_BACKENDS = (
     "huggingface",
     "vllm",
     "openai",
+    "codex",
     "claude",
     "claude-bedrock",
     "anthropic",
@@ -20,6 +21,7 @@ GENERATION_BACKENDS = (
 
 _DEPRECATED_ALIASES = {
     "claude-code": "claude",
+    "codex-cli": "codex",
     "bedrock": "claude-bedrock",
 }
 
