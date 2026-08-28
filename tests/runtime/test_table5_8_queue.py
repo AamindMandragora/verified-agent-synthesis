@@ -1,7 +1,10 @@
 import json
 import subprocess
+import sys
 import threading
 import time
+import types
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -287,12 +290,24 @@ def test_invalid_codex_auth_blocks_codex_without_blocking_ready_opus(monkeypatch
     ]
     commit = "a" * 40
     rows = [dict(row, git_commit=commit) for row in rows]
-    pilot_evidence = tmp_path / "opus-pilot.json"
-    pilot_evidence.write_text('{"status":"verified"}\n', encoding="utf-8")
+    pilot_evidence = tmp_path / "outputs/generated/pilot/results/failure_report.json"
+    _write_real_pilot_report(pilot_evidence, "opus5", commit)
+    opus_pilot = queue.provider_pilot_from_report(
+        pilot_evidence, profile="opus5", git_commit=commit, environment={}
+    )
     monkeypatch.setattr(
         queue,
         "codex_auth_probe",
         lambda: {"returncode": 0, "stdout": "", "stderr": "invalid_refresh_token"},
+    )
+    monkeypatch.setattr(
+        queue,
+        "claude_auth_probe",
+        lambda environment: {
+            "status": "ready",
+            "account": "ssdear@gmail.com",
+            "config_dir": "/home/aadivyar/.claude-csd-synthesis",
+        },
     )
     ready, blocked = queue.partition_profile_readiness(
         rows,
@@ -300,25 +315,8 @@ def test_invalid_codex_auth_blocks_codex_without_blocking_ready_opus(monkeypatch
             "CSD_CLAUDE_CONFIG_DIR": "/home/aadivyar/.claude-csd-synthesis",
             "CSD_CLAUDE_EXPECTED_ACCOUNT": "ssdear@gmail.com",
         },
-        provider_pilots={
-            "opus5": {
-                "profile": "opus5",
-                "status": "ready",
-                "git_commit": commit,
-                "backend": "claude",
-                "config_dir": "/home/aadivyar/.claude-csd-synthesis",
-                "expected_account": "ssdear@gmail.com",
-                "model": "claude-opus-5",
-                "output_sha256": queue.sha256_text("OPUS_ROUTE_OK"),
-                "attempt_count": 1,
-                "synthesis_status": "success",
-                "verification_status": "success",
-                "evaluation_status": "success",
-                "response_sha256": "b" * 64,
-                "evidence_path": str(pilot_evidence),
-                "evidence_sha256": queue.hash_file(pilot_evidence),
-            }
-        },
+        repo=tmp_path,
+        provider_pilots={"opus5": opus_pilot},
     )
     assert [r["profile"] for r in ready] == ["opus5"]
     assert blocked[0]["status"] == "pending"
@@ -343,6 +341,7 @@ def test_profile_readiness_probes_each_provider_profile_once_and_requires_opus_p
             "CSD_CLAUDE_CONFIG_DIR": "/home/aadivyar/.claude-csd-synthesis",
             "CSD_CLAUDE_EXPECTED_ACCOUNT": "ssdear@gmail.com",
         },
+        repo=Path("/repo"),
         provider_pilots={},
     )
     assert len(calls) == 1
@@ -614,32 +613,23 @@ def test_provider_pilot_hash_is_canonical_and_tamper_evident():
     assert queue.provider_pilots_sha256(changed) != expected
 
 
-def test_provider_pilot_requires_exact_commit_and_hashed_evidence(tmp_path):
-    evidence = tmp_path / "opus-pilot.json"
-    evidence.write_text('{"result":"normal rejection"}\n', encoding="utf-8")
-    pilot = {
-        "status": "ready",
-        "backend": "claude",
-        "model": "claude-opus-5",
-        "git_commit": "a" * 40,
-        "config_dir": "/home/aadivyar/.claude-csd-synthesis",
-        "expected_account": "ssdear@gmail.com",
-        "output_sha256": queue.sha256_text("OPUS_ROUTE_OK"),
-        "attempt_count": 1,
-        "synthesis_status": "success",
-        "verification_status": "rejected",
-        "evaluation_status": "not_run",
-        "response_sha256": "b" * 64,
-        "evidence_path": str(evidence),
-        "evidence_sha256": queue.hash_file(evidence),
-    }
-    assert queue.validate_provider_pilot("opus5", pilot, "a" * 40) is None
+def test_provider_pilot_requires_exact_commit_and_hashed_evidence(tmp_path, monkeypatch):
+    commit = "a" * 40
+    evidence = tmp_path / "outputs/generated/pilot/results/failure_report.json"
+    _write_real_pilot_report(evidence, "opus5", commit)
+    pilot = queue.provider_pilot_from_report(
+        evidence, profile="opus5", git_commit=commit, environment={}
+    )
+    monkeypatch.setattr(queue.time, "time", lambda: 1787949000.0)
+    assert queue.validate_provider_pilot(
+        "opus5", pilot, commit, repo=tmp_path, environment={}
+    ) is None
     assert "different code commit" in queue.validate_provider_pilot(
-        "opus5", pilot, "c" * 40
+        "opus5", pilot, "c" * 40, repo=tmp_path, environment={}
     )
     evidence.write_text("changed\n", encoding="utf-8")
     assert "evidence" in queue.validate_provider_pilot(
-        "opus5", pilot, "a" * 40
+        "opus5", pilot, commit, repo=tmp_path, environment={}
     )
 
 
@@ -800,3 +790,326 @@ def test_dispatch_polls_surviving_child_without_readmitting_it(tmp_path, monkeyp
     assert run_calls == [row["cell_id"]]
     assert sleeps == [0.1]
     assert results[0]["status"] == "complete"
+
+
+def test_provider_pilot_is_parsed_from_one_attempt_report_and_requires_fresh_binding(tmp_path, monkeypatch):
+    commit = "a" * 40
+    path = tmp_path / "outputs/generated/pilot/results/failure_report.json"
+    report = _write_real_pilot_report(path, "opus5", commit)
+    pilot = queue.provider_pilot_from_report(
+        path, profile="opus5", git_commit=commit, environment={}
+    )
+    assert pilot["attempt_count"] == 1
+    assert pilot["evidence_sha256"] == queue.hash_file(path)
+    report["timestamp"] = "2020-01-01T00:00:00Z"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    monkeypatch.setattr(queue.time, "time", lambda: 1787949000.0)
+    assert queue.validate_provider_pilot(
+        "opus5", pilot, commit, repo=tmp_path, environment={}
+    )
+
+
+def test_manifest_source_closure_hashes_all_tracked_synthesis_files(tmp_path):
+    paths = queue.execution_source_paths(Path.cwd())
+    assert "synthesis/run_synthesis.py" in paths
+    assert "synthesis/generate/generator.py" in paths
+    assert any(path.startswith("synthesis/") for path in paths)
+
+
+def test_exhausted_candidate_requires_exact_finite_evaluation_and_attempt_number(tmp_path, monkeypatch):
+    row = next(r for r in queue.build_scope(tmp_path) if r["profile"] == "opus5" and r["benchmark"] == "gsm_symbolic")
+    run_dir = tmp_path / "outputs" / "generated" / row["output_name"] / "run"
+    (run_dir / "results").mkdir(parents=True)
+    compiled = run_dir / "compiled" / "GeneratedCSD.py"
+    compiled.parent.mkdir(parents=True)
+    compiled.write_text("bad", encoding="utf-8")
+    report = {"total_attempts": 40, "attempts": [{"attempt_number": 0, "compilation": {"success": True, "output_dir": str(compiled.parent)}, "evaluation": {"num_examples": 1, "accuracy": 2.0, "syntax_rate": -1.0}}]}
+    (run_dir / "results" / "failure_report.json").write_text(json.dumps(report), encoding="utf-8")
+    (run_dir.parent / "latest_run.txt").write_text(str(run_dir), encoding="utf-8")
+    monkeypatch.setattr(queue, "_report_matches_row", lambda *args, **kwargs: True)
+    assert queue._validated_compiled_output(tmp_path, row["output_name"], min_accuracy=0.1, min_syntax_rate=0.1, job=row) is None
+
+
+def test_scope_records_effective_provider_limits_separately_from_requested_budget():
+    rows = queue.build_scope(Path("/repo"))
+    assert {row["effective_output_tokens"] for row in rows if row["profile"] == "opus5"} == {64000}
+    assert {row["effective_thinking_tokens"] for row in rows if row["profile"] == "opus5"} == {48000}
+    assert all(row["effective_output_tokens"] is None for row in rows if row["profile"] == "gpt5.6-sol")
+
+
+def test_missing_compiled_fingerprint_becomes_failed_state(tmp_path, monkeypatch):
+    row = next(r for r in queue.build_scope(tmp_path) if r["benchmark"] == "smiles")
+    queue.write_state(tmp_path / "state" / f"{row['cell_id']}.json", {"cell_id": row["cell_id"], "status": "running", "phase": "heldout", "compiled_csd_path": str(tmp_path / "missing.py"), "compiled_sha256": "0" * 64})
+    monkeypatch.setattr(queue, "heldout_command", lambda *args: [])
+    result = queue.run_row(row, repo=tmp_path, python=Path("python"), state_dir=tmp_path / "state", gpus=(0,), runner=lambda *args, **kwargs: pytest.fail("must not launch"))
+    assert result["status"] == "failed"
+
+
+def test_dry_run_does_not_probe_provider_readiness(tmp_path, monkeypatch):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    row = queue.build_scope(tmp_path)[0]
+    monkeypatch.setattr(queue, "validate_manifest", lambda repo, payload: [row])
+    monkeypatch.setattr(queue, "partition_profile_readiness", lambda *args, **kwargs: pytest.fail("provider readiness was called"))
+    args = queue.controller_parser().parse_args(["--manifest", str(manifest), "--state-dir", str(tmp_path / "state"), "--log", str(tmp_path / "run.log"), "--dry-run"])
+    assert queue.controller_main(args) == 0
+
+
+def _real_pilot_report(profile, commit, *, output_name="pilot", compiled_dir="/tmp/compiled"):
+    backend, model = {
+        "opus5": ("claude", "claude-opus-5"),
+        "gpt5.6-sol": ("codex", "gpt-5.6-sol"),
+        "gemini3.1-pro": ("vertex", "gemini-3.1-pro-preview"),
+    }[profile]
+    return {
+        "timestamp": "2026-08-28T20:25:50.576728+00:00",
+        "total_attempts": 1,
+        "run_configuration": {
+            "git_commit": commit,
+            "output_name": output_name,
+            "max_iterations": 1,
+            "task_description": queue.TASKS["smiles"],
+            "author_model": {
+                "backend": backend,
+                "model": model,
+                "max_new_tokens": 32768,
+                "reasoning_budget_tokens": 4096,
+            },
+            "evaluation": {
+                "dataset": "smiles",
+                "eval_model": queue.EVAL_MODEL,
+                "eval_sample_size": 1,
+                "eval_max_steps": 400,
+                "eval_step_token_budget": 1,
+                "eval_max_seconds_per_example": 600.0,
+                "min_examples_before_threshold_stop": 1,
+                "smiles_classes": ["acrylates"],
+            },
+            "synthesis_controls": {
+                "adaptive_helper_mask": True,
+                "helper_selection_policy": "bandit",
+                "refinement_beam_size": 2,
+            },
+        },
+        "attempts": [
+            {
+                "attempt_number": 1,
+                "strategy_code": "generated := generatedPrefix; cost := 1;",
+                "verification": {"success": True, "error_count": 0},
+                "compilation": {"success": True, "output_dir": str(compiled_dir)},
+                "evaluation": {
+                    "success": True,
+                    "num_examples": 1,
+                    "accuracy": 0.0,
+                    "syntax_rate": 1.0,
+                    "sample_outputs": [
+                        {
+                            "actual": "CCOC(=O)C=C",
+                            "is_correct": False,
+                            "is_syntax_valid": True,
+                        }
+                    ],
+                },
+            }
+        ],
+    }
+
+
+def _write_real_pilot_report(path, profile, commit):
+    output_name = path.parents[1].name
+    compiled_dir = path.parents[1] / "python" / output_name
+    compiled_dir.mkdir(parents=True, exist_ok=True)
+    (compiled_dir / "GeneratedCSD.py").write_text("compiled", encoding="utf-8")
+    report = _real_pilot_report(
+        profile,
+        commit,
+        output_name=output_name,
+        compiled_dir=compiled_dir,
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report), encoding="utf-8")
+    return report
+
+
+def test_real_pilot_parser_uses_nested_run_report_and_requires_verifier_eval(tmp_path):
+    commit = "a" * 40
+    report_path = tmp_path / "outputs/generated/pilot/results/failure_report.json"
+    report = _write_real_pilot_report(report_path, "opus5", commit)
+    pilot = queue.provider_pilot_from_report(
+        report_path, profile="opus5", git_commit=commit, environment={}
+    )
+    assert pilot["backend"] == "claude"
+    assert pilot["model"] == "claude-opus-5"
+    assert pilot["verification_status"] == "success"
+    assert pilot["evaluation_status"] == "success"
+    assert pilot["expected_account"] == "ssdear@gmail.com"
+    report["attempts"][0]["evaluation"] = None
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(queue.ConfigError, match="evaluation"):
+        queue.provider_pilot_from_report(
+            report_path, profile="opus5", git_commit=commit, environment={}
+        )
+
+
+def test_provider_pilot_validation_reparses_report_and_rejects_fabricated_fields(
+    tmp_path, monkeypatch
+):
+    commit = "a" * 40
+    repo = tmp_path
+    report_path = repo / "outputs/generated/pilot/results/failure_report.json"
+    _write_real_pilot_report(report_path, "opus5", commit)
+    pilot = queue.provider_pilot_from_report(
+        report_path, profile="opus5", git_commit=commit, environment={}
+    )
+    monkeypatch.setattr(queue.time, "time", lambda: 1787949000.0)
+    assert queue.validate_provider_pilot(
+        "opus5", pilot, commit, repo=repo, environment={}
+    ) is None
+    forged = dict(pilot, evaluation_status="rejected")
+    assert queue.validate_provider_pilot(
+        "opus5", forged, commit, repo=repo, environment={}
+    ) is not None
+
+
+def test_claude_auth_probe_parses_exact_first_party_max_json(monkeypatch):
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs["env"]))
+        return type(
+            "Result",
+            (),
+            {
+                "returncode": 0,
+                "stdout": json.dumps(
+                    {
+                        "loggedIn": True,
+                        "email": "ssdear@gmail.com",
+                        "authMethod": "claude.ai",
+                        "apiProvider": "firstParty",
+                        "subscriptionType": "max",
+                    }
+                ),
+                "stderr": "",
+            },
+        )()
+
+    monkeypatch.setattr(queue.subprocess, "run", run)
+    result = queue.claude_auth_probe({})
+    assert result == {
+        "status": "ready",
+        "account": "ssdear@gmail.com",
+        "config_dir": "/home/aadivyar/.claude-csd-synthesis",
+    }
+    assert calls[0][0][-2:] == ["status", "--json"]
+
+
+def test_codex_probe_must_complete_the_sentinel_not_only_report_login(tmp_path, monkeypatch):
+    row = next(
+        row
+        for row in queue.build_scope(tmp_path)
+        if row["profile"] == "gpt5.6-sol"
+    )
+    row["git_commit"] = "a" * 40
+    monkeypatch.setattr(queue, "validate_provider_pilot", lambda *args, **kwargs: None)
+    reason = queue.profile_block_reason(
+        row,
+        {},
+        repo=tmp_path,
+        provider_pilots={},
+        cached_probes={
+            "gpt5.6-sol": {
+                "status": "blocked",
+                "returncode": 0,
+                "stdout": "Logged in using ChatGPT",
+                "stderr": "",
+            }
+        },
+    )
+    assert reason == "codex local authentication is unavailable or invalid"
+
+
+def test_vertex_adc_probe_refreshes_google_auth_and_binds_project(tmp_path, monkeypatch):
+    adc = tmp_path / "adc.json"
+    adc.write_text(json.dumps({"project_id": "paper-project"}), encoding="utf-8")
+    credentials = types.SimpleNamespace(token=None)
+
+    def refresh(_request):
+        credentials.token = "private-token"
+
+    credentials.refresh = refresh
+    auth_module = types.ModuleType("google.auth")
+    auth_module.load_credentials_from_file = lambda *args, **kwargs: (
+        credentials,
+        "paper-project",
+    )
+    requests_module = types.ModuleType("google.auth.transport.requests")
+    requests_module.Request = object
+    transport_module = types.ModuleType("google.auth.transport")
+    transport_module.requests = requests_module
+    google_module = types.ModuleType("google")
+    google_module.auth = auth_module
+    monkeypatch.setitem(sys.modules, "google", google_module)
+    monkeypatch.setitem(sys.modules, "google.auth", auth_module)
+    monkeypatch.setitem(sys.modules, "google.auth.transport", transport_module)
+    monkeypatch.setitem(
+        sys.modules, "google.auth.transport.requests", requests_module
+    )
+
+    result = queue.vertex_adc_probe(
+        {"GOOGLE_APPLICATION_CREDENTIALS": str(adc)}
+    )
+    assert result == {
+        "status": "ready",
+        "vertex_project": "paper-project",
+        "adc_sha256": queue.hash_file(adc),
+        "location": "global",
+    }
+
+
+def test_pilot_report_requires_its_real_compiled_artifact(tmp_path):
+    commit = "a" * 40
+    report_path = tmp_path / "outputs/generated/pilot/results/failure_report.json"
+    report = _write_real_pilot_report(report_path, "opus5", commit)
+    compiled = Path(report["attempts"][0]["compilation"]["output_dir"]) / "GeneratedCSD.py"
+    compiled.unlink()
+    with pytest.raises(queue.ConfigError, match="compiled artifact"):
+        queue.provider_pilot_from_report(
+            report_path, profile="opus5", git_commit=commit, environment={}
+        )
+
+
+def test_exhaustion_rejects_duplicate_attempt_numbers(tmp_path, monkeypatch):
+    row = next(
+        r
+        for r in queue.build_scope(tmp_path)
+        if r["profile"] == "opus5" and r["benchmark"] == "gsm_symbolic"
+    )
+    row["git_commit"] = "a" * 40
+    run_dir = tmp_path / "outputs/generated" / row["output_name"] / "run"
+    (run_dir / "results").mkdir(parents=True)
+    compiled = run_dir / "compiled/GeneratedCSD.py"
+    compiled.parent.mkdir(parents=True)
+    compiled.write_text("compiled", encoding="utf-8")
+    attempt = {
+        "attempt_number": 1,
+        "compilation": {"success": True, "output_dir": str(compiled.parent)},
+        "evaluation": {
+            "num_examples": row["eval_sample_size"],
+            "accuracy": 0.5,
+            "syntax_rate": 0.9,
+        },
+    }
+    report = {"total_attempts": 40, "attempts": [attempt, dict(attempt)]}
+    (run_dir / "results/failure_report.json").write_text(
+        json.dumps(report), encoding="utf-8"
+    )
+    (run_dir.parent / "latest_run.txt").write_text(str(run_dir), encoding="utf-8")
+    monkeypatch.setattr(queue, "_report_matches_row", lambda *a, **k: True)
+    assert queue._validated_compiled_output(
+        tmp_path,
+        row["output_name"],
+        min_accuracy=0.1,
+        min_syntax_rate=0.1,
+        job=row,
+    ) is None

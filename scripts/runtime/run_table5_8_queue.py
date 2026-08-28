@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -147,6 +148,7 @@ JOB_KEYS = frozenset({
     "cell_id", "table", "table_cell_id", "benchmark", "dataset", "task", "profile",
     "generation_backend", "generation_model", "eval_model", "synthesis_max_tokens",
     "synthesis_reasoning_budget",
+    "effective_output_tokens", "effective_thinking_tokens",
     "smiles_class", "token_budget", "beam_size", "adaptive_helper_mask",
     "helper_selection_policy", "max_iterations", "min_accuracy", "min_syntax_rate",
     "bar_source_path", "bar_source_sha256", "eval_sample_size", "heldout_sample_size",
@@ -174,6 +176,8 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
         "eval_model": EVAL_MODEL,
         "synthesis_max_tokens": AUTHOR_TOKEN_BUDGET,
         "synthesis_reasoning_budget": AUTHOR_REASONING_BUDGET,
+        "effective_output_tokens": {"opus5": 64000, "gpt5.6-sol": None, "gemini3.1-pro": 32768}[profile],
+        "effective_thinking_tokens": {"opus5": 48000, "gpt5.6-sol": None, "gemini3.1-pro": None}[profile],
         "smiles_class": smiles_class,
         "token_budget": controls.pop("token_budget", 1),
         "beam_size": controls.pop("beam_size", 2),
@@ -246,6 +250,152 @@ def constrained_window_rate(value: dict[str, Any]) -> float:
     return float(syntax_rate)
 
 
+def provider_pilot_from_report(
+    path: Path,
+    *,
+    profile: str,
+    git_commit: str,
+    environment: dict[str, str],
+) -> dict[str, Any]:
+    """Build manifest evidence only from a real, fully evaluated pilot report."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConfigError("provider pilot report is missing or invalid") from exc
+    expected_routes = {
+        "gpt5.6-sol": ("codex", "gpt-5.6-sol", None, None),
+        "gemini3.1-pro": ("vertex", "gemini-3.1-pro-preview", 32768, None),
+        "opus5": ("claude", "claude-opus-5", 64000, 48000),
+    }
+    if profile not in expected_routes:
+        raise ConfigError(f"unknown provider pilot profile: {profile}")
+    route = payload.get("run_configuration")
+    attempts = payload.get("attempts")
+    if not isinstance(route, dict) or not isinstance(attempts, list) or len(attempts) != 1:
+        raise ConfigError("provider pilot must be a one-attempt synthesis report")
+    if payload.get("total_attempts") != 1 or route.get("max_iterations") != 1:
+        raise ConfigError("provider pilot must use exactly one attempt")
+    if route.get("git_commit") != git_commit:
+        raise ConfigError("provider pilot report is bound to a different code commit")
+
+    author = route.get("author_model") or {}
+    evaluation_config = route.get("evaluation") or {}
+    controls = route.get("synthesis_controls") or {}
+    backend, model, effective_output, effective_thinking = expected_routes[profile]
+    try:
+        expected_config = (
+            author.get("backend") == backend
+            and author.get("model") == model
+            and author.get("max_new_tokens") == AUTHOR_TOKEN_BUDGET
+            and author.get("reasoning_budget_tokens") == AUTHOR_REASONING_BUDGET
+            and route.get("task_description") == TASKS["smiles"]
+            and evaluation_config.get("dataset") == "smiles"
+            and evaluation_config.get("eval_model") == EVAL_MODEL
+            and evaluation_config.get("eval_sample_size") == 1
+            and evaluation_config.get("eval_max_steps") == DATASET_SETTINGS["smiles"]["steps"]
+            and evaluation_config.get("eval_step_token_budget") == 1
+            and float(evaluation_config.get("eval_max_seconds_per_example", -1)) == 600.0
+            and evaluation_config.get("min_examples_before_threshold_stop") == 1
+            and evaluation_config.get("smiles_classes") in ("acrylates", ["acrylates"])
+            and controls.get("adaptive_helper_mask") is True
+            and controls.get("helper_selection_policy") == "bandit"
+            and controls.get("refinement_beam_size") == 2
+        )
+    except (TypeError, ValueError):
+        expected_config = False
+    if not expected_config:
+        raise ConfigError("provider pilot report has the wrong route or controls")
+
+    attempt = attempts[0]
+    verification = attempt.get("verification") or {}
+    compilation = attempt.get("compilation") or {}
+    evaluation = attempt.get("evaluation") or {}
+    strategy_code = attempt.get("strategy_code")
+    sample_outputs = evaluation.get("sample_outputs")
+    try:
+        accuracy = float(evaluation.get("accuracy"))
+        syntax_rate = float(evaluation.get("syntax_rate"))
+    except (TypeError, ValueError) as exc:
+        raise ConfigError("provider pilot evaluation metrics are missing") from exc
+    if (
+        attempt.get("attempt_number") != 1
+        or not isinstance(strategy_code, str)
+        or not strategy_code.strip()
+        or verification.get("success") is not True
+        or compilation.get("success") is not True
+        or evaluation.get("success") is not True
+        or evaluation.get("num_examples") != 1
+        or not isinstance(sample_outputs, list)
+        or len(sample_outputs) != 1
+        or not isinstance(sample_outputs[0], dict)
+        or not isinstance(sample_outputs[0].get("actual"), str)
+        or not sample_outputs[0]["actual"].strip()
+        or type(sample_outputs[0].get("is_correct")) is not bool
+        or type(sample_outputs[0].get("is_syntax_valid")) is not bool
+        or not math.isfinite(accuracy)
+        or not math.isfinite(syntax_rate)
+        or not 0.0 <= accuracy <= 1.0
+        or not 0.0 <= syntax_rate <= 1.0
+    ):
+        raise ConfigError("provider pilot must reach successful verification and evaluation")
+
+    run_root = path.parent.parent
+    compiled_dir = Path(str(compilation.get("output_dir") or ""))
+    compiled_csd = compiled_dir / "GeneratedCSD.py"
+    try:
+        compiled_dir.resolve().relative_to((run_root / "python").resolve())
+    except (OSError, ValueError) as exc:
+        raise ConfigError("provider pilot compiled artifact is outside its run") from exc
+    if (
+        route.get("output_name") != run_root.name
+        or compiled_dir.name != run_root.name
+        or not compiled_csd.is_file()
+    ):
+        raise ConfigError("provider pilot compiled artifact is missing or unbound")
+
+    created_at = payload.get("timestamp")
+    if not isinstance(created_at, str):
+        raise ConfigError("provider pilot report has no timestamp")
+    pilot = {
+        "status": "ready",
+        "git_commit": git_commit,
+        "profile": profile,
+        "backend": backend,
+        "model": model,
+        "attempt_count": 1,
+        "synthesis_status": "success",
+        "verification_status": "success",
+        "evaluation_status": "success",
+        "response_sha256": sha256_text(strategy_code),
+        "evidence_path": str(path.resolve()),
+        "evidence_sha256": hash_file(path),
+        "compiled_csd_sha256": hash_file(compiled_csd),
+        "created_at": created_at,
+        "effective_output_tokens": effective_output,
+        "effective_thinking_tokens": effective_thinking,
+    }
+    if profile == "opus5":
+        pilot.update(
+            {
+                "config_dir": "/home/aadivyar/.claude-csd-synthesis",
+                "expected_account": "ssdear@gmail.com",
+            }
+        )
+    if profile == "gemini3.1-pro":
+        adc = Path(environment.get("GOOGLE_APPLICATION_CREDENTIALS", ""))
+        project = verified_adc_project(environment)
+        if not project or not adc.is_file():
+            raise ConfigError("Vertex provider pilot has no bound ADC project")
+        pilot.update(
+            {
+                "vertex_project": project,
+                "adc_sha256": hash_file(adc),
+                "location": "global",
+            }
+        )
+    return pilot
+
+
 def codex_auth_probe() -> dict[str, Any]:
     """Verify the exact author route with a tiny isolated sentinel request."""
     executable = os.environ.get("CSD_CODEX_EXECUTABLE", "codex")
@@ -278,8 +428,79 @@ def codex_auth_probe() -> dict[str, Any]:
     return {"returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr, "status": "ready" if result.returncode == 0 and response == sentinel else "blocked"}
 
 
+def claude_auth_probe(environment: dict[str, str]) -> dict[str, Any]:
+    """Check the exact first-party Max account without sending a prompt."""
+    executable = environment.get("CSD_CLAUDE_EXECUTABLE", "claude")
+    checked = dict(environment)
+    checked["CLAUDE_CONFIG_DIR"] = "/home/aadivyar/.claude-csd-synthesis"
+    try:
+        result = subprocess.run(
+            [executable, "auth", "status", "--json"],
+            env=checked,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"status": "blocked", "reason": type(exc).__name__}
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {"status": "blocked", "reason": "invalid auth status"}
+    exact = (
+        result.returncode == 0
+        and payload.get("loggedIn") is True
+        and payload.get("email") == "ssdear@gmail.com"
+        and payload.get("authMethod") == "claude.ai"
+        and payload.get("apiProvider") == "firstParty"
+        and str(payload.get("subscriptionType", "")).lower() == "max"
+    )
+    if not exact:
+        return {"status": "blocked", "reason": "wrong Claude account or route"}
+    return {
+        "status": "ready",
+        "account": "ssdear@gmail.com",
+        "config_dir": "/home/aadivyar/.claude-csd-synthesis",
+    }
+
+
+def vertex_adc_probe(environment: dict[str, str]) -> dict[str, Any]:
+    """Refresh the exact ADC credential through the same google-auth path as generation."""
+    try:
+        import google.auth
+        from google.auth.transport.requests import Request
+
+        adc_value = environment.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+        adc = Path(adc_value)
+        expected_project = verified_adc_project(environment)
+        if not adc.is_file() or not expected_project:
+            return {"status": "blocked", "reason": "missing ADC project"}
+        credentials, loaded_project = google.auth.load_credentials_from_file(
+            str(adc),
+            scopes=["https://www.googleapis.com/auth/cloud-platform"],
+        )
+        credentials.refresh(Request())
+    except Exception as exc:  # google-auth uses several provider-specific errors.
+        return {"status": "blocked", "reason": type(exc).__name__}
+    project = loaded_project or expected_project
+    if project != expected_project or not getattr(credentials, "token", None):
+        return {"status": "blocked", "reason": "wrong ADC project or empty token"}
+    return {
+        "status": "ready",
+        "vertex_project": expected_project,
+        "adc_sha256": hash_file(adc),
+        "location": "global",
+    }
+
+
 def validate_provider_pilot(
-    profile: str, pilot: Any, git_commit: str | None
+    profile: str,
+    pilot: Any,
+    git_commit: str | None,
+    *,
+    repo: Path,
+    environment: dict[str, str],
 ) -> str | None:
     """Validate a one-attempt provider pilot bound to the exact code bytes."""
     if not isinstance(pilot, dict) or pilot.get("status") != "ready":
@@ -294,30 +515,17 @@ def validate_provider_pilot(
     backend, model = expected[profile]
     if pilot.get("backend") != backend or pilot.get("model") != model:
         return f"{profile} provider pilot has the wrong route"
-    if profile == "opus5":
-        if pilot.get("config_dir") != "/home/aadivyar/.claude-csd-synthesis" or pilot.get("expected_account") != "ssdear@gmail.com":
-            return "opus5 provider pilot has the wrong account or config"
-        if pilot.get("output_sha256") != sha256_text("OPUS_ROUTE_OK"):
-            return "opus5 provider pilot sentinel does not match"
+    if profile == "opus5" and (
+        pilot.get("config_dir") != "/home/aadivyar/.claude-csd-synthesis"
+        or pilot.get("expected_account") != "ssdear@gmail.com"
+    ):
+        return "opus5 provider pilot has the wrong account or config"
     if pilot.get("attempt_count") != 1:
         return f"{profile} provider pilot must use exactly one attempt"
-    if pilot.get("synthesis_status") not in {"success", "rejected"}:
-        return f"{profile} provider pilot has no synthesis result"
-    if pilot.get("verification_status") not in {"success", "rejected", "not_run"}:
-        return f"{profile} provider pilot has no verifier result"
-    if pilot.get("evaluation_status") not in {"success", "rejected", "not_run"}:
-        return f"{profile} provider pilot has no evaluation result"
-    synthesis = pilot["synthesis_status"]
-    verification = pilot["verification_status"]
-    evaluation = pilot["evaluation_status"]
-    if synthesis == "rejected" and (verification != "not_run" or evaluation != "not_run"):
-        return f"{profile} provider pilot has an impossible rejection sequence"
-    if verification == "rejected" and evaluation != "not_run":
-        return f"{profile} provider pilot has an impossible verifier sequence"
-    if verification == "not_run" and synthesis == "success":
-        return f"{profile} provider pilot did not reach the verifier"
-    if verification == "success" and evaluation == "not_run":
-        return f"{profile} provider pilot did not reach evaluation"
+    if any(pilot.get(key) != "success" for key in (
+        "synthesis_status", "verification_status", "evaluation_status"
+    )):
+        return f"{profile} provider pilot did not complete verification and evaluation"
     response_sha = pilot.get("response_sha256")
     if not isinstance(response_sha, str) or len(response_sha) != 64:
         return f"{profile} provider pilot response is not hash-bound"
@@ -330,15 +538,67 @@ def validate_provider_pilot(
         or hash_file(evidence_path) != evidence_sha
     ):
         return f"{profile} provider pilot evidence is missing or changed"
+    try:
+        report_root = (repo / "outputs" / "generated").resolve()
+        resolved_evidence = evidence_path.resolve()
+        resolved_evidence.relative_to(report_root)
+    except (OSError, ValueError):
+        return f"{profile} provider pilot evidence is outside this checkout"
+    if evidence_path.name not in {"success_report.json", "failure_report.json"}:
+        return f"{profile} provider pilot evidence is not a synthesis report"
+    try:
+        rebuilt = provider_pilot_from_report(
+            evidence_path,
+            profile=profile,
+            git_commit=str(git_commit),
+            environment=environment,
+        )
+    except ConfigError as exc:
+        return f"{profile} provider pilot report is invalid: {exc}"
+    if rebuilt != pilot:
+        return f"{profile} provider pilot does not match its report"
+    created_at = pilot.get("created_at")
+    if not isinstance(created_at, str):
+        return f"{profile} provider pilot has no timestamp"
+    try:
+        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        age = time.time() - created.astimezone(timezone.utc).timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return f"{profile} provider pilot timestamp is invalid"
+    if age > 24 * 60 * 60 or age < -5 * 60:
+        return f"{profile} provider pilot is stale"
     return None
 
 
-def profile_block_reason(row: dict[str, Any], environment: dict[str, str], *, provider_pilots: dict[str, Any] | None = None, cached_probes: dict[str, dict[str, Any]] | None = None) -> str | None:
+def execution_source_paths(repo: Path) -> tuple[str, ...]:
+    """Return the tracked source closure instead of a hand-maintained subset."""
+    names = subprocess.run(["git", "ls-files", "-z"], cwd=repo, check=True, capture_output=True).stdout.decode("utf-8").split("\0")
+    selected = [
+        name for name in names if name and (
+            name.startswith("synthesis/")
+            or name.startswith("scripts/runtime/")
+            or name.startswith("environment/benchmark_splits/")
+            or name in {"run_all_tests.py", ".context/run_post14b_rebar_queue.py"}
+        )
+    ]
+    return tuple(sorted(selected))
+
+
+def profile_block_reason(
+    row: dict[str, Any],
+    environment: dict[str, str],
+    *,
+    repo: Path,
+    provider_pilots: dict[str, Any] | None = None,
+    cached_probes: dict[str, dict[str, Any]] | None = None,
+    cached_auth: dict[str, dict[str, Any]] | None = None,
+) -> str | None:
     """Return a durable pending reason, or None when this row may be admitted."""
     if row["profile"] == "gpt5.6-sol":
         probe = (cached_probes or {}).get("gpt5.6-sol") or codex_auth_probe()
-        text = f"{probe.get('stdout', '')}\n{probe.get('stderr', '')}".lower()
-        if probe.get("status") != "ready" and (probe.get("returncode") != 0 or "invalid_refresh_token" in text or "logged in using chatgpt" not in text):
+        if probe.get("status") != "ready":
             LOGGER.error("[tableq] auth-block profile=gpt5.6-sol reason=codex-local-auth")
             return "codex local authentication is unavailable or invalid"
     checked_environment = dict(environment)
@@ -356,20 +616,65 @@ def profile_block_reason(row: dict[str, Any], environment: dict[str, str], *, pr
         row["profile"],
         (provider_pilots or {}).get(row["profile"]),
         row.get("git_commit"),
+        repo=repo,
+        environment=environment,
     )
-    return pilot_reason
+    if pilot_reason:
+        return pilot_reason
+    if row["profile"] == "gemini3.1-pro":
+        pilot = (provider_pilots or {}).get(row["profile"]) or {}
+        adc = environment.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+        if pilot.get("vertex_project") != row.get("vertex_project") or pilot.get("location") != "global":
+            return "gemini3.1-pro provider pilot is not bound to the approved global project"
+        if not adc or pilot.get("adc_sha256") != hash_file(Path(adc)):
+            return "gemini3.1-pro provider pilot is not bound to the active ADC"
+    if row.get("git_commit") and row["profile"] in {"opus5", "gemini3.1-pro"}:
+        auth = (cached_auth or {}).get(row["profile"])
+        if not auth or auth.get("status") != "ready":
+            return f"{row['profile']} live authentication is unavailable"
+        pilot = (provider_pilots or {}).get(row["profile"]) or {}
+        if row["profile"] == "opus5" and (
+            auth.get("account") != pilot.get("expected_account")
+            or auth.get("config_dir") != pilot.get("config_dir")
+        ):
+            return "opus5 live authentication does not match the pilot route"
+        if row["profile"] == "gemini3.1-pro" and any(
+            auth.get(key) != pilot.get(key)
+            for key in ("vertex_project", "adc_sha256", "location")
+        ):
+            return "gemini3.1-pro live authentication does not match the pilot route"
+    return None
 
 
-def partition_profile_readiness(rows: list[dict[str, Any]], environment: dict[str, str], *, provider_pilots: dict[str, Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def partition_profile_readiness(
+    rows: list[dict[str, Any]],
+    environment: dict[str, str],
+    *,
+    repo: Path,
+    provider_pilots: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Keep auth-blocked rows pending while allowing ready profiles to run."""
     ready: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
     cached_probes: dict[str, dict[str, Any]] = {}
+    cached_auth: dict[str, dict[str, Any]] = {}
     for row in rows:
         profile = row["profile"]
         if profile == "gpt5.6-sol" and profile not in cached_probes:
             cached_probes[profile] = codex_auth_probe()
-        reason = profile_block_reason(row, environment, provider_pilots=provider_pilots, cached_probes=cached_probes)
+        if row.get("git_commit") and row["profile"] not in cached_auth:
+            if row["profile"] == "opus5":
+                cached_auth[row["profile"]] = claude_auth_probe(environment)
+            elif row["profile"] == "gemini3.1-pro":
+                cached_auth[row["profile"]] = vertex_adc_probe(environment)
+        reason = profile_block_reason(
+            row,
+            environment,
+            repo=repo,
+            provider_pilots=provider_pilots,
+            cached_probes=cached_probes,
+            cached_auth=cached_auth,
+        )
         if reason is None:
             ready.append(row)
         else:
@@ -418,8 +723,9 @@ def choose_gpus(row: dict[str, Any], snapshot: dict[int, dict[str, int]], reserv
 
 
 def manifest_payload(repo: Path, rows: list[dict[str, Any]], provider_pilots: dict[str, Any] | None = None) -> dict[str, Any]:
+    source_paths = execution_source_paths(repo)
     dirty = subprocess.run(
-        ["git", "status", "--porcelain", "--", *SOURCE_PATHS],
+        ["git", "status", "--porcelain", "--", *source_paths],
         cwd=repo, check=True, capture_output=True, text=True,
     ).stdout.strip()
     if dirty:
@@ -427,7 +733,7 @@ def manifest_payload(repo: Path, rows: list[dict[str, Any]], provider_pilots: di
     validate_crane_checkout(repo)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
     sources: dict[str, str] = {}
-    for relative in SOURCE_PATHS:
+    for relative in source_paths:
         path = repo / relative
         if not path.is_file():
             raise ValueError(f"missing execution dependency: {relative}")
@@ -566,14 +872,15 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
         copied_bar = Path(str(actual.get("bar_source_path", "")))
         if copied_bar.is_absolute() or not (repo / copied_bar).is_file() or hashlib.sha256((repo / copied_bar).read_bytes()).hexdigest() != actual.get("bar_source_sha256"):
             raise ConfigError(f"bar source is not a copied immutable artifact: {actual['cell_id']}")
+    source_paths = execution_source_paths(repo)
     recorded = payload.get("source_sha256")
-    if not isinstance(recorded, dict) or set(recorded) != set(SOURCE_PATHS):
+    if not isinstance(recorded, dict) or set(recorded) != set(source_paths):
         raise ConfigError("manifest must hash every direct execution dependency")
-    for relative in SOURCE_PATHS:
+    for relative in source_paths:
         path = repo / relative
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != recorded[relative]:
             raise ConfigError(f"execution dependency changed: {relative}")
-    dirty = subprocess.run(["git", "status", "--porcelain", "--", *SOURCE_PATHS], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+    dirty = subprocess.run(["git", "status", "--porcelain", "--", *source_paths], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
     if dirty:
         raise ConfigError("execution dependencies have uncommitted changes")
     if subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True).stdout.strip() != str(payload.get("git_commit")):
@@ -824,20 +1131,21 @@ def _controller_main_locked(args: argparse.Namespace) -> int:
     payload = json.loads(manifest_bytes)
     rows = validate_manifest(repo, payload)
     manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+    if args.dry_run:
+        for row in rows:
+            LOGGER.info("[tableq] dry-run cell=%s", row["cell_id"])
+            print(row["cell_id"], shlex.join(synthesis_command(row, args.python)))
+        return 0
     ready_rows, blocked_rows = partition_profile_readiness(
         rows,
         os.environ,
+        repo=repo,
         provider_pilots=payload.get("provider_pilots"),
     )
     args.state_dir.mkdir(parents=True, exist_ok=True)
     write_state(args.state_dir / "controller.json", {"manifest_sha256": manifest_sha, "status": "validated", "scope": len(rows), "ready": len(ready_rows), "auth_blocked": len(blocked_rows)})
     logging.basicConfig(filename=args.log, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     LOGGER.info("[tableq] input manifest sha256=%s scope=%d", manifest_sha, len(rows))
-    if args.dry_run:
-        for row in rows:
-            LOGGER.info("[tableq] dry-run cell=%s", row["cell_id"])
-            print(row["cell_id"], shlex.join(synthesis_command(row, args.python)))
-        return 0
     from scripts.runtime.run_cold_synthesis_queue import gpu_memory_snapshot
     rows = [dict(row, manifest_sha256=manifest_sha, manifest_commit=manifest_sha) for row in ready_rows]
     results = dispatch(rows, repo=repo, python=args.python, state_dir=args.state_dir, allowed=args.gpus, snapshot=gpu_memory_snapshot, poll_seconds=args.poll_seconds)
@@ -969,17 +1277,32 @@ def _validated_compiled_output(
         compiled_dir = Path(str(report.get("compiled_dir") or ""))
     else:
         candidates: list[tuple[float, float, float, int, Path]] = []
+        seen_attempt_numbers: set[int] = set()
         for attempt in report.get("attempts") or []:
             compilation = attempt.get("compilation") or {}
             evaluation = attempt.get("evaluation") or {}
+            try:
+                attempt_number = int(attempt.get("attempt_number"))
+                examples = int(evaluation.get("num_examples"))
+                accuracy = float(evaluation.get("accuracy"))
+                syntax = float(evaluation.get("syntax_rate"))
+            except (TypeError, ValueError):
+                continue
+            if attempt_number in seen_attempt_numbers:
+                return None
+            seen_attempt_numbers.add(attempt_number)
             if (
                 compilation.get("success") is not True
                 or not compilation.get("output_dir")
-                or int(evaluation.get("num_examples") or 0) < 1
+                or examples != int(job["eval_sample_size"])
+                or attempt_number < 1
+                or attempt_number > int(job["max_iterations"])
+                or not math.isfinite(accuracy)
+                or not math.isfinite(syntax)
+                or not 0.0 <= accuracy <= 1.0
+                or not 0.0 <= syntax <= 1.0
             ):
                 continue
-            accuracy = float(evaluation.get("accuracy") or 0.0)
-            syntax = float(evaluation.get("syntax_rate") or 0.0)
             shortfall = max(0.0, min_accuracy - accuracy) + max(
                 0.0, min_syntax_rate - syntax
             )
@@ -988,7 +1311,7 @@ def _validated_compiled_output(
                     shortfall,
                     -accuracy,
                     -syntax,
-                    int(attempt.get("attempt_number") or 0),
+                    attempt_number,
                     Path(str(compilation["output_dir"])),
                 )
             )
@@ -1111,7 +1434,14 @@ def run_row(row: dict[str, Any], *, repo: Path, python: Path, state_dir: Path, g
         save(prior)
 
     compiled = Path(str(prior["compiled_csd_path"]))
-    if prior.get("compiled_sha256") and artifact_fingerprint(compiled).get("sha256") != prior["compiled_sha256"]:
+    compiled_fingerprint = artifact_fingerprint(compiled)
+    if compiled_fingerprint is None:
+        failed = dict(prior, status="failed", reason="state-bound compiled artifact is missing", exit_code=1)
+        failed.pop("pid", None)
+        failed.pop("pid_start", None)
+        save(failed)
+        return failed
+    if prior.get("compiled_sha256") and compiled_fingerprint["sha256"] != prior["compiled_sha256"]:
         failed = dict(prior, status="failed", reason="compiled artifact changed before held-out evaluation", exit_code=1)
         save(failed)
         return failed
@@ -1320,7 +1650,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Build or dry-run the Table 5--8 queue")
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--manifest", type=Path, default=None)
-    parser.add_argument("--provider-pilots", type=Path, default=None, help="JSON file containing non-secret, manifest-bound provider pilot evidence")
+    parser.add_argument(
+        "--provider-pilot-report",
+        action="append",
+        default=[],
+        metavar="PROFILE=PATH",
+        help="one real one-attempt synthesis report to parse and bind",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     rows = build_scope(args.repo)
@@ -1330,12 +1666,27 @@ def main() -> int:
         for row in rows:
             print(row["cell_id"], shlex.join(synthesis_command(row, Path(sys.executable))))
         return 0
-    provider_pilots = None
-    if args.provider_pilots is not None:
-        raw_pilots = args.provider_pilots.read_bytes()
-        provider_pilots = json.loads(raw_pilots.decode("utf-8"))
-        if not isinstance(provider_pilots, dict):
-            raise SystemExit("--provider-pilots must contain a JSON object")
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=args.repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    provider_pilots: dict[str, Any] = {}
+    for specification in args.provider_pilot_report:
+        try:
+            profile, raw_path = specification.split("=", 1)
+        except ValueError as exc:
+            raise SystemExit("--provider-pilot-report must be PROFILE=PATH") from exc
+        if profile in provider_pilots:
+            raise SystemExit(f"duplicate provider pilot report: {profile}")
+        provider_pilots[profile] = provider_pilot_from_report(
+            Path(raw_path),
+            profile=profile,
+            git_commit=commit,
+            environment=dict(os.environ),
+        )
     payload = manifest_payload(args.repo, rows, provider_pilots=provider_pilots)
     target = args.manifest or args.repo / "outputs/controlled_comparison/table5_8_manifest.json"
     target.parent.mkdir(parents=True, exist_ok=True)
