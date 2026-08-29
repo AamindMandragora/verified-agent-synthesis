@@ -70,6 +70,36 @@ def build_reevaluation_provenance(
         "step_token_budget": args.step_token_budget,
         "smiles_class": args.smiles_classes,
     }
+    revision = getattr(args, "provenance_eval_model_revision", None)
+    snapshot_path = getattr(args, "provenance_eval_model_snapshot_path", None)
+    snapshot_sha256 = getattr(
+        args, "provenance_eval_model_snapshot_sha256", None
+    )
+    snapshot_file_count = getattr(
+        args, "provenance_eval_model_snapshot_file_count", None
+    )
+    if revision or snapshot_path:
+        provenance.update(
+            {
+                "eval_model_revision": revision,
+                "eval_model_snapshot_path": snapshot_path,
+                "eval_model_snapshot_sha256": snapshot_sha256,
+                "eval_model_snapshot_file_count": snapshot_file_count,
+            }
+        )
+    spider_data_sha256 = getattr(args, "provenance_spider_data_sha256", None)
+    if spider_data_sha256:
+        provenance.update(
+            {
+                "spider_data_path": getattr(
+                    args, "provenance_spider_data_path", None
+                ),
+                "spider_data_sha256": spider_data_sha256,
+                "spider_data_file_count": getattr(
+                    args, "provenance_spider_data_file_count", None
+                ),
+            }
+        )
     if evaluation_result is not None:
         provenance.update(
             {
@@ -193,11 +223,33 @@ def main() -> None:
     p.add_argument("--output-json", type=Path, default=None)
     p.add_argument("--provenance-cell-id")
     p.add_argument("--provenance-manifest-commit")
+    p.add_argument("--provenance-eval-model-revision")
+    p.add_argument("--provenance-eval-model-snapshot-path")
+    p.add_argument("--provenance-eval-model-snapshot-sha256")
+    p.add_argument("--provenance-eval-model-snapshot-file-count", type=int)
+    p.add_argument("--provenance-spider-data-path")
+    p.add_argument("--provenance-spider-data-sha256")
+    p.add_argument("--provenance-spider-data-file-count", type=int)
     args = p.parse_args()
     if bool(args.provenance_cell_id) != bool(args.provenance_manifest_commit):
         p.error(
             "--provenance-cell-id and --provenance-manifest-commit must be given together"
         )
+    if args.provenance_cell_id and (
+        not args.provenance_eval_model_revision
+        or not args.provenance_eval_model_snapshot_path
+        or not args.provenance_eval_model_snapshot_sha256
+        or args.provenance_eval_model_snapshot_file_count is None
+    ):
+        p.error(
+            "provenanced runs require the exact eval model revision and snapshot bytes"
+        )
+    if args.dataset == "spider" and args.provenance_cell_id and (
+        not args.provenance_spider_data_path
+        or not args.provenance_spider_data_sha256
+        or args.provenance_spider_data_file_count is None
+    ):
+        p.error("provenanced Spider runs require the exact Spider data binding")
 
     gsm_split_file = args.gsm_split_file or SPLIT_FILE_BY_DATASET["gsm_symbolic"]
     spider_split_file = args.spider_split_file or SPLIT_FILE_BY_DATASET["spider"]

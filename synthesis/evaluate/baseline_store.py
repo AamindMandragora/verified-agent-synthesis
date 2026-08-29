@@ -36,6 +36,15 @@ def build_metrics_from_eval_samples(
         for s in samples
         if s.get("token_count") is not None
     ]
+    works = [
+        int(s["constrained_work"])
+        for s in samples
+        if s.get("constrained_work") is not None
+    ]
+    if works:
+        metrics["total_constrained_work"] = int(sum(works))
+        metrics["mean_constrained_work"] = round(sum(works) / len(works), 4)
+        metrics["examples_with_constrained_work"] = len(works)
     if times:
         metrics["total_generation_seconds"] = round(sum(times), 4)
         metrics["mean_generation_seconds_per_example"] = round(sum(times) / len(times), 6)
@@ -177,6 +186,7 @@ def build_reevaluation_sample_evidence(
                 "error_status": error_status,
                 "removed_terminal_token_count": removed_count,
                 "generation_token_evidence": token_evidence,
+                "constrained_work": sample.get("constrained_work"),
                 "strategy_output_relation": sample.get("strategy_output_relation"),
                 "strategy_mutation": sample.get("strategy_mutation"),
                 "strategy_removed_sampled_token_ids": _safe_int_list(
@@ -228,6 +238,8 @@ def build_minimal_baseline_record(
                 row[key] = sample.get(key)
         if sample.get("token_count") is not None:
             row["num_tokens"] = int(sample["token_count"])
+        if sample.get("constrained_work") is not None:
+            row["constrained_work"] = int(sample["constrained_work"])
         if sample.get("time_seconds") is not None:
             row["generation_seconds"] = round(float(sample["time_seconds"]), 6)
         # Per-example outcome flags so saved JSONs support offline diffing
@@ -278,6 +290,8 @@ def baseline_payload_from_success_report(report: dict[str, Any]) -> dict[str, An
         }
         if sample.get("token_count") is not None:
             row["num_tokens"] = int(sample["token_count"])
+        if sample.get("constrained_work") is not None:
+            row["constrained_work"] = int(sample["constrained_work"])
         if sample.get("time_seconds") is not None:
             row["generation_seconds"] = round(float(sample["time_seconds"]), 6)
         # Per-example outcome flags so saved JSONs support offline diffing

@@ -12,6 +12,7 @@ import json
 import os
 import re
 from collections import Counter
+from synthesis.safe_logging import display_text, safe_logging_enabled
 
 # SQL keyword set for failure-preview anonymization. Identifiers outside this
 # set are replaced with <id>; numbers with <num>; string literals with <str>.
@@ -204,6 +205,9 @@ def _print_realtime_completion(
 ) -> None:
     """Write one generated completion to stdout with unambiguous boundaries."""
     prefix = f"  [EVAL]   Sample {example_number}/{total_examples} completion"
+    if safe_logging_enabled():
+        print(display_text(prefix, completion), flush=True)
+        return
     print(f"{prefix} begin", flush=True)
     print(completion, flush=True)
     print(f"{prefix} end", flush=True)
@@ -2452,6 +2456,7 @@ class Evaluator:
         benchmark_aux: Optional[dict[str, Any]] = None
         tokenizer = env.get("tokenizer")
         generation_token_evidence: Optional[dict[str, Any]] = None
+        constrained_work: Optional[int] = None
         prompt_contract: Optional[dict[str, Any]] = None
         from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptRenderError
         from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
@@ -2486,7 +2491,7 @@ class Evaluator:
                 )
             # endregion
             with _PerExampleTimer(self.max_seconds_per_example):
-                output_text, token_count, gen_time, constrained_segments, helper_trace = run_crane_csd(
+                generation_result = run_crane_csd(
                     env=env,
                     prompt_text=prompt,
                     max_steps=self.max_steps,
@@ -2495,6 +2500,13 @@ class Evaluator:
                     dynamic_parser=dynamic_parser,
                     early_stop_on_answer=self.early_stop_on_answer,
                 )
+            if len(generation_result) == 6:
+                output_text, token_count, gen_time, constrained_segments, helper_trace, constrained_work = generation_result
+            elif len(generation_result) == 5:
+                output_text, token_count, gen_time, constrained_segments, helper_trace = generation_result
+                constrained_work = None
+            else:
+                raise ValueError(f"CSD generation returned {len(generation_result)} values; expected 5 or 6")
             generation_token_evidence = getattr(
                 env.get("lm"), "_last_generation_evidence", None
             )
@@ -2629,6 +2641,7 @@ class Evaluator:
                 "visible_span_token_lengths": visible_span_lengths,
                 "valid_visible_span_token_lengths": valid_visible_span_lengths,
                 "token_count": token_count,
+                "constrained_work": constrained_work,
                 "hit_max_steps": token_count >= self.max_steps,
                 "time_seconds": gen_time,
                 "runtime_budget_exceeded": (

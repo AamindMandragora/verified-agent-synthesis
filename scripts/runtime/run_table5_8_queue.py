@@ -15,6 +15,7 @@ import math
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,6 +31,11 @@ if __package__ in {None, ""}:
 
 from synthesis.evaluate.benchmarks.gsm_symbolic.prompts import GSM_CRANE_COT_TASK
 from synthesis.run_constants import VLLM_GPU_MEMORY_UTILIZATION_BY_MODEL
+from synthesis.source_snapshot import (
+    execution_source_hashes,
+    execution_source_paths,
+    execution_source_sha256,
+)
 
 LOGGER = logging.getLogger("table5-8-queue")
 cold_compiled_csd = None
@@ -91,6 +97,9 @@ class ConfigError(ValueError):
     """The manifest or runtime configuration cannot be safely launched."""
 
 EVAL_MODEL = "Qwen/Qwen3.5-2B"
+CANONICAL_PYTHON = Path("/apps/conda/aadivyar/envs/csd/bin/python")
+DISK_FIXED_SAFETY_BYTES = 2 * 1024**3
+DISK_BYTES_PER_UNRESOLVED_ROW = 128 * 1024**2
 GPU_SAFETY_MIB = 2_000
 CANONICAL_CRANE_COMMIT = "616379ce33ac6245933c16e6264b41f7d5800183"
 AUTHOR_TOKEN_BUDGET = 32768
@@ -142,6 +151,7 @@ SOURCE_PATHS = (
     "run_all_tests.py",
     "synthesis/run_synthesis.py",
     "synthesis/run_constants.py",
+    "synthesis/source_snapshot.py",
     "synthesis/split_provenance.py",
     "synthesis/generate/generator.py",
     "synthesis/generate/provider_names.py",
@@ -177,7 +187,7 @@ SOURCE_PATHS = (
     "synthesis/evaluate/baselines/crane_repo_runner.py",
 )
 
-MANIFEST_KEYS = frozenset({"version", "git_commit", "crane_commit", "crane_source_sha256", "source_sha256", "jobs", "provider_pilots", "provider_pilot_sha256"})
+MANIFEST_KEYS = frozenset({"version", "git_commit", "crane_commit", "crane_source_sha256", "source_sha256", "execution_source_sha256", "external_runtime", "python_runtime", "jobs", "provider_pilots", "provider_pilot_sha256"})
 JOB_KEYS = frozenset({
     "cell_id", "table", "table_cell_id", "benchmark", "dataset", "task", "profile",
     "generation_backend", "generation_model", "eval_model", "synthesis_max_tokens",
@@ -189,7 +199,7 @@ JOB_KEYS = frozenset({
     "eval_max_steps", "eval_max_seconds", "gpu_mem_util", "memory_reservation_mib",
     "gpu_scope", "gpu_count", "heldout_split_name", "heldout_split_file", "sample_count",
     "output_name", "heldout_output_json", "log_file", "cold_start", "git_commit",
-    "launch_commit", "vertex_project",
+    "launch_commit", "vertex_project", "expected_author_route",
 })
 
 
@@ -277,11 +287,12 @@ def weighted_smiles_rate(values: Iterable[dict[str, Any]]) -> float:
 
 
 def constrained_window_rate(value: dict[str, Any]) -> float:
-    """Return CW, defined by the evaluator's validated syntax/parse rate."""
-    syntax_rate = value.get("syntax_rate")
-    if not isinstance(syntax_rate, (int, float)):
-        raise ConfigError("result is missing validated syntax_rate for CW")
-    return float(syntax_rate)
+    """Return validated mean constrained work for a held-out result."""
+    metrics = value.get("metrics")
+    work = metrics.get("mean_constrained_work") if isinstance(metrics, dict) else None
+    if not isinstance(work, (int, float)) or work < 0:
+        raise ConfigError("result is missing validated mean_constrained_work for CW")
+    return float(work)
 
 
 def provider_pilot_from_report(
@@ -311,8 +322,33 @@ def provider_pilot_from_report(
         raise ConfigError("provider pilot must use exactly one attempt")
     if route.get("git_commit") != git_commit:
         raise ConfigError("provider pilot report is bound to a different code commit")
+    source_digest = route.get("execution_source_sha256")
+    if not isinstance(source_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", source_digest):
+        raise ConfigError("provider pilot report has no source snapshot")
+    pilot_python_runtime = route.get("python_runtime")
+    if (
+        not isinstance(pilot_python_runtime, dict)
+        or set(pilot_python_runtime)
+        != {
+            "executable",
+            "python_version",
+            "implementation",
+            "package_count",
+            "packages_sha256",
+        }
+        or re.fullmatch(
+            r"[0-9a-f]{64}",
+            str(pilot_python_runtime.get("packages_sha256")),
+        )
+        is None
+    ):
+        raise ConfigError("provider pilot report has no Python runtime binding")
 
     author = route.get("author_model") or {}
+    reported_author_route = author.get("route")
+    required_author_route = expected_author_route(profile, environment)
+    if reported_author_route != required_author_route:
+        raise ConfigError("provider pilot report has the wrong author route identity")
     evaluation_config = route.get("evaluation") or {}
     controls = route.get("synthesis_controls") or {}
     backend, model, effective_output, effective_thinking = expected_routes[profile]
@@ -399,6 +435,8 @@ def provider_pilot_from_report(
     pilot = {
         "status": "ready",
         "git_commit": git_commit,
+        "execution_source_sha256": source_digest,
+        "python_runtime": pilot_python_runtime,
         "profile": profile,
         "backend": backend,
         "model": model,
@@ -417,28 +455,31 @@ def provider_pilot_from_report(
     if profile == "opus5":
         pilot.update(
             {
-                "config_dir": "/home/aadivyar/.claude-csd-synthesis",
-                "expected_account": "ssdear@gmail.com",
+                "config_dir": reported_author_route["config_dir"],
+                "expected_account": reported_author_route["expected_account"],
             }
         )
     if profile == "gemini3.1-pro":
-        adc = Path(environment.get("GOOGLE_APPLICATION_CREDENTIALS", ""))
-        project = verified_adc_project(environment)
-        if not project or not adc.is_file():
+        if (
+            not reported_author_route.get("vertex_project")
+            or not reported_author_route.get("adc_sha256")
+        ):
             raise ConfigError("Vertex provider pilot has no bound ADC project")
         pilot.update(
             {
-                "vertex_project": project,
-                "adc_sha256": hash_file(adc),
-                "location": "global",
+                "vertex_project": reported_author_route["vertex_project"],
+                "adc_sha256": reported_author_route["adc_sha256"],
+                "location": reported_author_route["location"],
             }
         )
     return pilot
 
 
-def codex_auth_probe() -> dict[str, Any]:
+def codex_auth_probe(environment: dict[str, str] | None = None) -> dict[str, Any]:
     """Verify the exact author route with a tiny isolated sentinel request."""
-    executable = os.environ.get("CSD_CODEX_EXECUTABLE", "codex")
+    inherited = dict(os.environ if environment is None else environment)
+    executable = inherited.get("CSD_CODEX_EXECUTABLE", "codex")
+    checked_environment = safe_runtime_environment(inherited)
     sentinel = "CSD_AUTH_SENTINEL_9f7a"
     cwd = Path(tempfile.mkdtemp(prefix="tableq-codex-probe-cwd-"))
     output = cwd / "probe.txt"
@@ -450,6 +491,7 @@ def codex_auth_probe() -> dict[str, Any]:
                 "--skip-git-repo-check", "--cd", str(cwd), "--output-last-message",
                 str(output), "-",
             ],
+            env=checked_environment,
             input=f"Return exactly {sentinel} and nothing else.\n",
             capture_output=True,
             text=True,
@@ -541,6 +583,7 @@ def validate_provider_pilot(
     *,
     repo: Path,
     environment: dict[str, str],
+    require_freshness: bool = True,
 ) -> str | None:
     """Validate a one-attempt provider pilot bound to the exact code bytes."""
     if not isinstance(pilot, dict) or pilot.get("status") != "ready":
@@ -607,23 +650,42 @@ def validate_provider_pilot(
         age = time.time() - created.astimezone(timezone.utc).timestamp()
     except (TypeError, ValueError, OverflowError):
         return f"{profile} provider pilot timestamp is invalid"
-    if age > 24 * 60 * 60 or age < -5 * 60:
+    if require_freshness and (age > 24 * 60 * 60 or age < -5 * 60):
         return f"{profile} provider pilot is stale"
     return None
 
 
-def execution_source_paths(repo: Path) -> tuple[str, ...]:
-    """Return the tracked source closure instead of a hand-maintained subset."""
-    names = subprocess.run(["git", "ls-files", "-z"], cwd=repo, check=True, capture_output=True).stdout.decode("utf-8").split("\0")
-    selected = [
-        name for name in names if name and (
-            name.startswith("synthesis/")
-            or name.startswith("scripts/runtime/")
-            or name.startswith("environment/benchmark_splits/")
-            or name in {"run_all_tests.py", ".context/run_post14b_rebar_queue.py"}
+def validate_startup_provider_pilots(
+    rows: list[dict[str, Any]],
+    provider_pilots: dict[str, Any],
+    *,
+    repo: Path,
+    environment: dict[str, str],
+    require_freshness: bool = True,
+) -> None:
+    """Require one fresh, exact pilot for every profile before polling starts."""
+    checked: set[str] = set()
+    for row in rows:
+        profile = str(row["profile"])
+        if profile in checked:
+            continue
+        checked_environment = dict(environment)
+        if profile == "gemini3.1-pro" and row.get("vertex_project"):
+            project = str(row["vertex_project"])
+            checked_environment["GOOGLE_CLOUD_PROJECT"] = project
+            checked_environment["VERTEX_AI_PROJECT"] = project
+            checked_environment["GOOGLE_CLOUD_LOCATION"] = "global"
+        reason = validate_provider_pilot(
+            profile,
+            provider_pilots.get(profile),
+            row.get("git_commit"),
+            repo=repo,
+            environment=checked_environment,
+            require_freshness=require_freshness,
         )
-    ]
-    return tuple(sorted(selected))
+        if reason is not None:
+            raise ConfigError(f"{profile} startup provider pilot is invalid: {reason}")
+        checked.add(profile)
 
 
 def profile_block_reason(
@@ -634,10 +696,11 @@ def profile_block_reason(
     provider_pilots: dict[str, Any] | None = None,
     cached_probes: dict[str, dict[str, Any]] | None = None,
     cached_auth: dict[str, dict[str, Any]] | None = None,
+    require_fresh_pilot: bool = True,
 ) -> str | None:
     """Return a durable pending reason, or None when this row may be admitted."""
     if row["profile"] == "gpt5.6-sol":
-        probe = (cached_probes or {}).get("gpt5.6-sol") or codex_auth_probe()
+        probe = (cached_probes or {}).get("gpt5.6-sol") or codex_auth_probe(environment)
         if probe.get("status") != "ready":
             LOGGER.error("[tableq] auth-block profile=gpt5.6-sol reason=codex-local-auth")
             return "codex local authentication is unavailable or invalid"
@@ -658,6 +721,7 @@ def profile_block_reason(
         row.get("git_commit"),
         repo=repo,
         environment=environment,
+        require_freshness=require_fresh_pilot,
     )
     if pilot_reason:
         return pilot_reason
@@ -701,7 +765,7 @@ def partition_profile_readiness(
     for row in rows:
         profile = row["profile"]
         if profile == "gpt5.6-sol" and profile not in cached_probes:
-            cached_probes[profile] = codex_auth_probe()
+            cached_probes[profile] = codex_auth_probe(environment)
         if row.get("git_commit") and row["profile"] not in cached_auth:
             if row["profile"] == "opus5":
                 cached_auth[row["profile"]] = claude_auth_probe(environment)
@@ -731,12 +795,15 @@ def make_admission_guard(
     auth_ttl_seconds: float = 300.0,
     clock: Any = time.time,
 ) -> Any:
-    """Revalidate frozen bytes, pilot freshness, and live auth before launch."""
+    """Revalidate frozen bytes, immutable pilot binding, and live auth."""
     cached_probes: dict[str, dict[str, Any]] = {}
     cached_auth: dict[str, dict[str, Any]] = {}
     checked_at: dict[str, float] = {}
 
-    def guard(row: dict[str, Any]) -> None:
+    def guard(
+        row: dict[str, Any], *, require_provider: bool = True
+    ) -> None:
+        disk_space_preflight(repo, unresolved_rows=1)
         try:
             manifest_bytes = manifest_path.read_bytes()
             payload = json.loads(manifest_bytes)
@@ -757,13 +824,20 @@ def make_admission_guard(
         if candidate is None:
             raise ConfigError(f"launch row disappeared from manifest: {row.get('cell_id')}")
 
+        if not require_provider:
+            LOGGER.info(
+                "[tableq] fresh-source-valid cell=%s provider-check=not-needed",
+                row["cell_id"],
+            )
+            return
+
         profile = str(candidate["profile"])
         now = float(clock())
         if now - checked_at.get(profile, float("-inf")) >= auth_ttl_seconds:
             cached_probes.pop(profile, None)
             cached_auth.pop(profile, None)
             if profile == "gpt5.6-sol":
-                cached_probes[profile] = codex_auth_probe()
+                cached_probes[profile] = codex_auth_probe(environment)
             elif profile == "opus5":
                 cached_auth[profile] = claude_auth_probe(environment)
             elif profile == "gemini3.1-pro":
@@ -776,6 +850,7 @@ def make_admission_guard(
             provider_pilots=payload.get("provider_pilots"),
             cached_probes=cached_probes,
             cached_auth=cached_auth,
+            require_fresh_pilot=False,
         )
         if reason is not None:
             raise ConfigError(f"fresh admission blocked for {row['cell_id']}: {reason}")
@@ -834,24 +909,51 @@ def manifest_payload(repo: Path, rows: list[dict[str, Any]], provider_pilots: di
         raise ConfigError("execution dependencies have uncommitted changes")
     validate_crane_checkout(repo)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
-    sources: dict[str, str] = {}
-    for relative in source_paths:
-        path = repo / relative
-        if not path.is_file():
-            raise ValueError(f"missing execution dependency: {relative}")
-        sources[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    sources = execution_source_hashes(repo)
+    source_digest = execution_source_sha256(repo)
     crane_sources = crane_source_hashes(repo)
     materialized = materialize_frozen_bar_sources(repo)
     vertex_project = verified_adc_project(os.environ)
-    bound_rows = [dict(row, git_commit=commit, launch_commit=commit, bar_source_path=materialized[row["benchmark"]], **({"vertex_project": vertex_project} if row["profile"] == "gemini3.1-pro" else {})) for row in rows]
+    bound_rows = [
+        dict(
+            row,
+            git_commit=commit,
+            launch_commit=commit,
+            bar_source_path=materialized[row["benchmark"]],
+            expected_author_route=expected_author_route(
+                row["profile"], dict(os.environ)
+            ),
+            **(
+                {"vertex_project": vertex_project}
+                if row["profile"] == "gemini3.1-pro"
+                else {}
+            ),
+        )
+        for row in rows
+    ]
     pilots = provider_pilots or {}
+    for profile, pilot in pilots.items():
+        if pilot.get("execution_source_sha256") != source_digest:
+            raise ConfigError(
+                f"{profile} provider pilot was not run from the current source bytes"
+            )
     pilot_hash = provider_pilots_sha256(pilots)
+    external_runtime = external_runtime_binding(dict(os.environ))
+    python_runtime = python_runtime_fingerprint(CANONICAL_PYTHON, repo)
+    for profile, pilot in pilots.items():
+        if pilot.get("python_runtime") != python_runtime:
+            raise ConfigError(
+                f"{profile} provider pilot used a different Python runtime"
+            )
     return {
         "version": 1,
         "git_commit": commit,
         "crane_commit": CANONICAL_CRANE_COMMIT,
         "crane_source_sha256": crane_sources,
         "source_sha256": sources,
+        "execution_source_sha256": source_digest,
+        "external_runtime": external_runtime,
+        "python_runtime": python_runtime,
         "jobs": bound_rows,
         "provider_pilots": provider_pilots or {},
         "provider_pilot_sha256": pilot_hash,
@@ -931,10 +1033,43 @@ def verified_adc_project(environment: dict[str, str]) -> str:
     return str(project) if isinstance(project, str) and project else ""
 
 
+def expected_author_route(
+    profile: str, environment: dict[str, str]
+) -> dict[str, Any]:
+    """Return the exact non-secret author identity a report must record."""
+    if profile == "gpt5.6-sol":
+        return {"auth_mode": "chatgpt", "account_verified": True}
+    if profile == "opus5":
+        return {
+            "auth_mode": "claude_code_max",
+            "config_dir": "/home/aadivyar/.claude-csd-synthesis",
+            "expected_account": "ssdear@gmail.com",
+            "account_verified": True,
+        }
+    if profile == "gemini3.1-pro":
+        adc = Path(environment.get("GOOGLE_APPLICATION_CREDENTIALS", ""))
+        return {
+            "auth_mode": "adc",
+            "vertex_project": verified_adc_project(environment),
+            "location": "global",
+            "adc_sha256": hash_file(adc) if adc.is_file() else None,
+        }
+    raise ConfigError(f"unknown provider profile: {profile}")
+
+
 def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Validate a manifest before any child process or provider is started."""
     if set(payload) != MANIFEST_KEYS:
         raise ConfigError("manifest contains unknown or missing top-level keys")
+    if payload.get("version") != 1:
+        raise ConfigError("manifest version must be exactly 1")
+    validate_external_runtime_binding(
+        payload.get("external_runtime"), dict(os.environ)
+    )
+    if payload.get("python_runtime") != python_runtime_fingerprint(
+        CANONICAL_PYTHON, repo
+    ):
+        raise ConfigError("Python runtime differs from the manifest")
     if payload.get("crane_commit") != CANONICAL_CRANE_COMMIT:
         raise ConfigError("manifest is not bound to the approved CRANE checkout")
     validate_crane_checkout(repo)
@@ -945,6 +1080,18 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
         raise ConfigError("provider_pilots must be a JSON object")
     if payload.get("provider_pilot_sha256") != provider_pilots_sha256(pilots):
         raise ConfigError("embedded provider pilot evidence hash does not match")
+    source_digest = payload.get("execution_source_sha256")
+    if not isinstance(source_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", source_digest):
+        raise ConfigError("manifest has no execution source digest")
+    for profile, pilot in pilots.items():
+        if pilot.get("execution_source_sha256") != source_digest:
+            raise ConfigError(
+                f"{profile} provider pilot source does not match the manifest"
+            )
+        if pilot.get("python_runtime") != payload.get("python_runtime"):
+            raise ConfigError(
+                f"{profile} provider pilot Python runtime does not match the manifest"
+            )
     rows = payload.get("jobs")
     if not isinstance(rows, list) or len(rows) != 31:
         raise ConfigError("manifest must contain exactly 31 Table 5--8 jobs")
@@ -963,13 +1110,33 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
         "log_file", "cold_start", "bar_source_sha256",
     }
     for actual, frozen in zip(rows, expected):
-        if set(actual) - JOB_KEYS:
-            raise ConfigError(f"job contains unknown fields: {actual.get('cell_id', '<unknown>')}")
+        required_job_keys = JOB_KEYS - {"vertex_project"}
+        if (
+            not required_job_keys.issubset(actual)
+            or set(actual) - JOB_KEYS
+            or (
+                actual.get("profile") == "gemini3.1-pro"
+                and "vertex_project" not in actual
+            )
+            or (
+                actual.get("profile") != "gemini3.1-pro"
+                and "vertex_project" in actual
+            )
+        ):
+            raise ConfigError(f"job has unknown or missing fields: {actual.get('cell_id', '<unknown>')}")
         for field in immutable_fields:
             if actual.get(field) != frozen.get(field):
                 raise ConfigError(f"manifest field {field} differs for {frozen['cell_id']}")
         if actual.get("git_commit") != payload.get("git_commit"):
             raise ConfigError(f"row commit is not bound to manifest commit: {actual['cell_id']}")
+        if actual.get("launch_commit") != payload.get("git_commit"):
+            raise ConfigError(f"row launch commit is not bound to manifest commit: {actual['cell_id']}")
+        if actual.get("expected_author_route") != expected_author_route(
+            str(actual.get("profile")), dict(os.environ)
+        ):
+            raise ConfigError(
+                f"row author route differs from current credentials: {actual['cell_id']}"
+            )
         if actual.get("profile") == "gemini3.1-pro" and not actual.get("vertex_project"):
             raise ConfigError(f"Vertex row is missing its approved ADC project: {actual['cell_id']}")
         copied_bar = Path(str(actual.get("bar_source_path", "")))
@@ -979,6 +1146,8 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
     recorded = payload.get("source_sha256")
     if not isinstance(recorded, dict) or set(recorded) != set(source_paths):
         raise ConfigError("manifest must hash every direct execution dependency")
+    if sha256_text(json.dumps(recorded, sort_keys=True, separators=(",", ":"))) != source_digest:
+        raise ConfigError("execution source digest does not match its file hashes")
     for relative in source_paths:
         path = repo / relative
         if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != recorded[relative]:
@@ -991,8 +1160,259 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
     return rows
 
 
+SAFE_RUNTIME_ENV_KEYS = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "LANG",
+        "LANGUAGE",
+        "TZ",
+        "LD_LIBRARY_PATH",
+        "LIBRARY_PATH",
+        "CPATH",
+        "CUDA_HOME",
+        "CUDA_PATH",
+        "XDG_CACHE_HOME",
+        "XDG_DATA_DIRS",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "SSL_CERT_FILE",
+        "REQUESTS_CA_BUNDLE",
+        "CURL_CA_BUNDLE",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "no_proxy",
+        "HF_HOME",
+        "HF_CACHE",
+        "TRANSFORMERS_CACHE",
+        "SYNCODE_CACHE",
+        "ITER_SYNCODE_CACHE",
+        "TOKENIZERS_PARALLELISM",
+        "CSD_CACHE_ROOT",
+        "_CE_CONDA",
+        "_CE_M",
+    }
+)
+SAFE_RUNTIME_ENV_PREFIXES = ("CONDA_", "LC_")
+
+
+def safe_runtime_environment(environment: dict[str, str]) -> dict[str, str]:
+    """Copy only operating-system, Python, model-cache, and network settings."""
+    return {
+        key: value
+        for key, value in environment.items()
+        if key in SAFE_RUNTIME_ENV_KEYS
+        or key.startswith(SAFE_RUNTIME_ENV_PREFIXES)
+    }
+
+
+def runtime_data_paths(environment: dict[str, str]) -> dict[str, str]:
+    """Resolve model and Spider data from the real login home before isolation."""
+    login_home = Path(environment.get("HOME") or Path.home()).expanduser().resolve()
+    hf_home = Path(
+        environment.get("HF_HOME") or login_home / ".cache" / "huggingface"
+    ).expanduser().resolve()
+    return {
+        "HF_HOME": str(hf_home),
+        "HF_CACHE": str(hf_home),
+        "TRANSFORMERS_CACHE": str(hf_home),
+        "XDG_CACHE_HOME": str(hf_home.parent),
+        "SPIDER_DATA_DIR": str(
+            (login_home / "spider_data" / "spider_data").resolve()
+        ),
+    }
+
+
+def python_runtime_fingerprint(python: Path, repo: Path) -> dict[str, Any]:
+    """Read the exact interpreter and installed-package identity in JSON."""
+    try:
+        resolved = python.expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise ConfigError(f"bound Python executable is missing: {python}") from exc
+    if not os.access(resolved, os.X_OK):
+        raise ConfigError(f"bound Python is not executable: {resolved}")
+    try:
+        completed = subprocess.run(
+            [str(resolved), "-m", "synthesis.runtime_fingerprint"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=safe_runtime_environment(dict(os.environ)),
+        )
+        payload = json.loads(completed.stdout)
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        raise ConfigError("unable to fingerprint the bound Python runtime") from exc
+    required = {
+        "executable",
+        "python_version",
+        "implementation",
+        "package_count",
+        "packages_sha256",
+    }
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != required
+        or payload.get("executable") != str(resolved)
+        or not isinstance(payload.get("python_version"), str)
+        or not isinstance(payload.get("implementation"), str)
+        or type(payload.get("package_count")) is not int
+        or payload["package_count"] <= 0
+        or re.fullmatch(r"[0-9a-f]{64}", str(payload.get("packages_sha256")))
+        is None
+    ):
+        raise ConfigError("bound Python returned an invalid runtime fingerprint")
+    return payload
+
+
+def _directory_tree_binding(root: Path) -> dict[str, Any]:
+    """Hash every regular file in a data tree in stable relative-path order."""
+    root = root.expanduser().resolve()
+    if not root.is_dir():
+        raise ConfigError(f"required runtime data directory is missing: {root}")
+    digest = hashlib.sha256()
+    file_count = 0
+    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
+        if path.is_symlink():
+            raise ConfigError(f"runtime data tree contains a symbolic link: {path}")
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hash_file(path).encode("ascii"))
+        digest.update(b"\n")
+        file_count += 1
+    if file_count == 0:
+        raise ConfigError(f"runtime data tree is empty: {root}")
+    return {
+        "path": str(root),
+        "file_count": file_count,
+        "sha256": digest.hexdigest(),
+    }
+
+
+def _model_snapshot_tree_binding(snapshot: Path, model_root: Path) -> dict[str, Any]:
+    """Hash the bytes reached by every file in a Hugging Face snapshot."""
+    snapshot = snapshot.resolve()
+    blobs = (model_root / "blobs").resolve()
+    digest = hashlib.sha256()
+    file_count = 0
+    for path in sorted(
+        snapshot.rglob("*"), key=lambda item: item.relative_to(snapshot).as_posix()
+    ):
+        if path.is_dir():
+            continue
+        relative = path.relative_to(snapshot).as_posix()
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError as exc:
+            raise ConfigError(f"Qwen snapshot contains a broken file: {path}") from exc
+        if path.is_symlink():
+            try:
+                resolved.relative_to(blobs)
+            except ValueError as exc:
+                raise ConfigError(
+                    f"Qwen snapshot link escapes the model cache: {path}"
+                ) from exc
+        elif snapshot != resolved.parent and snapshot not in resolved.parents:
+            raise ConfigError(f"Qwen snapshot file escapes its root: {path}")
+        if not resolved.is_file():
+            raise ConfigError(f"Qwen snapshot entry is not a file: {path}")
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hash_file(resolved).encode("ascii"))
+        digest.update(b"\n")
+        file_count += 1
+    if file_count == 0:
+        raise ConfigError(f"Qwen snapshot is empty: {snapshot}")
+    return {"file_count": file_count, "sha256": digest.hexdigest()}
+
+
+def external_runtime_binding(environment: dict[str, str]) -> dict[str, Any]:
+    """Resolve the exact local Qwen snapshot and Spider bytes used by evaluation."""
+    paths = runtime_data_paths(environment)
+    model_root = (
+        Path(paths["HF_HOME"])
+        / "hub"
+        / "models--Qwen--Qwen3.5-2B"
+    )
+    ref = model_root / "refs" / "main"
+    try:
+        revision = ref.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ConfigError(f"Qwen cache ref is missing: {ref}") from exc
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ConfigError("Qwen cache ref is not an exact 40-hex revision")
+    snapshot = (model_root / "snapshots" / revision).resolve()
+    if not snapshot.is_dir() or snapshot.parent != (model_root / "snapshots").resolve():
+        raise ConfigError(f"Qwen snapshot is missing: {snapshot}")
+    snapshot_binding = _model_snapshot_tree_binding(snapshot, model_root)
+    return {
+        "eval_model": {
+            "model": EVAL_MODEL,
+            "revision": revision,
+            "snapshot_path": str(snapshot),
+            "snapshot_file_count": snapshot_binding["file_count"],
+            "snapshot_sha256": snapshot_binding["sha256"],
+        },
+        "spider_data": _directory_tree_binding(Path(paths["SPIDER_DATA_DIR"])),
+    }
+
+
+def validate_external_runtime_binding(
+    expected: Any, environment: dict[str, str]
+) -> None:
+    """Fail closed when local model or Spider inputs differ from the manifest."""
+    if not isinstance(expected, dict) or set(expected) != {
+        "eval_model",
+        "spider_data",
+    }:
+        raise ConfigError("manifest has no exact external runtime binding")
+    actual = external_runtime_binding(environment)
+    if expected.get("eval_model") != actual["eval_model"]:
+        raise ConfigError("Qwen model bytes or revision differ from the manifest")
+    if expected.get("spider_data") != actual["spider_data"]:
+        raise ConfigError("Spider data bytes differ from the manifest")
+
+
+def validate_runtime_data_paths(environment: dict[str, str]) -> None:
+    """Fail before provider or GPU work if pinned local data is unavailable."""
+    paths = runtime_data_paths(environment)
+    for key in ("HF_HOME", "SPIDER_DATA_DIR"):
+        if not Path(paths[key]).is_dir():
+            raise ConfigError(f"required runtime data directory is missing: {key}")
+
+
+def disk_space_preflight(repo: Path, *, unresolved_rows: int) -> None:
+    """Reserve two GiB plus 128 MiB for every unresolved campaign row."""
+    if type(unresolved_rows) is not int or unresolved_rows < 0:
+        raise ConfigError("unresolved row count must be a nonnegative integer")
+    required = (
+        DISK_FIXED_SAFETY_BYTES
+        + DISK_BYTES_PER_UNRESOLVED_ROW * unresolved_rows
+    )
+    free = shutil.disk_usage(repo).free
+    if free < required:
+        raise ConfigError(
+            "insufficient disk space for Table 5--8: "
+            f"free={free} required={required} unresolved_rows={unresolved_rows}"
+        )
+
+
 def synthesis_environment(row: dict[str, Any], gpus: tuple[int, ...], inherited: dict[str, str], repo: Path) -> dict[str, str]:
-    env = dict(inherited)
+    env = safe_runtime_environment(inherited)
+    env.update(runtime_data_paths(inherited))
+    env["HF_HUB_OFFLINE"] = "1"
+    env["TRANSFORMERS_OFFLINE"] = "1"
+    env["CSD_REDACT_SENSITIVE_LOGS"] = "1"
     env["CUDA_VISIBLE_DEVICES"] = ",".join(str(gpu) for gpu in gpus)
     env["CSD_VLLM_GPU_MEMORY_UTILIZATION"] = str(row["gpu_mem_util"])
     env["CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX"] = str(row["gpu_mem_util"])
@@ -1000,17 +1420,19 @@ def synthesis_environment(row: dict[str, Any], gpus: tuple[int, ...], inherited:
         repo / "outputs" / "generated" / str(row["output_name"])
     )
     env["CSD_OUTPUT_NAME"] = str(row["output_name"])
+    if row["profile"] == "gpt5.6-sol" and inherited.get("CSD_CODEX_EXECUTABLE"):
+        env["CSD_CODEX_EXECUTABLE"] = inherited["CSD_CODEX_EXECUTABLE"]
     if row["profile"] == "opus5":
         env["CSD_CLAUDE_CONFIG_DIR"] = "/home/aadivyar/.claude-csd-synthesis"
         env["CSD_CLAUDE_EXPECTED_ACCOUNT"] = "ssdear@gmail.com"
+    if row["profile"] != "gpt5.6-sol":
+        isolated_home = repo / ".context" / "table5_8" / f"{row['profile']}-home"
+        isolated_home.mkdir(parents=True, exist_ok=True)
+        env["HOME"] = str(isolated_home)
     if row["profile"] == "gemini3.1-pro":
-        for key in (
-            "VERTEX_AI_PROJECT", "VERTEX_AI_LOCATION", "VERTEX_AI_BASE_URL",
-            "VERTEX_AI_API_KEY", "VERTEX_AI_ACCESS_TOKEN", "GOOGLE_CLOUD_PROJECT",
-            "GOOGLE_CLOUD_LOCATION", "GOOGLE_VERTEX_LOCATION", "GOOGLE_API_KEY",
-            "GEMINI_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI",
-        ):
-            env.pop(key, None)
+        adc = inherited.get("GOOGLE_APPLICATION_CREDENTIALS")
+        if adc:
+            env["GOOGLE_APPLICATION_CREDENTIALS"] = adc
         project = str(row.get("vertex_project") or "")
         if project:
             env["VERTEX_AI_PROJECT"] = project
@@ -1026,12 +1448,46 @@ def synthesis_environment(row: dict[str, Any], gpus: tuple[int, ...], inherited:
     return env
 
 
+def heldout_environment(
+    row: dict[str, Any],
+    gpus: tuple[int, ...],
+    inherited: dict[str, str],
+    repo: Path,
+) -> dict[str, str]:
+    """Build the local evaluator environment without any author credential."""
+    env = safe_runtime_environment(inherited)
+    env.update(runtime_data_paths(inherited))
+    env["HF_HUB_OFFLINE"] = "1"
+    env["TRANSFORMERS_OFFLINE"] = "1"
+    env["CSD_REDACT_SENSITIVE_LOGS"] = "1"
+    isolated_home = repo / ".context" / "table5_8" / "heldout-home"
+    isolated_home.mkdir(parents=True, exist_ok=True)
+    env["HOME"] = str(isolated_home)
+    env["CUDA_VISIBLE_DEVICES"] = ",".join(str(gpu) for gpu in gpus)
+    env["CSD_VLLM_GPU_MEMORY_UTILIZATION"] = str(row["gpu_mem_util"])
+    env["CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX"] = str(row["gpu_mem_util"])
+    if row["dataset"] == "smiles":
+        env["CSD_CONSTRAINED_TEMPERATURE"] = "0.7"
+    return env
+
+
 def heldout_command(row: dict[str, Any], python: Path, compiled_csd: Path) -> list[str]:
     cmd = [str(python), "-m", "synthesis.scripts.reevaluate_compiled_csd", str(compiled_csd), "--dataset", row["dataset"], "--eval-model", EVAL_MODEL, "--eval-backend", "vllm", "--device", "auto", "--sample-size", str(row["heldout_sample_size"]), "--max-steps", str(row["eval_max_steps"]), "--step-token-budget", str(row["token_budget"]), "--max-seconds-per-example", "600", "--vllm-gpu-memory-utilization", str(row["gpu_mem_util"]), "--vllm-tensor-parallel-size", "1", "--output-json", str(row["heldout_output_json"]), "--provenance-cell-id", str(row["cell_id"]), "--provenance-manifest-commit", str(row.get("manifest_commit") or row.get("git_commit") or "")]
+    if row.get("eval_model_revision") and row.get("eval_model_snapshot_path"):
+        cmd += [
+            "--provenance-eval-model-revision",
+            str(row["eval_model_revision"]),
+            "--provenance-eval-model-snapshot-path",
+            str(row["eval_model_snapshot_path"]),
+            "--provenance-eval-model-snapshot-sha256",
+            str(row["eval_model_snapshot_sha256"]),
+            "--provenance-eval-model-snapshot-file-count",
+            str(row["eval_model_snapshot_file_count"]),
+        ]
     if row["dataset"] == "gsm_symbolic":
         cmd += ["--gsm-split-file", str(row["heldout_split_file"]), "--gsm-split-name", "test"]
     elif row["dataset"] == "spider":
-        cmd += ["--spider-split-file", str(row["heldout_split_file"]), "--spider-split-name", "test"]
+        cmd += ["--spider-split-file", str(row["heldout_split_file"]), "--spider-split-name", "test", "--provenance-spider-data-path", str(row["spider_data_path"]), "--provenance-spider-data-sha256", str(row["spider_data_sha256"]), "--provenance-spider-data-file-count", str(row["spider_data_file_count"])]
     else:
         cmd += ["--smiles-classes", str(row["smiles_class"])]
     return cmd
@@ -1106,6 +1562,26 @@ def heldout_artifact_is_valid(path: Path, row: dict[str, Any]) -> bool:
             and float(payload.get("syntax_rate", -1)) == 0.0
         ):
             return False
+        work_values = [answer.get("constrained_work") for answer in answers]
+        if any(type(work) is not int or work < 0 for work in work_values):
+            return False
+        expected_total_work = sum(work_values)
+        expected_mean_work = round(expected_total_work / expected, 4)
+        if (
+            type(metrics.get("total_constrained_work")) is not int
+            or metrics.get("total_constrained_work") != expected_total_work
+            or not isinstance(metrics.get("mean_constrained_work"), (int, float))
+            or not math.isfinite(float(metrics["mean_constrained_work"]))
+            or not math.isclose(
+                float(metrics["mean_constrained_work"]),
+                expected_mean_work,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        ):
+            return False
+        if metrics.get("examples_with_constrained_work") != expected:
+            return False
         if row["dataset"] == "smiles":
             trial = payload.get("smiles_paper_trial")
             if not isinstance(trial, dict):
@@ -1137,6 +1613,30 @@ def heldout_artifact_is_valid(path: Path, row: dict[str, Any]) -> bool:
         expected_compiled_hash = row.get("compiled_sha256")
         if expected_compiled_hash and expected_compiled_hash != compiled_hash:
             return False
+        if row.get("eval_model_revision") and provenance.get(
+            "eval_model_revision"
+        ) != row.get("eval_model_revision"):
+            return False
+        if row.get("eval_model_snapshot_path") and provenance.get(
+            "eval_model_snapshot_path"
+        ) != row.get("eval_model_snapshot_path"):
+            return False
+        if row.get("eval_model_snapshot_sha256") and (
+            provenance.get("eval_model_snapshot_sha256")
+            != row.get("eval_model_snapshot_sha256")
+            or provenance.get("eval_model_snapshot_file_count")
+            != row.get("eval_model_snapshot_file_count")
+        ):
+            return False
+        if row["dataset"] == "spider" and row.get("spider_data_sha256"):
+            if (
+                provenance.get("spider_data_path") != row.get("spider_data_path")
+                or provenance.get("spider_data_sha256")
+                != row.get("spider_data_sha256")
+                or provenance.get("spider_data_file_count")
+                != row.get("spider_data_file_count")
+            ):
+                return False
         return (
             int(metrics.get("num_examples") or 0) == expected
             and isinstance(answers, list) and len(answers) == expected
@@ -1172,12 +1672,52 @@ def validate_controller_paths(args: argparse.Namespace) -> None:
         raise ConfigError("controller export must be separate from manifest and log")
     if not args.dry_run and args.export is None:
         raise ConfigError("--export is required for a real controller run")
+    try:
+        requested_python = args.python.expanduser().resolve(strict=True)
+        canonical_python = CANONICAL_PYTHON.resolve(strict=True)
+    except OSError as exc:
+        raise ConfigError("the canonical Table 5--8 Python runtime is missing") from exc
+    if requested_python != canonical_python:
+        raise ConfigError(f"controller Python must be {canonical_python}")
     if (
         not args.gpus
         or len(set(args.gpus)) != len(args.gpus)
         or not set(args.gpus).issubset({0, 1, 2, 3})
     ):
         raise ConfigError("GPU scope must be a nonempty unique subset of 0,1,2,3")
+
+
+def validate_controller_artifact_paths(
+    args: argparse.Namespace, rows: list[dict[str, Any]], repo: Path
+) -> None:
+    """Reject any two campaign artifacts that resolve to the same file."""
+    paths: list[tuple[str, Path]] = [
+        ("manifest", args.manifest),
+        ("controller log", args.log),
+        ("controller state", args.state_dir / "controller.json"),
+        ("state lock", lock_path(args.state_dir)),
+        ("controller lock", controller_lock_path(repo)),
+    ]
+    if args.export is not None:
+        paths.append(("export", args.export))
+    for row in rows:
+        cell = str(row["cell_id"])
+        paths.extend(
+            [
+                (f"state for {cell}", _state_path(args.state_dir, row)),
+                (f"held-out result for {cell}", repo / str(row["heldout_output_json"])),
+                (f"worker log for {cell}", repo / str(row["log_file"])),
+            ]
+        )
+    seen: dict[Path, str] = {}
+    for label, path in paths:
+        resolved = path.resolve()
+        prior = seen.get(resolved)
+        if prior is not None:
+            raise ConfigError(
+                f"artifact path collision: {label} and {prior} both use {resolved}"
+            )
+        seen[resolved] = label
 
 
 def controller_parser() -> argparse.ArgumentParser:
@@ -1187,7 +1727,7 @@ def controller_parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--poll-seconds", type=float, default=30.0)
-    parser.add_argument("--python", type=Path, default=Path(sys.executable))
+    parser.add_argument("--python", type=Path, default=CANONICAL_PYTHON)
     parser.add_argument("--export", type=Path, default=None)
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -1210,23 +1750,54 @@ def validate_profile_gates(rows: list[dict[str, Any]], environment: dict[str, st
                 raise ConfigError("gemini3.1-pro campaign rejects API-key fallback configuration")
 
 
-def load_terminal_results(repo: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def load_terminal_results(
+    repo: Path, rows: list[dict[str, Any]], state_dir: Path
+) -> list[dict[str, Any]]:
     values: list[dict[str, Any]] = []
     for row in rows:
-        path = repo / str(row["heldout_output_json"])
-        if not heldout_artifact_is_valid(path, row):
-            raise ConfigError(f"held-out artifact is incomplete or unbound: {path}")
+        state = read_state(_state_path(state_dir, row))
+        expected_path = (repo / str(row["heldout_output_json"])).resolve()
+        if (
+            not state
+            or state.get("status") != "complete"
+            or state.get("manifest_sha256") != row.get("manifest_sha256")
+            or Path(str(state.get("heldout_output_json") or "")).resolve()
+            != expected_path
+        ):
+            raise ConfigError(f"terminal state is incomplete or unbound: {row['cell_id']}")
+        bound_row = dict(
+            row,
+            compiled_csd_path=state.get("compiled_csd_path"),
+            compiled_sha256=state.get("compiled_sha256"),
+            manifest_commit=state.get("manifest_commit"),
+        )
+        if (
+            not expected_path.is_file()
+            or state.get("heldout_sha256") != hash_file(expected_path)
+            or not _report_binding_is_valid(state, row, repo)
+            or not heldout_artifact_is_valid(expected_path, bound_row)
+        ):
+            raise ConfigError(
+                f"held-out artifact is incomplete or unbound: {expected_path}"
+            )
         LOGGER.info("[tableq] artifact-valid cell=%s", row["cell_id"])
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(expected_path.read_text(encoding="utf-8"))
         payload["cell_id"] = row["cell_id"]
         payload.setdefault("sample_count", row["sample_count"])
+        payload["paper_artifact_path"] = str(expected_path)
+        payload["paper_artifact_sha256"] = hash_file(expected_path)
+        payload["synthesis_report_path"] = state["synthesis_report_path"]
+        payload["synthesis_report_sha256"] = state[
+            "synthesis_report_sha256"
+        ]
+        payload["winning_attempt"] = state["winning_attempt"]
         values.append(payload)
     return values
 
 
 def controller_main(args: argparse.Namespace) -> int:
     validate_controller_paths(args)
-    with controller_lock(args.state_dir):
+    with controller_lock(Path.cwd()):
         return _controller_main_locked(args)
 
 
@@ -1241,29 +1812,59 @@ def _controller_main_locked(args: argparse.Namespace) -> int:
             LOGGER.info("[tableq] dry-run cell=%s", row["cell_id"])
             print(row["cell_id"], shlex.join(synthesis_command(row, args.python)))
         return 0
+    disk_space_preflight(repo, unresolved_rows=len(rows))
+    validate_runtime_data_paths(dict(os.environ))
+    validate_controller_artifact_paths(args, rows, repo)
+    pilot_sha = str(payload.get("provider_pilot_sha256") or "")
+    prior_controller = read_state(args.state_dir / "controller.json")
+    resuming_validated_campaign = bool(
+        prior_controller
+        and prior_controller.get("status") in {"validated", "complete"}
+        and prior_controller.get("manifest_sha256") == manifest_sha
+        and prior_controller.get("provider_pilot_sha256") == pilot_sha
+    )
+    validate_startup_provider_pilots(
+        rows,
+        payload.get("provider_pilots") or {},
+        repo=repo,
+        environment=dict(os.environ),
+        require_freshness=not resuming_validated_campaign,
+    )
     admission_guard = make_admission_guard(
         repo=repo,
         manifest_path=args.manifest,
         expected_manifest_sha256=manifest_sha,
         environment=dict(os.environ),
     )
-    ready_rows: list[dict[str, Any]] = []
-    blocked_rows: list[dict[str, Any]] = []
-    for row in rows:
-        try:
-            admission_guard(row)
-        except ConfigError as exc:
-            if not str(exc).startswith("fresh admission blocked"):
-                raise
-            blocked_rows.append(dict(row, status="pending", reason=str(exc)))
-        else:
-            ready_rows.append(row)
     args.state_dir.mkdir(parents=True, exist_ok=True)
-    write_state(args.state_dir / "controller.json", {"manifest_sha256": manifest_sha, "status": "validated", "scope": len(rows), "ready": len(ready_rows), "auth_blocked": len(blocked_rows)})
+    write_state(
+        args.state_dir / "controller.json",
+        {
+            "manifest_sha256": manifest_sha,
+            "provider_pilot_sha256": pilot_sha,
+            "status": "validated",
+            "scope": len(rows),
+        },
+    )
     logging.basicConfig(filename=args.log, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     LOGGER.info("[tableq] input manifest sha256=%s scope=%d", manifest_sha, len(rows))
     from scripts.runtime.run_cold_synthesis_queue import gpu_memory_snapshot
-    rows = [dict(row, manifest_sha256=manifest_sha, manifest_commit=manifest_sha) for row in ready_rows]
+    rows = [
+        dict(
+            row,
+            manifest_sha256=manifest_sha,
+            manifest_commit=payload["git_commit"],
+            execution_source_sha256=payload["execution_source_sha256"],
+            eval_model_revision=payload["external_runtime"]["eval_model"]["revision"],
+            eval_model_snapshot_path=payload["external_runtime"]["eval_model"]["snapshot_path"],
+            eval_model_snapshot_sha256=payload["external_runtime"]["eval_model"]["snapshot_sha256"],
+            eval_model_snapshot_file_count=payload["external_runtime"]["eval_model"]["snapshot_file_count"],
+            spider_data_path=payload["external_runtime"]["spider_data"]["path"],
+            spider_data_sha256=payload["external_runtime"]["spider_data"]["sha256"],
+            spider_data_file_count=payload["external_runtime"]["spider_data"]["file_count"],
+        )
+        for row in rows
+    ]
     results = dispatch(
         rows,
         repo=repo,
@@ -1274,19 +1875,12 @@ def _controller_main_locked(args: argparse.Namespace) -> int:
         poll_seconds=args.poll_seconds,
         admission_check=admission_guard,
     )
-    for blocked in blocked_rows:
-        blocked_row = dict(blocked, manifest_sha256=manifest_sha, manifest_commit=manifest_sha)
-        write_state(_state_path(args.state_dir, blocked_row), blocked_row)
-        results.append(blocked_row)
     if any(result.get("status") == "failed" for result in results):
         return 1
-    if blocked_rows:
-        write_state(args.state_dir / "controller.json", {"manifest_sha256": manifest_sha, "status": "pending", "scope": len(rows) + len(blocked_rows), "ready": len(rows), "auth_blocked": len(blocked_rows)})
-        return 0
-    values = load_terminal_results(repo, rows)
+    values = load_terminal_results(repo, rows, args.state_dir)
     controller_manifest_path(args.manifest, args.export)
     export_results(rows, values, args.export)
-    write_state(args.state_dir / "controller.json", {"manifest_sha256": manifest_sha, "status": "complete", "scope": len(rows), "export": str(args.export)})
+    write_state(args.state_dir / "controller.json", {"manifest_sha256": manifest_sha, "provider_pilot_sha256": pilot_sha, "status": "complete", "scope": len(rows), "export": str(args.export)})
     return 0
 
 
@@ -1311,9 +1905,17 @@ def _report_matches_row(
             and config.get("task_description") == row["task"]
             and config.get("output_name") == row["output_name"]
             and config.get("git_commit") == row.get("git_commit")
+            and isinstance(row.get("execution_source_sha256"), str)
+            and re.fullmatch(
+                r"[0-9a-f]{64}", str(row["execution_source_sha256"])
+            )
+            is not None
+            and config.get("execution_source_sha256")
+            == row["execution_source_sha256"]
             and int(config.get("max_iterations") or -1) == max_iterations
             and author.get("backend") == row["generation_backend"]
             and author.get("model") == row["generation_model"]
+            and author.get("route") == row.get("expected_author_route")
             and int(author.get("max_new_tokens") or -1)
             == int(row["synthesis_max_tokens"])
             and int(author.get("reasoning_budget_tokens") or -1)
@@ -1372,23 +1974,103 @@ def _report_matches_row(
     )
 
 
-def _validated_compiled_output(
+def _selected_evaluation_is_valid(
+    evaluation: Any, expected_examples: int, dataset: str
+) -> bool:
+    if not isinstance(evaluation, dict):
+        return False
+    samples = evaluation.get("sample_outputs")
+    if (
+        evaluation.get("success") is not True
+        or evaluation.get("early_stopped") is not False
+        or not isinstance(samples, list)
+        or len(samples) != expected_examples
+        or not all(
+            isinstance(sample, dict)
+            and type(sample.get("is_correct")) is bool
+            and type(sample.get("is_syntax_valid")) is bool
+            for sample in samples
+        )
+    ):
+        return False
+    correct = sum(sample["is_correct"] for sample in samples)
+    syntax = sum(sample["is_syntax_valid"] for sample in samples)
+    try:
+        reported_correct = int(evaluation["num_correct"])
+        denominator = int(evaluation["accuracy_denominator"])
+        reported_accuracy = float(evaluation["accuracy"])
+        reported_syntax = float(evaluation["syntax_rate"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if (
+        type(evaluation.get("num_correct")) is not int
+        or reported_correct != correct
+        or type(evaluation.get("accuracy_denominator")) is not int
+        or denominator <= 0
+        or denominator > expected_examples
+        or not math.isclose(
+            reported_syntax,
+            syntax / expected_examples,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+    ):
+        return False
+    if dataset == "smiles":
+        trial = (evaluation.get("aux_metrics") or {}).get("smiles_paper_trial")
+        if not isinstance(trial, dict):
+            return False
+        unique_count = trial.get("unique_valid_count")
+        if type(unique_count) is not int or not 0 <= unique_count <= expected_examples:
+            return False
+        expected_accuracy = unique_count / expected_examples
+    else:
+        expected_accuracy = reported_correct / denominator
+    return math.isclose(
+        reported_accuracy, expected_accuracy, rel_tol=0.0, abs_tol=1e-12
+    )
+
+
+def _validated_compiled_selection(
     repo: Path,
     output_name: str,
     *,
     min_accuracy: float,
     min_syntax_rate: float,
     job: dict[str, Any],
-) -> Path | None:
+    report_path_override: Path | None = None,
+) -> dict[str, Any] | None:
     """Select only a compiled strategy proven to belong to this cold row."""
     from scripts.runtime.run_cold_synthesis_queue import current_run_dir
 
-    run_dir = current_run_dir(repo, output_name)
-    if run_dir is None:
+    if report_path_override is None:
+        run_dir = current_run_dir(repo, output_name)
+        if run_dir is None:
+            return None
+        report_path = None
+    else:
+        try:
+            report_path = report_path_override.resolve(strict=True)
+        except OSError:
+            return None
+        if report_path.name not in {"success_report.json", "failure_report.json"}:
+            return None
+        run_dir = report_path.parent.parent
+    output_root = (repo / "outputs" / "generated" / output_name).resolve()
+    try:
+        resolved_run = run_dir.resolve()
+    except OSError:
         return None
+    if (
+        resolved_run.parent != output_root
+        or not resolved_run.name.startswith(f"{output_name}_")
+    ):
+        return None
+    run_dir = resolved_run
     success_report = run_dir / "results" / "success_report.json"
     failure_report = run_dir / "results" / "failure_report.json"
-    report_path = success_report if success_report.is_file() else failure_report
+    if report_path is None:
+        report_path = success_report if success_report.is_file() else failure_report
     if not report_path.is_file():
         return None
     try:
@@ -1410,7 +2092,7 @@ def _validated_compiled_output(
             return None
         output_name = str(job["output_name"])
         compiler_suffix = re.fullmatch(
-            rf"{re.escape(output_name)}_\d{{8}}_\d{{6}}_[0-9a-f]{{8}}",
+            rf"{re.escape(output_name)}_\d{{8}}_\d{{6}}_[0-9a-f]{{6}}",
             resolved.name,
         )
         if resolved.name != output_name and compiler_suffix is None:
@@ -1436,11 +2118,15 @@ def _validated_compiled_output(
             or not 0.0 <= syntax <= 1.0
             or accuracy < min_accuracy
             or syntax < min_syntax_rate
+            or not _selected_evaluation_is_valid(
+                evaluation, int(job["eval_sample_size"]), str(job["dataset"])
+            )
         ):
             return None
         compiled_dir = bound_compiled_dir(report.get("compiled_dir"))
         if compiled_dir is None:
             return None
+        winning_attempt = total_attempts
     else:
         attempts = report.get("attempts")
         if not isinstance(attempts, list) or len(attempts) != int(job["max_iterations"]):
@@ -1455,6 +2141,7 @@ def _validated_compiled_output(
         seen_attempt_numbers: set[int] = set()
         for attempt in attempts:
             compilation = attempt.get("compilation") or {}
+            verification = attempt.get("verification") or {}
             evaluation = attempt.get("evaluation") or {}
             try:
                 attempt_number = int(attempt.get("attempt_number"))
@@ -1468,6 +2155,10 @@ def _validated_compiled_output(
             seen_attempt_numbers.add(attempt_number)
             if (
                 compilation.get("success") is not True
+                or verification.get("success") is not True
+                or not _selected_evaluation_is_valid(
+                    evaluation, int(job["eval_sample_size"]), str(job["dataset"])
+                )
                 or not compilation.get("output_dir")
                 or examples != int(job["eval_sample_size"])
                 or attempt_number < 1
@@ -1495,44 +2186,102 @@ def _validated_compiled_output(
             )
         if not candidates:
             return None
-        compiled_dir = min(candidates, key=lambda item: item[:4])[-1]
+        selected = min(candidates, key=lambda item: item[:4])
+        winning_attempt = selected[3]
+        compiled_dir = selected[-1]
     candidate = compiled_dir / "GeneratedCSD.py"
-    return candidate if candidate.is_file() else None
+    if not candidate.is_file():
+        return None
+    return {
+        "compiled_csd_path": candidate,
+        "report_path": report_path,
+        "report_sha256": hash_file(report_path),
+        "winning_attempt": winning_attempt,
+    }
+
+
+def _validated_compiled_output(
+    repo: Path,
+    output_name: str,
+    *,
+    min_accuracy: float,
+    min_syntax_rate: float,
+    job: dict[str, Any],
+) -> Path | None:
+    selection = _validated_compiled_selection(
+        repo,
+        output_name,
+        min_accuracy=min_accuracy,
+        min_syntax_rate=min_syntax_rate,
+        job=job,
+    )
+    return None if selection is None else selection["compiled_csd_path"]
+
+
+def _compiled_selection(repo: Path, row: dict[str, Any]) -> dict[str, Any] | None:
+    cold_job = dict(
+        row,
+        train_sample_size=row["eval_sample_size"],
+        train_split_file=row.get("heldout_split_file"),
+        train_split_name="train",
+    )
+    return _validated_compiled_selection(
+        repo,
+        str(row["output_name"]),
+        min_accuracy=float(row["min_accuracy"]),
+        min_syntax_rate=float(row["min_syntax_rate"]),
+        job=cold_job,
+    )
 
 
 def _compiled_output(repo: Path, row: dict[str, Any]) -> Path | None:
+    selection = _compiled_selection(repo, row)
+    return None if selection is None else selection["compiled_csd_path"]
+
+
+def _report_binding_is_valid(
+    state: dict[str, Any], row: dict[str, Any], repo: Path
+) -> bool:
     try:
-        cold_compiled_csd = globals().get("cold_compiled_csd")
-        if cold_compiled_csd is None:
-            cold_compiled_csd = _validated_compiled_output
-        cold_job = dict(
-            row,
-            train_sample_size=row["eval_sample_size"],
-            train_split_file=row.get("heldout_split_file"),
-            train_split_name="train",
-        )
-        candidate = cold_compiled_csd(
+        report_path = Path(str(state["synthesis_report_path"])).resolve()
+        expected_sha = state["synthesis_report_sha256"]
+        if (
+            not report_path.is_file()
+            or not isinstance(expected_sha, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_sha) is None
+            or hash_file(report_path) != expected_sha
+        ):
+            return False
+        selection = _validated_compiled_selection(
             repo,
             str(row["output_name"]),
             min_accuracy=float(row["min_accuracy"]),
             min_syntax_rate=float(row["min_syntax_rate"]),
-            job=cold_job,
+            job=row,
+            report_path_override=report_path,
         )
-        if candidate is not None:
-            return candidate
-        return None
-    except (ImportError, OSError, TypeError):
-        run_dir = None
-    if run_dir is None:
-        return None
-    results = run_dir / "results"
-    if not (results / "success_report.json").is_file() and not (results / "failure_report.json").is_file():
-        return None
-    candidate = run_dir / "compiled" / "GeneratedCSD.py"
-    if candidate.is_file():
-        return candidate
-    candidates = sorted(run_dir.rglob("GeneratedCSD.py"))
-    return candidates[0] if candidates else None
+        if selection is None:
+            return False
+        compiled = Path(str(state["compiled_csd_path"])).resolve()
+        return (
+            selection["report_path"].resolve() == report_path
+            and selection["report_sha256"] == expected_sha
+            and selection["winning_attempt"] == state["winning_attempt"]
+            and selection["compiled_csd_path"].resolve() == compiled
+            and state.get("compiled_sha256") == hash_file(compiled)
+        )
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+
+
+def _selection_state(selection: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "compiled_csd_path": str(selection["compiled_csd_path"]),
+        "compiled_sha256": hash_file(Path(selection["compiled_csd_path"])),
+        "synthesis_report_path": str(selection["report_path"]),
+        "synthesis_report_sha256": str(selection["report_sha256"]),
+        "winning_attempt": int(selection["winning_attempt"]),
+    }
 
 
 def run_row(
@@ -1545,6 +2294,7 @@ def run_row(
     reservation_mib: int | None = None,
     dry_run: bool = False,
     runner: Any = None,
+    admission_check: Any = None,
 ) -> dict[str, Any]:
     """Run one synthesis then its held-out evaluation with restart state."""
     path = _state_path(state_dir, row)
@@ -1556,6 +2306,7 @@ def run_row(
 
     with state_lock(state_dir):
         prior = read_state(path) or {"cell_id": row["cell_id"], "status": "pending", "phase": "synthesis"}
+        validate_row_state(row, prior)
         if prior.get("manifest_sha256") not in (None, row.get("manifest_sha256")):
             raise ConfigError(f"state is bound to a different manifest: {row['cell_id']}")
         if prior.get("status") in {"complete", "failed"}:
@@ -1565,7 +2316,7 @@ def run_row(
                     output = repo / output
                 current = artifact_fingerprint(output)
                 bound_row = dict(row, compiled_csd_path=prior.get("compiled_csd_path"), compiled_sha256=prior.get("compiled_sha256"), manifest_commit=prior.get("manifest_commit"))
-                if current is None or current.get("sha256") != prior.get("heldout_sha256") or not heldout_artifact_is_valid(output, bound_row):
+                if current is None or current.get("sha256") != prior.get("heldout_sha256") or not _report_binding_is_valid(prior, row, repo) or not heldout_artifact_is_valid(output, bound_row):
                     raise ConfigError(f"completed state failed artifact revalidation: {row['cell_id']}")
             return prior
         if prior.get("status") == "starting":
@@ -1576,7 +2327,8 @@ def run_row(
             LOGGER.info("[tableq] surviving child cell=%s phase=%s pid=%s", row["cell_id"], prior.get("phase"), prior.get("pid"))
             return prior
         phase = str(prior.get("phase") or "synthesis")
-    env = synthesis_environment(row, gpus, os.environ, repo)
+    synthesis_env = synthesis_environment(row, gpus, os.environ, repo)
+    heldout_env = heldout_environment(row, gpus, os.environ, repo)
     command = synthesis_command(row, python)
     log_path = repo / str(row["log_file"])
     reserved_mib = int(
@@ -1584,18 +2336,26 @@ def run_row(
         if reservation_mib is not None
         else row["memory_reservation_mib"]
     )
-    def start(argv: list[str]):
+    def start(argv: list[str], child_environment: dict[str, str]):
         if runner is not None:
-            return runner(argv, cwd=repo, env=env)
-        return start_logged_child(argv, cwd=repo, env=env, log_path=log_path)
+            return runner(argv, cwd=repo, env=child_environment)
+        return start_logged_child(
+            argv, cwd=repo, env=child_environment, log_path=log_path
+        )
 
     recovered = None
+    recovered_selection = None
     if phase == "synthesis" and prior.get("status") == "running":
         same_manifest = prior.get("manifest_sha256") == row.get("manifest_sha256") and prior.get("cell_id") == row.get("cell_id")
         latest = repo / "outputs" / "generated" / str(row["output_name"]) / "latest_run.txt"
         fresh_latest = artifact_is_new_or_replaced(latest, prior.get("output_before"))
         if same_manifest and fresh_latest:
-            recovered = _compiled_output(repo, row)
+            recovered_selection = _compiled_selection(repo, row)
+            recovered = (
+                None
+                if recovered_selection is None
+                else recovered_selection["compiled_csd_path"]
+            )
     if recovered is not None:
         recovered_fingerprint = artifact_fingerprint(recovered)
         if recovered_fingerprint is None:
@@ -1604,8 +2364,7 @@ def run_row(
             prior = dict(
                 prior,
                 phase="heldout",
-                compiled_csd_path=str(recovered),
-                compiled_sha256=recovered_fingerprint["sha256"],
+                **_selection_state(recovered_selection),
             )
             save(prior)
             phase = "heldout"
@@ -1634,7 +2393,7 @@ def run_row(
         )
         save(starting)
         try:
-            process = start(command)
+            process = start(command, synthesis_env)
         except Exception as exc:
             failed = dict(
                 starting,
@@ -1660,12 +2419,18 @@ def run_row(
             failed = dict(running, status="failed", exit_code=1, reason="synthesis returned success without a new run report")
             save(failed)
             return failed
-        compiled = _compiled_output(repo, row)
-        if compiled is None:
+        selection = _compiled_selection(repo, row)
+        if selection is None:
             failed = dict(running, status="failed", exit_code=exit_code or 1, reason="synthesis failed or produced no recoverable compiled artifact")
             save(failed)
             return failed
-        prior = dict(running, phase="heldout", compiled_csd_path=str(compiled), compiled_sha256=artifact_fingerprint(compiled)["sha256"], synthesis_exit_code=exit_code)
+        compiled = Path(selection["compiled_csd_path"])
+        prior = dict(
+            running,
+            phase="heldout",
+            synthesis_exit_code=exit_code,
+            **_selection_state(selection),
+        )
         save(prior)
 
     compiled = Path(str(prior["compiled_csd_path"]))
@@ -1685,11 +2450,28 @@ def run_row(
         failed = dict(prior, status="failed", reason="compiled artifact changed before held-out evaluation", exit_code=1)
         save(failed)
         return failed
+    if not _report_binding_is_valid(prior, row, repo):
+        failed = dict(
+            prior,
+            status="failed",
+            reason="selected synthesis report changed before held-out evaluation",
+            exit_code=1,
+        )
+        save(failed)
+        return failed
+    if admission_check is not None:
+        admission_check(row, require_provider=False)
     final_output = repo / str(row["heldout_output_json"])
     final_output.parent.mkdir(parents=True, exist_ok=True)
     before = artifact_fingerprint(final_output)
     temporary = final_output.with_name(f".{final_output.name}.{os.getpid()}.tmp")
-    heldout_row = dict(row, heldout_output_json=str(temporary))
+    heldout_row = dict(
+        row,
+        heldout_output_json=str(temporary),
+        compiled_csd_path=str(compiled),
+        compiled_sha256=expected_compiled_sha,
+        manifest_commit=prior.get("manifest_commit"),
+    )
     starting = dict(
         prior,
         status="starting",
@@ -1701,7 +2483,9 @@ def run_row(
     )
     save(starting)
     try:
-        process = start(heldout_command(heldout_row, python, compiled))
+        process = start(
+            heldout_command(heldout_row, python, compiled), heldout_env
+        )
     except Exception as exc:
         failed = dict(
             starting,
@@ -1759,10 +2543,33 @@ def dispatch(
         next_pending: list[dict[str, Any]] = []
         admitted: list[tuple[dict[str, Any], tuple[int, ...], int]] = []
         reservations: dict[int, int] = {}
+        terminal_cells: set[str] = set()
         survivor_cells: set[str] = set()
         surviving_child = False
+        states = {
+            str(row["cell_id"]): read_state(_state_path(state_dir, row))
+            for row in pending
+        }
         for row in pending:
-            state = read_state(_state_path(state_dir, row))
+            validate_row_state(row, states[str(row["cell_id"])])
+        for row in pending:
+            state = states[str(row["cell_id"])]
+            if state and state.get("status") in {"complete", "failed"}:
+                result = run_row(
+                    row,
+                    repo=repo,
+                    python=python,
+                    state_dir=state_dir,
+                    gpus=(),
+                    reservation_mib=0,
+                    dry_run=dry_run,
+                )
+                results.append(result)
+                terminal_cells.add(str(row["cell_id"]))
+        for row in pending:
+            if str(row["cell_id"]) in terminal_cells:
+                continue
+            state = states[str(row["cell_id"])]
             if state and state.get("status") == "running" and child_is_same_process(state):
                 assigned = state.get("assigned_gpus")
                 demand = state.get("reservation_mib")
@@ -1789,14 +2596,28 @@ def dispatch(
                 surviving_child = True
                 continue
         for row in pending:
-            if str(row["cell_id"]) in survivor_cells:
+            if str(row["cell_id"]) in terminal_cells | survivor_cells:
                 continue
+            state = states[str(row["cell_id"])]
             gpus = choose_gpus(row, live, reservations, live, allowed)
             if gpus is None:
                 next_pending.append(row)
                 continue
             if admission_check is not None:
-                admission_check(row)
+                phase = str((state or {}).get("phase") or "synthesis")
+                require_provider = phase == "synthesis"
+                try:
+                    admission_check(row, require_provider=require_provider)
+                except ConfigError as exc:
+                    if not str(exc).startswith("fresh admission blocked"):
+                        raise
+                    LOGGER.info(
+                        "[tableq] admission-wait cell=%s reason=%s",
+                        row["cell_id"],
+                        exc,
+                    )
+                    next_pending.append(row)
+                    continue
                 live = snapshot()
                 gpus = choose_gpus(row, live, reservations, live, allowed)
                 if gpus is None:
@@ -1819,6 +2640,7 @@ def dispatch(
                         gpus=gpus,
                         reservation_mib=demand,
                         dry_run=dry_run,
+                        admission_check=admission_check,
                     ): (row, gpus, demand)
                     for row, gpus, demand in admitted
                 }
@@ -1859,6 +2681,29 @@ def read_state(path: Path) -> dict[str, Any] | None:
     return payload
 
 
+def validate_row_state(
+    row: dict[str, Any], state: dict[str, Any] | None
+) -> None:
+    """Reject unknown or impossible queue states before scheduling work."""
+    if state is None:
+        return
+    status = state.get("status")
+    phase = state.get("phase")
+    allowed_phases = {
+        "pending": {"synthesis"},
+        "starting": {"synthesis", "heldout"},
+        "running": {"synthesis", "heldout"},
+        "complete": {"heldout"},
+        "failed": {"synthesis", "heldout"},
+    }
+    if (
+        state.get("cell_id") != row.get("cell_id")
+        or status not in allowed_phases
+        or phase not in allowed_phases[status]
+    ):
+        raise ConfigError(f"invalid queue state for {row['cell_id']}")
+
+
 def process_start_identity(pid: int) -> str | None:
     try:
         fields = Path(f"/proc/{int(pid)}/stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()
@@ -1887,15 +2732,16 @@ def lock_path(state_dir: Path) -> Path:
     return state_dir / "table5_8.state.lock"
 
 
-def controller_lock_path(state_dir: Path) -> Path:
-    return state_dir / "table5_8.controller.lock"
+def controller_lock_path(repo: Path) -> Path:
+    return repo / ".context" / "table5_8" / "table5_8.controller.lock"
 
 
 @contextmanager
-def controller_lock(state_dir: Path):
-    """Keep exactly one Table 5--8 controller alive for this state directory."""
-    state_dir.mkdir(parents=True, exist_ok=True)
-    handle = controller_lock_path(state_dir).open("a+", encoding="utf-8")
+def controller_lock(repo: Path):
+    """Keep exactly one Table 5--8 controller alive in this checkout."""
+    path = controller_lock_path(repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+", encoding="utf-8")
     try:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1917,11 +2763,66 @@ def export_results(rows: list[dict[str, Any]], values: list[dict[str, Any]], out
     by_id = {str(v["cell_id"]): v for v in values}
     if len(by_id) != len(rows) or set(by_id) != {str(row["cell_id"]) for row in rows}:
         raise ConfigError("export requires one result for every queue row")
+    manifest_bindings = {row.get("manifest_sha256") for row in rows}
+    commit_bindings = {row.get("git_commit") for row in rows}
+    if (
+        len(manifest_bindings) != 1
+        or len(commit_bindings) != 1
+        or not isinstance(next(iter(manifest_bindings)), str)
+        or not re.fullmatch(r"[0-9a-f]{64}", next(iter(manifest_bindings)))
+        or not isinstance(next(iter(commit_bindings)), str)
+        or not re.fullmatch(r"[0-9a-f]{40}", next(iter(commit_bindings)))
+    ):
+        raise ConfigError("export rows are not bound to one manifest and commit")
     cells: list[dict[str, Any]] = []
     groups: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         value = dict(by_id[row["cell_id"]])
+        provenance = value.get("reevaluation_provenance") or {}
+        source = {
+            "cell_id": row["cell_id"],
+            "profile": row["profile"],
+            "generation_backend": row["generation_backend"],
+            "generation_model": row["generation_model"],
+            "heldout_artifact_path": value.get("paper_artifact_path"),
+            "heldout_artifact_sha256": value.get("paper_artifact_sha256"),
+            "compiled_csd_path": provenance.get("compiled_csd_path"),
+            "compiled_csd_sha256": provenance.get("compiled_csd_sha256"),
+            "synthesis_report_path": value.get("synthesis_report_path"),
+            "synthesis_report_sha256": value.get("synthesis_report_sha256"),
+            "winning_attempt": value.get("winning_attempt"),
+            "eval_model_revision": provenance.get("eval_model_revision"),
+            "eval_model_snapshot_path": provenance.get("eval_model_snapshot_path"),
+            "eval_model_snapshot_sha256": provenance.get(
+                "eval_model_snapshot_sha256"
+            ),
+            "eval_model_snapshot_file_count": provenance.get(
+                "eval_model_snapshot_file_count"
+            ),
+        }
+        if row["benchmark"] == "spider":
+            source.update(
+                {
+                    "spider_data_path": provenance.get("spider_data_path"),
+                    "spider_data_sha256": provenance.get("spider_data_sha256"),
+                    "spider_data_file_count": provenance.get("spider_data_file_count"),
+                }
+            )
+        if (
+            not isinstance(source["heldout_artifact_path"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", str(source["heldout_artifact_sha256"]))
+            or not isinstance(source["compiled_csd_path"], str)
+            or not re.fullmatch(r"[0-9a-f]{64}", str(source["compiled_csd_sha256"]))
+            or not isinstance(source["synthesis_report_path"], str)
+            or not re.fullmatch(
+                r"[0-9a-f]{64}", str(source["synthesis_report_sha256"])
+            )
+            or type(source["winning_attempt"]) is not int
+            or source["winning_attempt"] < 1
+        ):
+            raise ConfigError(f"missing sealed export evidence for {row['cell_id']}")
         value.update({"cell_id": row["cell_id"], "table": row["table"], "table_cell_id": row["table_cell_id"], "benchmark": row["benchmark"]})
+        value["paper_source"] = source
         if row["benchmark"] != "smiles":
             metric = "accuracy"
             if not isinstance(value.get(metric), (int, float)):
@@ -1938,6 +2839,7 @@ def export_results(rows: list[dict[str, Any]], values: list[dict[str, Any]], out
         groups.setdefault(row["table_cell_id"], []).append(value)
     for cell_id, group in groups.items():
         item = {"table_cell_id": cell_id, "table": group[0]["table"], "benchmark": group[0]["benchmark"]}
+        item["sources"] = [value["paper_source"] for value in group]
         if group[0]["benchmark"] == "smiles":
             item["unique_valid_rate"] = weighted_smiles_rate(group)
             item["sample_count"] = sum(int(v["sample_count"]) for v in group)
@@ -1948,7 +2850,19 @@ def export_results(rows: list[dict[str, Any]], values: list[dict[str, Any]], out
         cells.append(item)
     output.parent.mkdir(parents=True, exist_ok=True)
     temp = output.with_suffix(output.suffix + ".tmp")
-    temp.write_text(json.dumps({"version": 1, "cells": cells}, indent=2) + "\n", encoding="utf-8")
+    temp.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "manifest_sha256": next(iter(manifest_bindings)),
+                "git_commit": next(iter(commit_bindings)),
+                "cells": cells,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     temp.replace(output)
 
 

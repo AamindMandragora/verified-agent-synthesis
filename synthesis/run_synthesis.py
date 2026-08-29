@@ -40,6 +40,7 @@ from synthesis.run_constants import (
     VLLM_GPU_MEMORY_UTILIZATION_BY_MODEL,
     VLLM_MAX_MODEL_LEN,
 )
+from synthesis.safe_logging import display_text
 try:
     from synthesis.project_defaults import default_dafny_path
 except ImportError:
@@ -605,7 +606,7 @@ Examples:
         print("\n" + "=" * 60)
         print("SYNTHESIS COMPLETE")
         print("=" * 60)
-        print(f"Strategy: {result.strategy_code}")
+        print(display_text("Strategy", result.strategy_code))
         print(f"Compiled module: {result.compiled_module_path}")
         print(f"Output directory: {result.output_dir}")
         if getattr(result, "run_dir", None):

@@ -51,8 +51,8 @@ The evaluate stage executes compiled strategies on benchmark tasks and returns s
   full model outputs; the aggregate mode summary should not top-k truncate.
 - Baseline snapshots are JSON files in `outputs/baselines/` with:
   - `accuracy`, `syntax_rate`
-  - `metrics` (counts, optional sums/means for `generation_seconds` / `num_tokens`, optional `run_wall_time_seconds` or evaluator totals)
-  - `answers[]` with `question`, `generated_answer`, and optional `generation_seconds` / `num_tokens` per row
+  - `metrics` (counts, optional sums/means for `generation_seconds` / `num_tokens` / `constrained_work`, optional `run_wall_time_seconds` or evaluator totals)
+  - `answers[]` with `question`, `generated_answer`, and optional `generation_seconds` / `num_tokens` / `constrained_work` per row
 - Reevaluation exports keep `answers[]` backward-compatible and add a dedicated
   `reevaluation_sample_evidence[]` row for each evaluated example. Each row
   carries the contract outcome fields, prompt contract, safe helper/provenance

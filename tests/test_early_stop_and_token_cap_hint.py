@@ -212,7 +212,7 @@ def test_run_crane_csd_returns_output_so_far_on_answer_complete_stop(tmp_path):
         raise AnswerCompleteStop("answer span complete")
 
     env = _make_env(lm, strategy)
-    output_text, token_count, gen_time, segments, helper_trace = run_crane_csd(
+    output_text, token_count, gen_time, segments, helper_trace, constrained_work = run_crane_csd(
         env=env,
         prompt_text="solve it",
         max_steps=900,
@@ -221,6 +221,7 @@ def test_run_crane_csd_returns_output_so_far_on_answer_complete_stop(tmp_path):
     )
     assert output_text == "The final answer is <<x+1>>"
     assert token_count == len(stashed)
+    assert constrained_work == len(stashed)
     # Flag must be cleared after the call so it cannot leak across examples.
     assert lm._answer_early_stop_enabled is False
 
@@ -232,13 +233,14 @@ def test_run_crane_csd_without_flag_does_not_enable(tmp_path):
 
     def strategy(lm_arg, parser, seq0, prefix, start_inside, cur, max_steps, step_budget, eos):
         assert lm_arg._answer_early_stop_enabled is False
-        return (_FakeSeq(["ok"]), False, _FakeSeq([]), 1)
+        return (_FakeSeq(["ok"]), False, _FakeSeq([]), 7)
 
     env = _make_env(lm, strategy)
-    output_text, token_count, _, _, _ = run_crane_csd(
+    output_text, token_count, _, _, _, constrained_work = run_crane_csd(
         env=env,
         prompt_text="solve it",
         max_steps=900,
         grammar_file=tmp_path / "unused.lark",
     )
     assert output_text == "ok"
+    assert constrained_work == 7

@@ -39,6 +39,7 @@ from .prompts import (
 from .rationale import extract_rationale
 from .provider_names import normalize_generation_backend
 from ..run_constants import ANTHROPIC_EFFORT, ANTHROPIC_THINKING_DISPLAY, VLLM_ENFORCE_EAGER
+from ..safe_logging import safe_logging_enabled, text_metadata
 
 
 LOGGER = logging.getLogger(__name__)
@@ -319,6 +320,45 @@ class StrategyGenerator:
         if backend == "vertex":
             return os.environ.get("VERTEX_AI_ACCESS_TOKEN")
         return None
+
+    def author_route_identity(self) -> dict[str, object]:
+        """Return non-secret identity for the author route actually in use."""
+        if self.backend == "claude":
+            return {
+                "auth_mode": "claude_code_max",
+                "config_dir": (
+                    str(self.claude_config_dir) if self.claude_config_dir else None
+                ),
+                "expected_account": self.claude_expected_account,
+                "account_verified": self._claude_account_verified,
+            }
+        if self.backend == "codex":
+            return {
+                "auth_mode": "chatgpt",
+                "account_verified": self._codex_account_verified,
+            }
+        if self.backend == "vertex":
+            adc = Path(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", ""))
+            adc_sha256 = None
+            if adc.is_file():
+                digest = hashlib.sha256()
+                with adc.open("rb") as handle:
+                    for block in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(block)
+                adc_sha256 = digest.hexdigest()
+            uses_adc = not (
+                self.api_key
+                or os.environ.get("VERTEX_AI_API_KEY")
+                or os.environ.get("GEMINI_API_KEY")
+                or os.environ.get("GOOGLE_API_KEY")
+            )
+            return {
+                "auth_mode": "adc" if uses_adc else "token_or_api_key",
+                "vertex_project": self._vertex_project(),
+                "location": self._vertex_location(),
+                "adc_sha256": adc_sha256,
+            }
+        return {"auth_mode": self.backend}
 
     def _load_template(self) -> str:
         """Load the GeneratedCSD.dfy template."""
@@ -1594,6 +1634,11 @@ class StrategyGenerator:
                 return json.loads(body)
             except urllib.error.HTTPError as exc:
                 error_body = exc.read().decode("utf-8", errors="replace")
+                error_detail = (
+                    "[redacted]"
+                    if safe_logging_enabled()
+                    else error_body[:1000]
+                )
                 is_bedrock_daily_quota = (
                     self.backend == "claude-bedrock"
                     and exc.code == 429
@@ -1623,7 +1668,7 @@ class StrategyGenerator:
                         f"[api-retry] {self.backend} HTTP 429 daily token quota; "
                         f"retry indefinitely count={daily_quota_retry} "
                         f"after {sleep_seconds:.1f}s next_retry={next_retry}: "
-                        f"{error_body[:300]}",
+                        f"{error_detail[:300]}",
                         flush=True,
                     )
                     time.sleep(sleep_seconds)
@@ -1633,14 +1678,14 @@ class StrategyGenerator:
                     print(
                         f"[api-retry] {self.backend} HTTP {exc.code}; "
                         f"retry {attempt + 1}/{max_retries} after {sleep_seconds:.1f}s: "
-                        f"{error_body[:300]}",
+                        f"{error_detail[:300]}",
                         flush=True,
                     )
                     time.sleep(sleep_seconds)
                     attempt += 1
                     continue
                 raise RuntimeError(
-                    f"{self.backend} generation API returned HTTP {exc.code}: {error_body[:1000]}"
+                    f"{self.backend} generation API returned HTTP {exc.code}: {error_detail}"
                 ) from exc
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 # Network-level failures (read timeout, connection reset) carry no
@@ -1927,10 +1972,20 @@ class StrategyGenerator:
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "backend": self.backend,
             "model": self.model_name,
-            "system_prompt": system_prompt,
-            "user_prompt": user_prompt,
-            "output": output,
         }
+        if safe_logging_enabled():
+            record["redacted"] = True
+            record["system_prompt_metadata"] = text_metadata(system_prompt)
+            record["user_prompt_metadata"] = text_metadata(user_prompt)
+            record["output_metadata"] = text_metadata(output)
+        else:
+            record.update(
+                {
+                    "system_prompt": system_prompt,
+                    "user_prompt": user_prompt,
+                    "output": output,
+                }
+            )
         with (path / "prompt_io.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
 

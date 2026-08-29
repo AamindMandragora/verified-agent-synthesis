@@ -35,6 +35,38 @@ def test_reevaluation_provenance_binds_output_to_strategy_model_and_cell(tmp_pat
     }
 
 
+def test_reevaluation_provenance_records_exact_eval_model_and_spider_data(tmp_path):
+    csd = tmp_path / "GeneratedCSD.py"
+    csd.write_text("# frozen strategy\n", encoding="utf-8")
+    args = SimpleNamespace(
+        dataset="spider",
+        eval_model="Qwen/Qwen3.5-2B",
+        sample_size=300,
+        max_steps=900,
+        step_token_budget=1,
+        smiles_classes=None,
+        provenance_cell_id="t5-opus5-spider",
+        provenance_manifest_commit="a" * 40,
+        provenance_eval_model_revision="1" * 40,
+        provenance_eval_model_snapshot_path="/cache/snapshots/" + "1" * 40,
+        provenance_eval_model_snapshot_sha256="3" * 64,
+        provenance_eval_model_snapshot_file_count=10,
+        provenance_spider_data_path="/data/spider",
+        provenance_spider_data_sha256="2" * 64,
+        provenance_spider_data_file_count=922,
+    )
+
+    provenance = build_reevaluation_provenance(args, csd)
+
+    assert provenance["eval_model_revision"] == "1" * 40
+    assert provenance["eval_model_snapshot_path"] == args.provenance_eval_model_snapshot_path
+    assert provenance["eval_model_snapshot_sha256"] == "3" * 64
+    assert provenance["eval_model_snapshot_file_count"] == 10
+    assert provenance["spider_data_path"] == "/data/spider"
+    assert provenance["spider_data_sha256"] == "2" * 64
+    assert provenance["spider_data_file_count"] == 922
+
+
 def test_babysitter_smoke_split_fallback_only_for_smoke_report_path():
     from synthesis.scripts.reevaluate_compiled_csd import babysitter_smoke_split_fallback
 
@@ -76,6 +108,7 @@ def test_reevaluation_export_preserves_spider_sample_evidence(tmp_path):
                 "output_contract_valid": False,
                 "output_rejection_reason": "prompt_or_wrapper",
                 "timed_out": False,
+                "constrained_work": 13,
                 "error_type": None,
                 "error_status": None,
                 "removed_terminal_token_count": 1,
@@ -148,6 +181,9 @@ def test_reevaluation_export_preserves_spider_sample_evidence(tmp_path):
     assert row["output_contract_valid"] is False
     assert row["output_rejection_reason"] == "prompt_or_wrapper"
     assert row["timed_out"] is False
+    assert row["constrained_work"] == 13
+    assert payload["answers"][0]["constrained_work"] == 13
+    assert payload["metrics"]["mean_constrained_work"] == 13.0
     assert row["error_type"] is None
     assert row["error_status"] is None
     assert row["removed_terminal_token_count"] == 1
@@ -164,3 +200,46 @@ def test_reevaluation_export_preserves_spider_sample_evidence(tmp_path):
     assert row["provenance_tags"] == ["parser_repair_or_rollback"]
     assert row["failure_location"] == "answer_extraction_or_completion"
     assert row["prompt_contract"]["enable_thinking"] is False
+
+
+def test_constrained_work_metrics_and_rows_survive_all_dataset_exports():
+    from synthesis.evaluate.baseline_store import build_minimal_baseline_record
+    from synthesis.evaluate.evaluator import EvaluationResult
+
+    for dataset in ("gsm_symbolic", "spider", "smiles"):
+        samples = [
+            {
+                "question": f"{dataset} one",
+                "full_output": "answer one",
+                "token_count": 5,
+                "time_seconds": 0.1,
+                "constrained_work": 4,
+                "is_correct": True,
+                "is_syntax_valid": True,
+            },
+            {
+                "question": f"{dataset} two",
+                "full_output": "answer two",
+                "token_count": 6,
+                "time_seconds": 0.2,
+                "constrained_work": 10,
+                "is_correct": False,
+                "is_syntax_valid": True,
+            },
+        ]
+        record = build_minimal_baseline_record(
+            EvaluationResult(
+                success=True,
+                accuracy=0.5,
+                contains_delimiters=False,
+                syntax_rate=1.0,
+                num_examples=2,
+                num_correct=1,
+                total_time_seconds=0.3,
+                sample_outputs=samples,
+            )
+        )
+        assert record["metrics"]["total_constrained_work"] == 14
+        assert record["metrics"]["mean_constrained_work"] == 7.0
+        assert [row["constrained_work"] for row in record["answers"]] == [4, 10]
+        assert [row["constrained_work"] for row in record["reevaluation_sample_evidence"]] == [4, 10]

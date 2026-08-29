@@ -25,6 +25,8 @@ from ..generate import prompts as generation_prompts
 from ..generate.rationale import extract_rationale
 from ..verify.tooling import build_default_compiler, build_default_verifier
 from ..verify.verifier import DafnyVerifier, VerificationResult
+from synthesis.safe_logging import display_text
+from synthesis.runtime_fingerprint import current_runtime_fingerprint
 
 try:
     from synthesis.prompt_rendering import render as _render_prompt
@@ -837,6 +839,11 @@ class SynthesisPipeline:
         # author feedback when most outputs ran to the maxSteps cap.
         self.token_cap_feedback = token_cap_feedback
         self._helper_universe = self._extract_helper_universe_from_prompts()
+        from synthesis.source_snapshot import execution_source_sha256
+
+        self._execution_source_sha256 = execution_source_sha256(
+            Path(__file__).resolve().parents[2]
+        )
 
         # Ensure output directory exists
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -893,6 +900,8 @@ class SynthesisPipeline:
             "task_description": task_description,
             "output_name": output_name,
             "git_commit": self._git_commit_hash(),
+            "execution_source_sha256": self._execution_source_sha256,
+            "python_runtime": current_runtime_fingerprint(),
             "max_iterations": self.max_iterations,
             "thresholds": {
                 "min_accuracy": self.min_accuracy,
@@ -911,6 +920,9 @@ class SynthesisPipeline:
                 "anthropic_thinking_display": getattr(
                     generator, "anthropic_thinking_display", None
                 ),
+                "route": getattr(
+                    generator, "author_route_identity", lambda: None
+                )(),
             },
             "evaluation": {
                 "dataset": getattr(evaluator, "dataset_name", None),
@@ -1867,7 +1879,7 @@ class SynthesisPipeline:
             print(f"{'='*60}")
             if helper_status:
                 print(f"Helper policy: {helper_status}")
-            print(f"Strategy: {strategy_code}")
+            print(display_text("Strategy", strategy_code))
 
             # Create full Dafny code
             full_code = self.generator.inject_strategy(strategy_code)

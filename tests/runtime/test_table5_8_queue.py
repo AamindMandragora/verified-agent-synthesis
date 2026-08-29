@@ -12,6 +12,16 @@ import pytest
 from scripts.runtime import run_table5_8_queue as queue
 
 
+def _test_python_runtime():
+    return {
+        "executable": str(queue.CANONICAL_PYTHON),
+        "python_version": "3.11.15",
+        "implementation": "CPython",
+        "package_count": 100,
+        "packages_sha256": "3" * 64,
+    }
+
+
 def test_exact_table5_to_table8_scope():
     rows = queue.build_scope(Path("/repo"))
     assert len(rows) == 31
@@ -85,6 +95,31 @@ def test_multi_gpu_rows_get_only_scoped_safe_pair():
 
 
 def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        queue,
+        "python_runtime_fingerprint",
+        lambda python, repo: _test_python_runtime(),
+    )
+    external_runtime = {
+        "eval_model": {
+            "model": queue.EVAL_MODEL,
+            "revision": "1" * 40,
+            "snapshot_path": str(tmp_path / "snapshot"),
+        },
+        "spider_data": {
+            "path": str(tmp_path / "spider"),
+            "file_count": 2,
+            "sha256": "2" * 64,
+        },
+    }
+    monkeypatch.setattr(
+        queue, "external_runtime_binding", lambda environment: external_runtime
+    )
+    monkeypatch.setattr(
+        queue,
+        "validate_external_runtime_binding",
+        lambda binding, environment: None,
+    )
     paths = list(queue.SOURCE_PATHS)
     for rel in paths:
         target = tmp_path / rel
@@ -115,8 +150,22 @@ def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, 
     monkeypatch.setattr(queue, "verified_adc_project", lambda environment: "paper-project")
     payload = queue.manifest_payload(tmp_path, queue.build_scope(tmp_path))
     assert payload["crane_commit"] == queue.CANONICAL_CRANE_COMMIT
+    assert payload["external_runtime"] == external_runtime
+    assert payload["python_runtime"] == _test_python_runtime()
     assert set(payload["source_sha256"]) == set(paths)
     assert len(queue.validate_manifest(tmp_path, payload)) == 31
+    wrong_version = json.loads(json.dumps(payload))
+    wrong_version["version"] = 2
+    with pytest.raises(queue.ConfigError, match="version"):
+        queue.validate_manifest(tmp_path, wrong_version)
+    missing_field = json.loads(json.dumps(payload))
+    del missing_field["jobs"][0]["launch_commit"]
+    with pytest.raises(queue.ConfigError, match="unknown or missing fields"):
+        queue.validate_manifest(tmp_path, missing_field)
+    wrong_launch = json.loads(json.dumps(payload))
+    wrong_launch["jobs"][0]["launch_commit"] = "f" * 40
+    with pytest.raises(queue.ConfigError, match="launch commit"):
+        queue.validate_manifest(tmp_path, wrong_launch)
     changed_limits = json.loads(json.dumps(payload))
     changed_limits["jobs"][0]["effective_output_tokens"] = 1
     with pytest.raises(queue.ConfigError, match="effective_output_tokens"):
@@ -124,6 +173,44 @@ def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, 
     (tmp_path / paths[0]).write_text("changed", encoding="utf-8")
     with pytest.raises(queue.ConfigError):
         queue.manifest_payload(tmp_path, queue.build_scope(tmp_path))
+
+
+def test_manifest_rejects_provider_pilot_from_different_source_snapshot(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(queue, "execution_source_paths", lambda repo: ())
+    monkeypatch.setattr(queue, "execution_source_hashes", lambda repo: {})
+    monkeypatch.setattr(
+        queue,
+        "execution_source_sha256",
+        lambda repo: queue.sha256_text("{}"),
+    )
+    monkeypatch.setattr(queue, "validate_crane_checkout", lambda repo: None)
+    monkeypatch.setattr(queue, "crane_source_hashes", lambda repo: {})
+    monkeypatch.setattr(
+        queue,
+        "materialize_frozen_bar_sources",
+        lambda repo: {
+            "gsm_symbolic": "bars/gsm.json",
+            "spider": "bars/spider.json",
+            "smiles": "bars/smiles.json",
+        },
+    )
+    monkeypatch.setattr(queue, "verified_adc_project", lambda environment: "project")
+    def git_run(argv, **kwargs):
+        return types.SimpleNamespace(
+            stdout="" if "status" in argv else "a" * 40 + "\n"
+        )
+
+    monkeypatch.setattr(queue.subprocess, "run", git_run)
+    pilot = {"execution_source_sha256": "0" * 64}
+
+    with pytest.raises(queue.ConfigError, match="current source bytes"):
+        queue.manifest_payload(
+            tmp_path,
+            queue.build_scope(tmp_path),
+            provider_pilots={"opus5": pilot},
+        )
 
 
 def test_state_round_trip_records_phase_and_surviving_child(tmp_path):
@@ -143,13 +230,68 @@ def test_environment_binds_selected_gpu_cap_and_opus_account(monkeypatch, tmp_pa
     )
     assert env["CSD_CLAUDE_CONFIG_DIR"] == "/home/aadivyar/.claude-csd-synthesis"
     assert env["CSD_CLAUDE_EXPECTED_ACCOUNT"] == "ssdear@gmail.com"
+    assert env["CSD_REDACT_SENSITIVE_LOGS"] == "1"
+    assert env["HF_HUB_OFFLINE"] == "1"
+    assert env["TRANSFORMERS_OFFLINE"] == "1"
+
+
+def test_external_runtime_binding_pins_qwen_revision_and_spider_tree(tmp_path):
+    login_home = tmp_path / "home"
+    hf_home = login_home / ".cache" / "huggingface"
+    model_root = hf_home / "hub" / "models--Qwen--Qwen3.5-2B"
+    revision = "1" * 40
+    (model_root / "refs").mkdir(parents=True)
+    (model_root / "refs" / "main").write_text(revision + "\n", encoding="utf-8")
+    snapshot = model_root / "snapshots" / revision
+    snapshot.mkdir(parents=True)
+    model_file = snapshot / "model.safetensors"
+    model_file.write_bytes(b"model weights")
+    spider = login_home / "spider_data" / "spider_data"
+    (spider / "database" / "concert_singer").mkdir(parents=True)
+    (spider / "dev.json").write_text("[]\n", encoding="utf-8")
+    database = spider / "database" / "concert_singer" / "concert_singer.sqlite"
+    database.write_bytes(b"sqlite bytes")
+
+    binding = queue.external_runtime_binding({"HOME": str(login_home)})
+
+    assert binding["eval_model"]["model"] == queue.EVAL_MODEL
+    assert binding["eval_model"]["revision"] == revision
+    assert binding["eval_model"]["snapshot_path"] == str(snapshot.resolve())
+    assert binding["eval_model"]["snapshot_file_count"] == 1
+    assert len(binding["eval_model"]["snapshot_sha256"]) == 64
+    assert binding["spider_data"]["path"] == str(spider.resolve())
+    assert binding["spider_data"]["file_count"] == 2
+    assert len(binding["spider_data"]["sha256"]) == 64
+    queue.validate_external_runtime_binding(binding, {"HOME": str(login_home)})
+
+    model_file.write_bytes(b"changed model weights")
+    with pytest.raises(queue.ConfigError, match="Qwen model bytes"):
+        queue.validate_external_runtime_binding(binding, {"HOME": str(login_home)})
+    model_file.write_bytes(b"model weights")
+
+    database.write_bytes(b"different sqlite bytes")
+    with pytest.raises(queue.ConfigError, match="Spider data bytes"):
+        queue.validate_external_runtime_binding(binding, {"HOME": str(login_home)})
 
 
 def test_heldout_command_uses_test_split_and_provenance(tmp_path):
     row = next(r for r in queue.build_scope(Path("/repo")) if r["benchmark"] == "spider")
+    row.update(
+        eval_model_revision="1" * 40,
+        eval_model_snapshot_path="/cache/snapshots/" + "1" * 40,
+        eval_model_snapshot_sha256="3" * 64,
+        eval_model_snapshot_file_count=10,
+        spider_data_path="/data/spider",
+        spider_data_sha256="2" * 64,
+        spider_data_file_count=922,
+    )
     cmd = queue.heldout_command(row, Path("python"), tmp_path / "compiled.py")
     assert "--spider-split-name" in cmd and cmd[cmd.index("--spider-split-name") + 1] == "test"
     assert "--provenance-cell-id" in cmd
+    assert cmd[cmd.index("--provenance-eval-model-revision") + 1] == "1" * 40
+    assert cmd[cmd.index("--provenance-eval-model-snapshot-path") + 1] == row["eval_model_snapshot_path"]
+    assert cmd[cmd.index("--provenance-spider-data-sha256") + 1] == "2" * 64
+    assert cmd[cmd.index("--provenance-spider-data-file-count") + 1] == "922"
 
 
 def test_artifact_guard_rejects_unchanged_preexisting_output(tmp_path):
@@ -185,6 +327,105 @@ def test_profile_environment_is_forced_and_smiles_temperature_is_exported(tmp_pa
     assert queue.synthesis_environment(smiles, (2,), {}, tmp_path)["CSD_CONSTRAINED_TEMPERATURE"] == "0.7"
 
 
+def test_profile_and_heldout_environments_isolate_author_credentials(tmp_path):
+    gemini = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["profile"] == "gemini3.1-pro"
+    )
+    opus = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["profile"] == "opus5"
+    )
+    inherited = {
+        "PATH": "/bin",
+        "PYTHONPATH": "/untracked/python",
+        "HF_HOME": "/models",
+        "OPENAI_API_KEY": "openai-secret",
+        "ANTHROPIC_API_KEY": "anthropic-secret",
+        "GEMINI_API_KEY": "gemini-secret",
+        "GOOGLE_APPLICATION_CREDENTIALS": "/secret/adc.json",
+        "VERTEX_AI_ACCESS_TOKEN": "vertex-secret",
+        "CLAUDE_CONFIG_DIR": "/secret/claude",
+        "CODEX_HOME": "/secret/codex",
+        "CSD_RATIONALE_SUMMARY_API_KEY": "summary-secret",
+        "AWS_BEARER_TOKEN_BEDROCK": "bedrock-secret",
+        "SPIDER_TOKEN0_CONSTRAINED": "0",
+        "CSD_PARITY_SEED": "123",
+        "CSD_UNCONSTRAINED_TEMPERATURE": "0.9",
+    }
+
+    gemini_synthesis = queue.synthesis_environment(
+        gemini, (2,), inherited, tmp_path
+    )
+    opus_synthesis = queue.synthesis_environment(opus, (2,), inherited, tmp_path)
+    heldout = queue.heldout_environment(gemini, (2,), inherited, tmp_path)
+
+    assert gemini_synthesis["GOOGLE_APPLICATION_CREDENTIALS"] == "/secret/adc.json"
+    assert "OPENAI_API_KEY" not in gemini_synthesis
+    assert "OPENAI_API_KEY" not in opus_synthesis
+    assert "GOOGLE_APPLICATION_CREDENTIALS" not in opus_synthesis
+    for key in (
+        "CSD_RATIONALE_SUMMARY_API_KEY",
+        "AWS_BEARER_TOKEN_BEDROCK",
+        "SPIDER_TOKEN0_CONSTRAINED",
+        "CSD_PARITY_SEED",
+        "CSD_UNCONSTRAINED_TEMPERATURE",
+    ):
+        assert key not in gemini_synthesis
+        assert key not in opus_synthesis
+    for key in (
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "GOOGLE_APPLICATION_CREDENTIALS",
+        "VERTEX_AI_ACCESS_TOKEN",
+        "CLAUDE_CONFIG_DIR",
+        "CODEX_HOME",
+        "CSD_GEMINI_BACKEND",
+        "CSD_RATIONALE_SUMMARY_API_KEY",
+        "AWS_BEARER_TOKEN_BEDROCK",
+        "SPIDER_TOKEN0_CONSTRAINED",
+        "CSD_PARITY_SEED",
+        "CSD_UNCONSTRAINED_TEMPERATURE",
+    ):
+        assert key not in heldout
+    assert "PYTHONPATH" not in gemini_synthesis
+    assert "PYTHONPATH" not in opus_synthesis
+    assert "PYTHONPATH" not in heldout
+    assert heldout["CUDA_VISIBLE_DEVICES"] == "2"
+    assert heldout["CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX"] == str(
+        gemini["gpu_mem_util"]
+    )
+    assert heldout["HF_HOME"] == "/models"
+
+
+def test_isolated_home_pins_real_model_cache_and_spider_data_defaults(tmp_path):
+    login_home = tmp_path / "login-home"
+    hf_home = login_home / ".cache/huggingface"
+    spider_data = login_home / "spider_data/spider_data"
+    hf_home.mkdir(parents=True)
+    spider_data.mkdir(parents=True)
+    inherited = {"HOME": str(login_home), "PATH": "/bin"}
+    row = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["profile"] == "opus5" and candidate["benchmark"] == "spider"
+    )
+
+    queue.validate_runtime_data_paths(inherited)
+    synthesis = queue.synthesis_environment(row, (2,), inherited, tmp_path)
+    heldout = queue.heldout_environment(row, (2,), inherited, tmp_path)
+
+    assert synthesis["HOME"] != str(login_home)
+    assert heldout["HOME"] != str(login_home)
+    for environment in (synthesis, heldout):
+        assert environment["HF_HOME"] == str(hf_home)
+        assert environment["TRANSFORMERS_CACHE"] == str(hf_home)
+        assert environment["SPIDER_DATA_DIR"] == str(spider_data)
+
+
 def test_profile_gate_rejects_wrong_opus_and_vertex_fallbacks(tmp_path):
     opus = [next(r for r in queue.build_scope(Path("/repo")) if r["profile"] == "opus5")]
     with pytest.raises(queue.ConfigError):
@@ -207,6 +448,27 @@ def test_heldout_budget_and_controller_cli_contract():
     args = parser.parse_args(["--manifest", "manifest.json", "--gpus", "1,2", "--state-dir", "state", "--log", "queue.log", "--poll-seconds", "5"])
     assert args.gpus == (1, 2)
     assert args.poll_seconds == 5
+    assert args.python == queue.CANONICAL_PYTHON
+
+
+def test_disk_preflight_is_sized_to_unresolved_campaign_rows(tmp_path, monkeypatch):
+    required = (
+        queue.DISK_FIXED_SAFETY_BYTES
+        + 31 * queue.DISK_BYTES_PER_UNRESOLVED_ROW
+    )
+    monkeypatch.setattr(
+        queue.shutil,
+        "disk_usage",
+        lambda path: types.SimpleNamespace(total=required, used=1, free=required - 1),
+    )
+    with pytest.raises(queue.ConfigError, match="insufficient disk space"):
+        queue.disk_space_preflight(tmp_path, unresolved_rows=31)
+    monkeypatch.setattr(
+        queue.shutil,
+        "disk_usage",
+        lambda path: types.SimpleNamespace(total=required, used=0, free=required),
+    )
+    queue.disk_space_preflight(tmp_path, unresolved_rows=31)
 
 
 def test_controller_does_not_overwrite_input_manifest(tmp_path):
@@ -216,18 +478,110 @@ def test_controller_does_not_overwrite_input_manifest(tmp_path):
         queue.controller_manifest_path(manifest, tmp_path / "manifest.json")
 
 
-def test_export_uses_validated_reevaluation_syntax_rate_as_cw(tmp_path):
+def _bind_export_case(row, payload, tmp_path):
+    row = dict(row, manifest_sha256="a" * 64, git_commit="b" * 40)
+    evidence_dir = tmp_path / row["cell_id"]
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    compiled = evidence_dir / "GeneratedCSD.py"
+    compiled.write_text("compiled", encoding="utf-8")
+    report = evidence_dir / "success_report.json"
+    report.write_text("sealed report", encoding="utf-8")
+    artifact = evidence_dir / "heldout.json"
+    artifact.write_text(json.dumps(payload), encoding="utf-8")
+    payload = dict(payload)
+    payload["paper_artifact_path"] = str(artifact)
+    payload["paper_artifact_sha256"] = queue.hash_file(artifact)
+    payload["reevaluation_provenance"] = dict(
+        payload.get("reevaluation_provenance") or {},
+        compiled_csd_path=str(compiled),
+        compiled_csd_sha256=queue.hash_file(compiled),
+    )
+    payload["synthesis_report_path"] = str(report)
+    payload["synthesis_report_sha256"] = queue.hash_file(report)
+    payload["winning_attempt"] = 1
+    return row, payload
+
+
+def _fake_compiled_selection(tmp_path, compiled, *, winning_attempt=1):
+    report = tmp_path / f"selection-{compiled.parent.name}.json"
+    report.write_text("sealed synthesis report", encoding="utf-8")
+    return {
+        "compiled_csd_path": compiled,
+        "report_path": report,
+        "report_sha256": queue.hash_file(report),
+        "winning_attempt": winning_attempt,
+    }
+
+
+def test_export_uses_validated_mean_constrained_work_as_cw(tmp_path):
     row = next(r for r in queue.build_scope(Path("/repo")) if r["benchmark"] == "gsm_symbolic")
     payload = {
         "cell_id": row["cell_id"],
         "accuracy": 0.4,
         "syntax_rate": 0.87,
-        "metrics": {"num_examples": row["heldout_sample_size"]},
+        "metrics": {"num_examples": row["heldout_sample_size"], "mean_constrained_work": 17.25},
         "answers": [{} for _ in range(row["heldout_sample_size"])],
         "reevaluation_sample_evidence": [{} for _ in range(row["heldout_sample_size"])],
     }
+    row, payload = _bind_export_case(row, payload, tmp_path)
     queue.export_results([row], [payload], tmp_path / "out.json")
-    assert json.loads((tmp_path / "out.json").read_text())["cells"][0]["cw"] == 0.87
+    assert json.loads((tmp_path / "out.json").read_text())["cells"][0]["cw"] == 17.25
+
+
+def test_export_is_bound_to_manifest_commit_and_terminal_artifact(tmp_path):
+    row = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["benchmark"] == "gsm_symbolic"
+    )
+    row.update(manifest_sha256="a" * 64, git_commit="b" * 40)
+    compiled = tmp_path / "compiled/GeneratedCSD.py"
+    compiled.parent.mkdir()
+    compiled.write_text("compiled", encoding="utf-8")
+    artifact = tmp_path / "heldout.json"
+    artifact.write_text("sealed heldout bytes", encoding="utf-8")
+    report = tmp_path / "success_report.json"
+    report.write_text("sealed report bytes", encoding="utf-8")
+    value = {
+        "cell_id": row["cell_id"],
+        "accuracy": 0.4,
+        "syntax_rate": 0.87,
+        "metrics": {"mean_constrained_work": 19.0},
+        "paper_artifact_path": str(artifact),
+        "paper_artifact_sha256": queue.hash_file(artifact),
+        "synthesis_report_path": str(report),
+        "synthesis_report_sha256": queue.hash_file(report),
+        "winning_attempt": 1,
+        "reevaluation_provenance": {
+            "compiled_csd_path": str(compiled),
+            "compiled_csd_sha256": queue.hash_file(compiled),
+        },
+    }
+
+    queue.export_results([row], [value], tmp_path / "export.json")
+
+    exported = json.loads((tmp_path / "export.json").read_text())
+    assert exported["manifest_sha256"] == "a" * 64
+    assert exported["git_commit"] == "b" * 40
+    assert exported["cells"][0]["sources"] == [
+        {
+            "cell_id": row["cell_id"],
+            "profile": row["profile"],
+            "generation_backend": row["generation_backend"],
+            "generation_model": row["generation_model"],
+            "heldout_artifact_path": str(artifact),
+            "heldout_artifact_sha256": queue.hash_file(artifact),
+            "compiled_csd_path": str(compiled),
+            "compiled_csd_sha256": queue.hash_file(compiled),
+            "synthesis_report_path": str(report),
+            "synthesis_report_sha256": queue.hash_file(report),
+            "winning_attempt": 1,
+                "eval_model_revision": None,
+                "eval_model_snapshot_path": None,
+                "eval_model_snapshot_sha256": None,
+                "eval_model_snapshot_file_count": None,
+        }
+    ]
 
 
 def test_export_accepts_production_spider_and_smiles_artifact_shapes(tmp_path):
@@ -236,26 +590,31 @@ def test_export_accepts_production_spider_and_smiles_artifact_shapes(tmp_path):
         "cell_id": spider["cell_id"],
         "accuracy": 0.4,
         "syntax_rate": 0.91,
-        "metrics": {"num_examples": spider["heldout_sample_size"]},
+        "metrics": {"num_examples": spider["heldout_sample_size"], "mean_constrained_work": 23.5},
         "answers": [{} for _ in range(spider["heldout_sample_size"])],
         "reevaluation_sample_evidence": [{} for _ in range(spider["heldout_sample_size"])],
     }
+    spider, spider_payload = _bind_export_case(spider, spider_payload, tmp_path)
     queue.export_results([spider], [spider_payload], tmp_path / "spider.json")
     spider_cell = json.loads((tmp_path / "spider.json").read_text())["cells"][0]
     assert spider_cell["accuracy"] == 0.4
-    assert spider_cell["cw"] == 0.91
+    assert spider_cell["cw"] == 23.5
 
     smiles_rows = [r for r in queue.build_scope(Path("/repo")) if r["profile"] == "gpt5.6-sol" and r["benchmark"] == "smiles"]
+    bound_smiles_rows = []
     values = []
     for row, count, unique in zip(smiles_rows, (100, 100, 100), (10, 20, 30)):
-        values.append({
+        payload = {
             "cell_id": row["cell_id"],
             "smiles_paper_trial": {"sample_count": count, "unique_valid_count": unique},
             "metrics": {"num_examples": count},
             "answers": [{} for _ in range(count)],
             "reevaluation_sample_evidence": [{} for _ in range(count)],
-        })
-    queue.export_results(smiles_rows, values, tmp_path / "smiles.json")
+        }
+        bound_row, bound_payload = _bind_export_case(row, payload, tmp_path)
+        bound_smiles_rows.append(bound_row)
+        values.append(bound_payload)
+    queue.export_results(bound_smiles_rows, values, tmp_path / "smiles.json")
     smiles_cell = json.loads((tmp_path / "smiles.json").read_text())["cells"][0]
     assert smiles_cell["unique_valid_rate"] == pytest.approx(0.2)
 
@@ -293,6 +652,7 @@ def test_pending_row_never_reuses_preexisting_deterministic_synthesis_output(tmp
 
 
 def test_invalid_codex_auth_blocks_codex_without_blocking_ready_opus(monkeypatch, tmp_path):
+    monkeypatch.setattr(queue.time, "time", lambda: 1787949000.0)
     rows = [
         next(r for r in queue.build_scope(Path("/repo")) if r["profile"] == "gpt5.6-sol"),
         next(r for r in queue.build_scope(Path("/repo")) if r["profile"] == "opus5"),
@@ -307,7 +667,7 @@ def test_invalid_codex_auth_blocks_codex_without_blocking_ready_opus(monkeypatch
     monkeypatch.setattr(
         queue,
         "codex_auth_probe",
-        lambda: {"returncode": 0, "stdout": "", "stderr": "invalid_refresh_token"},
+        lambda environment: {"returncode": 0, "stdout": "", "stderr": "invalid_refresh_token"},
     )
     monkeypatch.setattr(
         queue,
@@ -339,7 +699,7 @@ def test_profile_readiness_probes_each_provider_profile_once_and_requires_opus_p
     ]
     calls = []
 
-    def probe():
+    def probe(environment):
         calls.append(True)
         return {"returncode": 0, "status": "ready", "stdout": "", "stderr": ""}
 
@@ -404,7 +764,7 @@ def test_vertex_environment_clears_all_inherited_fallbacks(tmp_path):
 
 def test_exhausted_failure_report_best_compiled_candidate_is_recoverable(tmp_path, monkeypatch):
     row = next(r for r in queue.build_scope(tmp_path) if r["profile"] == "opus5" and r["benchmark"] == "gsm_symbolic")
-    run_dir = tmp_path / "outputs" / "generated" / row["output_name"] / "run"
+    run_dir = tmp_path / "outputs" / "generated" / row["output_name"] / f"{row['output_name']}_20260829_120000_abcdef"
     (run_dir / "results").mkdir(parents=True)
     compiled = run_dir / "compiled" / "GeneratedCSD.py"
     compiled.parent.mkdir(parents=True)
@@ -419,7 +779,11 @@ def test_exhausted_failure_report_best_compiled_candidate_is_recoverable(tmp_pat
     }
     (run_dir / "results" / "failure_report.json").write_text(json.dumps(report), encoding="utf-8")
     (run_dir.parent / "latest_run.txt").write_text(str(run_dir), encoding="utf-8")
-    monkeypatch.setattr(queue, "cold_compiled_csd", lambda repo, output_name, **kwargs: compiled)
+    selection = _fake_compiled_selection(tmp_path, compiled, winning_attempt=40)
+    monkeypatch.setattr(queue, "_compiled_selection", lambda repo, candidate: selection)
+    monkeypatch.setattr(
+        queue, "_report_binding_is_valid", lambda state, candidate, repo: True
+    )
     assert queue._compiled_output(tmp_path, row) == compiled
 
 
@@ -429,9 +793,14 @@ def test_synthesis_exhaustion_with_best_candidate_continues_to_heldout(tmp_path,
     compiled = tmp_path / "compiled" / "GeneratedCSD.py"
     compiled.parent.mkdir(parents=True)
     compiled.write_text("best", encoding="utf-8")
-    monkeypatch.setattr(queue, "_compiled_output", lambda repo, candidate: compiled)
+    selection = _fake_compiled_selection(tmp_path, compiled, winning_attempt=40)
+    monkeypatch.setattr(queue, "_compiled_selection", lambda repo, candidate: selection)
+    monkeypatch.setattr(
+        queue, "_report_binding_is_valid", lambda state, candidate, repo: True
+    )
     monkeypatch.setattr(queue, "heldout_artifact_is_valid", lambda path, candidate: path.is_file())
     calls = []
+    child_environments = []
 
     class Process:
         def __init__(self, code):
@@ -450,11 +819,24 @@ def test_synthesis_exhaustion_with_best_candidate_continues_to_heldout(tmp_path,
 
     def runner(argv, **kwargs):
         calls.append(argv)
+        child_environments.append(kwargs["env"])
         return Process(1 if len(calls) == 1 else 0)
 
-    result = queue.run_row(row, repo=tmp_path, python=Path("python"), state_dir=tmp_path / "state", gpus=(0,), runner=runner)
+    source_checks = []
+    result = queue.run_row(
+        row,
+        repo=tmp_path,
+        python=Path("python"),
+        state_dir=tmp_path / "state",
+        gpus=(0,),
+        runner=runner,
+        admission_check=lambda candidate, **kwargs: source_checks.append(kwargs),
+    )
     assert result["status"] == "complete"
     assert len(calls) == 2
+    assert source_checks == [{"require_provider": False}]
+    assert child_environments[0]["CSD_CLAUDE_CONFIG_DIR"] == "/home/aadivyar/.claude-csd-synthesis"
+    assert "CSD_CLAUDE_CONFIG_DIR" not in child_environments[1]
 
 
 def test_heldout_validator_requires_bound_nonempty_unique_source_indices(tmp_path):
@@ -483,14 +865,22 @@ def test_heldout_validator_requires_bound_nonempty_unique_source_indices(tmp_pat
     artifact.write_text(json.dumps(payload), encoding="utf-8")
     assert not queue.heldout_artifact_is_valid(artifact, row)
 
+    payload = _bound_gsm_artifact(row, compiled)
+    payload["syntax_rate"] = 0.0
+    for answer in payload["answers"]:
+        answer["generated_answer"] = "same malformed output"
+        answer["is_syntax_valid"] = False
+    artifact.write_text(json.dumps(payload), encoding="utf-8")
+    assert not queue.heldout_artifact_is_valid(artifact, row)
+
 
 def _bound_gsm_artifact(row, compiled, *, manifest="manifest-1", indices=None):
     indices = list(indices if indices is not None else queue.expected_heldout_indices(row))
-    answers = [{"generated_answer": "x", "source_index": index, "is_correct": False, "is_syntax_valid": True} for index in indices]
+    answers = [{"generated_answer": "x", "source_index": index, "is_correct": False, "is_syntax_valid": True, "constrained_work": 2} for index in indices]
     return {
         "accuracy": 0.0,
         "syntax_rate": 1.0,
-        "metrics": {"num_examples": len(answers)},
+        "metrics": {"num_examples": len(answers), "total_constrained_work": 2 * len(answers), "mean_constrained_work": 2.0, "examples_with_constrained_work": len(answers)},
         "answers": answers,
         "reevaluation_provenance": {
             "cell_id": row["cell_id"], "dataset": row["dataset"], "eval_model": row["eval_model"],
@@ -515,6 +905,14 @@ def test_heldout_validator_rejects_wrong_binding_metrics_and_accepts_valid_gsm(t
     artifact.write_text(json.dumps(valid), encoding="utf-8")
     assert queue.heldout_artifact_is_valid(artifact, row)
 
+    forged_work = json.loads(json.dumps(valid))
+    forged_work["answers"][0]["constrained_work"] = 1
+    forged_work["answers"][1]["constrained_work"] = 3
+    forged_work["metrics"]["total_constrained_work"] = 1000
+    forged_work["metrics"]["mean_constrained_work"] = 500.0
+    artifact.write_text(json.dumps(forged_work), encoding="utf-8")
+    assert not queue.heldout_artifact_is_valid(artifact, row)
+
     cases = []
     wrong_order = list(expected)
     wrong_order[0], wrong_order[1] = wrong_order[1], wrong_order[0]
@@ -532,6 +930,71 @@ def test_heldout_validator_rejects_wrong_binding_metrics_and_accepts_valid_gsm(t
         candidate = tmp_path / f"invalid-{number}.json"
         candidate.write_text(json.dumps(payload), encoding="utf-8")
         assert not queue.heldout_artifact_is_valid(candidate, row)
+
+
+def test_heldout_validator_accepts_real_writer_four_decimal_work_mean(tmp_path):
+    from synthesis.evaluate.baseline_store import build_minimal_baseline_record
+    from synthesis.evaluate.evaluator import EvaluationResult
+
+    row = next(
+        candidate
+        for candidate in queue.build_scope(Path.cwd())
+        if candidate["benchmark"] == "gsm_symbolic"
+    )
+    compiled = tmp_path / "GeneratedCSD.py"
+    compiled.write_text("compiled", encoding="utf-8")
+    row.update(
+        compiled_csd_path=str(compiled),
+        compiled_sha256=queue.hash_file(compiled),
+        manifest_commit="manifest-1",
+    )
+    indices = queue.expected_heldout_indices(row)
+    samples = [
+        {
+            "question": f"question {index}",
+            "full_output": f"answer {index}",
+            "source_index": index,
+            "is_correct": False,
+            "is_syntax_valid": True,
+            "constrained_work": 1 if position == 0 else 0,
+        }
+        for position, index in enumerate(indices)
+    ]
+    payload = build_minimal_baseline_record(
+        EvaluationResult(
+            success=True,
+            accuracy=0.0,
+            contains_delimiters=False,
+            syntax_rate=1.0,
+            num_examples=len(samples),
+            num_correct=0,
+            total_time_seconds=0.0,
+            sample_outputs=samples,
+        )
+    )
+    payload["reevaluation_provenance"] = {
+        "cell_id": row["cell_id"],
+        "dataset": row["dataset"],
+        "eval_model": row["eval_model"],
+        "sample_size": len(samples),
+        "max_steps": row["eval_max_steps"],
+        "step_token_budget": row["token_budget"],
+        "compiled_csd_path": str(compiled),
+        "compiled_csd_sha256": queue.hash_file(compiled),
+        "manifest_commit": "manifest-1",
+        "evaluated_source_indices": indices,
+        "smiles_class": None,
+    }
+    payload["eval_split"] = {
+        "gsm_split_name": "test",
+        "gsm_split_file": row["heldout_split_file"],
+    }
+    artifact = tmp_path / "writer-rounded.json"
+    artifact.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert payload["metrics"]["total_constrained_work"] == 1
+    assert payload["metrics"]["mean_constrained_work"] == 0.0204
+    assert queue.heldout_artifact_is_valid(artifact, row)
 
 
 def test_heldout_validator_checks_smiles_trial_counts_and_blank_answers(tmp_path):
@@ -594,6 +1057,30 @@ def test_command_parser_accepts_all_table_controls():
     assert result.returncode == 0, result.stderr
 
 
+def test_controller_rejects_state_and_export_collisions_with_row_artifacts(tmp_path):
+    row = queue.build_scope(tmp_path)[0]
+    heldout = tmp_path / row["heldout_output_json"]
+    args = queue.controller_parser().parse_args(
+        [
+            "--manifest",
+            str(tmp_path / "manifest.json"),
+            "--state-dir",
+            str(heldout.parent),
+            "--log",
+            str(tmp_path / "controller.log"),
+            "--export",
+            str(tmp_path / "export.json"),
+        ]
+    )
+    with pytest.raises(queue.ConfigError, match="artifact path collision"):
+        queue.validate_controller_artifact_paths(args, [row], tmp_path)
+
+    args.state_dir = tmp_path / "state"
+    args.export = heldout
+    with pytest.raises(queue.ConfigError, match="artifact path collision"):
+        queue.validate_controller_artifact_paths(args, [row], tmp_path)
+
+
 def test_every_generated_option_is_in_real_synthesis_parser_help():
     help_result = subprocess.run(
         ["/opt/anaconda/bin/python", "-m", "synthesis.run_synthesis", "--help"],
@@ -642,6 +1129,80 @@ def test_provider_pilot_requires_exact_commit_and_hashed_evidence(tmp_path, monk
     )
 
 
+def test_controller_startup_rejects_provider_pilot_that_is_already_stale(
+    tmp_path, monkeypatch
+):
+    commit = "a" * 40
+    row = next(
+        dict(candidate, git_commit=commit)
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["profile"] == "opus5"
+    )
+    evidence = tmp_path / "outputs/generated/pilot/results/failure_report.json"
+    _write_real_pilot_report(evidence, "opus5", commit)
+    pilot = queue.provider_pilot_from_report(
+        evidence, profile="opus5", git_commit=commit, environment={}
+    )
+    monkeypatch.setattr(queue.time, "time", lambda: 1787949000.0 + 25 * 60 * 60)
+
+    with pytest.raises(queue.ConfigError, match="provider pilot is stale"):
+        queue.validate_startup_provider_pilots(
+            [row],
+            {"opus5": pilot},
+            repo=tmp_path,
+            environment={},
+        )
+
+
+def test_admission_guard_does_not_age_out_startup_validated_immutable_pilot(
+    tmp_path, monkeypatch
+):
+    commit = "a" * 40
+    row = next(
+        dict(candidate, git_commit=commit)
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["profile"] == "opus5"
+    )
+    evidence = tmp_path / "outputs/generated/pilot/results/failure_report.json"
+    _write_real_pilot_report(evidence, "opus5", commit)
+    pilot = queue.provider_pilot_from_report(
+        evidence, profile="opus5", git_commit=commit, environment={}
+    )
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps({"provider_pilots": {"opus5": pilot}}), encoding="utf-8"
+    )
+    environment = {
+        "CSD_CLAUDE_CONFIG_DIR": "/home/aadivyar/.claude-csd-synthesis",
+        "CSD_CLAUDE_EXPECTED_ACCOUNT": "ssdear@gmail.com",
+    }
+    now = [1787949000.0]
+    monkeypatch.setattr(queue.time, "time", lambda: now[0])
+    queue.validate_startup_provider_pilots(
+        [row], {"opus5": pilot}, repo=tmp_path, environment=environment
+    )
+    now[0] += 25 * 60 * 60
+    monkeypatch.setattr(queue, "validate_manifest", lambda repo, payload: [row])
+    monkeypatch.setattr(
+        queue,
+        "claude_auth_probe",
+        lambda checked: {
+            "status": "ready",
+            "account": "ssdear@gmail.com",
+            "config_dir": "/home/aadivyar/.claude-csd-synthesis",
+        },
+    )
+    guard = queue.make_admission_guard(
+        repo=tmp_path,
+        manifest_path=manifest,
+        expected_manifest_sha256=queue.hash_file(manifest),
+        environment=environment,
+        clock=lambda: now[0],
+    )
+
+    guard(row)
+
+
 @pytest.mark.parametrize("profile", ["gpt5.6-sol", "gemini3.1-pro", "opus5"])
 def test_compiled_output_uses_strict_cold_report_validation_for_every_profile(
     tmp_path, monkeypatch, profile
@@ -654,9 +1215,9 @@ def test_compiled_output_uses_strict_cold_report_validation_for_every_profile(
 
     def strict_compiled(repo, output_name, **kwargs):
         calls.append((repo, output_name, kwargs["job"]["generation_backend"]))
-        return compiled
+        return _fake_compiled_selection(tmp_path, compiled)
 
-    monkeypatch.setattr(queue, "cold_compiled_csd", strict_compiled)
+    monkeypatch.setattr(queue, "_validated_compiled_selection", strict_compiled)
     assert queue._compiled_output(tmp_path, row) == compiled
     assert calls == [(tmp_path, row["output_name"], row["generation_backend"])]
 
@@ -680,13 +1241,103 @@ def test_heldout_validator_rejects_answer_source_mismatch_and_zero_zero_collapse
     artifact.write_text(json.dumps(payload), encoding="utf-8")
     assert not queue.heldout_artifact_is_valid(artifact, row)
 
-    payload = _bound_gsm_artifact(row, compiled)
-    payload["syntax_rate"] = 0.0
-    for answer in payload["answers"]:
-        answer["generated_answer"] = "same malformed output"
-        answer["is_syntax_valid"] = False
+
+def test_terminal_loader_rejects_artifact_bound_to_different_compiled_strategy(
+    tmp_path
+):
+    row = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["benchmark"] == "gsm_symbolic"
+    )
+    row.update(manifest_sha256="a" * 64, manifest_commit="a" * 64)
+    selected = tmp_path / "selected/GeneratedCSD.py"
+    selected.parent.mkdir()
+    selected.write_text("selected", encoding="utf-8")
+    different = tmp_path / "different/GeneratedCSD.py"
+    different.parent.mkdir()
+    different.write_text("different", encoding="utf-8")
+    artifact = tmp_path / row["heldout_output_json"]
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    payload = _bound_gsm_artifact(row, different, manifest="a" * 64)
     artifact.write_text(json.dumps(payload), encoding="utf-8")
-    assert not queue.heldout_artifact_is_valid(artifact, row)
+    state_dir = tmp_path / "state"
+    queue.write_state(
+        state_dir / f"{row['cell_id']}.json",
+        {
+            "cell_id": row["cell_id"],
+            "status": "complete",
+            "manifest_sha256": "a" * 64,
+            "manifest_commit": "a" * 64,
+            "compiled_csd_path": str(selected),
+            "compiled_sha256": queue.hash_file(selected),
+            "heldout_output_json": str(artifact),
+            "heldout_sha256": queue.hash_file(artifact),
+        },
+    )
+
+    with pytest.raises(queue.ConfigError, match="incomplete or unbound"):
+        queue.load_terminal_results(tmp_path, [row], state_dir)
+
+
+def test_terminal_loader_rejects_selected_synthesis_report_after_mutation(tmp_path):
+    row = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["benchmark"] == "gsm_symbolic"
+    )
+    row.update(manifest_sha256="a" * 64, manifest_commit="b" * 40)
+    compiled = tmp_path / "selected/GeneratedCSD.py"
+    compiled.parent.mkdir()
+    compiled.write_text("selected", encoding="utf-8")
+    artifact = tmp_path / row["heldout_output_json"]
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(
+        json.dumps(_bound_gsm_artifact(row, compiled, manifest="b" * 40)),
+        encoding="utf-8",
+    )
+    report = tmp_path / "success_report.json"
+    report.write_text("sealed report", encoding="utf-8")
+    state_dir = tmp_path / "state"
+    queue.write_state(
+        state_dir / f"{row['cell_id']}.json",
+        {
+            "cell_id": row["cell_id"],
+            "status": "complete",
+            "phase": "heldout",
+            "manifest_sha256": "a" * 64,
+            "manifest_commit": "b" * 40,
+            "compiled_csd_path": str(compiled),
+            "compiled_sha256": queue.hash_file(compiled),
+            "synthesis_report_path": str(report),
+            "synthesis_report_sha256": queue.hash_file(report),
+            "winning_attempt": 1,
+            "heldout_output_json": str(artifact),
+            "heldout_sha256": queue.hash_file(artifact),
+        },
+    )
+    report.write_text("mutated report", encoding="utf-8")
+
+    with pytest.raises(queue.ConfigError, match="incomplete or unbound"):
+        queue.load_terminal_results(tmp_path, [row], state_dir)
+
+
+def test_report_binding_rejects_hash_valid_but_semantically_invalid_report(tmp_path):
+    row = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["profile"] == "opus5"
+        and candidate["benchmark"] == "gsm_symbolic"
+    )
+    report = tmp_path / "success_report.json"
+    report.write_text("{}", encoding="utf-8")
+    state = {
+        "synthesis_report_path": str(report),
+        "synthesis_report_sha256": queue.hash_file(report),
+        "winning_attempt": 999,
+    }
+
+    assert not queue._report_binding_is_valid(state, row, tmp_path)
 
 
 def test_smiles_validator_binds_accuracy_to_unique_valid_count_not_membership_flags(
@@ -710,13 +1361,14 @@ def test_smiles_validator_binds_accuracy_to_unique_valid_count_not_membership_fl
             "source_index": index,
             "is_correct": True,
             "is_syntax_valid": True,
+            "constrained_work": 1,
         }
         for index in indices
     ]
     payload = {
         "accuracy": 0.14,
         "syntax_rate": 1.0,
-        "metrics": {"num_examples": count},
+        "metrics": {"num_examples": count, "total_constrained_work": count, "mean_constrained_work": 1.0, "examples_with_constrained_work": count},
         "answers": answers,
         "smiles_paper_trial": {"sample_count": count, "unique_valid_count": 14},
         "reevaluation_provenance": {
@@ -761,6 +1413,9 @@ def test_controller_rejects_duplicate_or_out_of_scope_gpus(tmp_path):
 
 
 def test_controller_lock_is_single_owner_and_does_not_block_state_lock(tmp_path):
+    assert queue.controller_lock_path(tmp_path) == (
+        tmp_path / ".context/table5_8/table5_8.controller.lock"
+    )
     with queue.controller_lock(tmp_path):
         with pytest.raises(queue.ConfigError, match="already running"):
             with queue.controller_lock(tmp_path):
@@ -776,6 +1431,7 @@ def test_dispatch_polls_surviving_child_without_readmitting_it(tmp_path, monkeyp
         {
             "cell_id": row["cell_id"],
             "status": "running",
+            "phase": "synthesis",
             "pid": 123,
             "pid_start": "one",
             "assigned_gpus": [0],
@@ -865,17 +1521,24 @@ def test_dispatch_rechecks_admission_after_gpu_fit_before_launch(
 ):
     row = next(r for r in queue.build_scope(tmp_path) if r["benchmark"] == "smiles")
     launches = []
+    provider_checks = []
     monkeypatch.setattr(
         queue,
         "run_row",
         lambda candidate, **kwargs: launches.append(candidate["cell_id"]),
     )
 
-    def block(candidate):
+    def block(candidate, *, require_provider):
+        provider_checks.append(require_provider)
         raise queue.ConfigError(f"fresh admission blocked: {candidate['cell_id']}")
 
+    monkeypatch.setattr(
+        queue.time,
+        "sleep",
+        lambda seconds: (_ for _ in ()).throw(RuntimeError("stop after blocked poll")),
+    )
     snapshot = {0: {"total_mib": 40960, "free_mib": 40960}}
-    with pytest.raises(queue.ConfigError, match="fresh admission blocked"):
+    with pytest.raises(RuntimeError, match="stop after blocked poll"):
         queue.dispatch(
             [row],
             repo=tmp_path,
@@ -886,6 +1549,187 @@ def test_dispatch_rechecks_admission_after_gpu_fit_before_launch(
             admission_check=block,
         )
     assert launches == []
+    assert provider_checks == [True]
+
+
+def test_dispatch_rejects_unknown_row_state_before_any_admission_or_launch(
+    tmp_path, monkeypatch
+):
+    row = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["benchmark"] == "smiles"
+    )
+    state_dir = tmp_path / "state"
+    queue.write_state(
+        state_dir / f"{row['cell_id']}.json",
+        {
+            "cell_id": row["cell_id"],
+            "status": "unexpected",
+            "phase": "synthesis",
+        },
+    )
+    admissions = []
+    launches = []
+    monkeypatch.setattr(
+        queue,
+        "run_row",
+        lambda candidate, **kwargs: launches.append(candidate["cell_id"]),
+    )
+
+    with pytest.raises(queue.ConfigError, match="invalid queue state"):
+        queue.dispatch(
+            [row],
+            repo=tmp_path,
+            python=Path("python"),
+            state_dir=state_dir,
+            allowed=(0,),
+            snapshot=lambda: {
+                0: {"total_mib": 40960, "free_mib": 40960}
+            },
+            admission_check=lambda candidate, **kwargs: admissions.append(kwargs),
+        )
+
+    assert admissions == []
+    assert launches == []
+
+
+def test_dispatch_revalidates_terminal_state_without_gpu_or_provider_admission(
+    tmp_path, monkeypatch
+):
+    row = next(r for r in queue.build_scope(tmp_path) if r["benchmark"] == "smiles")
+    state_dir = tmp_path / "state"
+    queue.write_state(
+        state_dir / f"{row['cell_id']}.json",
+        {"cell_id": row["cell_id"], "status": "complete", "phase": "heldout"},
+    )
+    calls = []
+    monkeypatch.setattr(
+        queue,
+        "run_row",
+        lambda candidate, **kwargs: calls.append(kwargs)
+        or {"cell_id": candidate["cell_id"], "status": "complete"},
+    )
+    monkeypatch.setattr(
+        queue.time,
+        "sleep",
+        lambda seconds: (_ for _ in ()).throw(
+            AssertionError("terminal state waited for a GPU")
+        ),
+    )
+
+    results = queue.dispatch(
+        [row],
+        repo=tmp_path,
+        python=Path("python"),
+        state_dir=state_dir,
+        allowed=(0,),
+        snapshot=lambda: {},
+        admission_check=lambda candidate, **kwargs: pytest.fail(
+            "terminal state must not require provider admission"
+        ),
+    )
+
+    assert results == [{"cell_id": row["cell_id"], "status": "complete"}]
+    assert calls[0]["gpus"] == ()
+
+
+def test_controller_passes_running_and_blocked_rows_to_dispatch_without_overwrite(
+    tmp_path, monkeypatch
+):
+    rows = queue.build_scope(tmp_path)[:2]
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+                    {
+                        "provider_pilots": {},
+                        "provider_pilot_sha256": queue.provider_pilots_sha256({}),
+                        "execution_source_sha256": "c" * 64,
+                        "git_commit": "b" * 40,
+                        "external_runtime": {
+                                "eval_model": {
+                                    "revision": "d" * 40,
+                                    "snapshot_path": "/cache/snapshot",
+                                    "snapshot_sha256": "f" * 64,
+                                    "snapshot_file_count": 10,
+                            },
+                            "spider_data": {
+                                "path": "/data/spider",
+                                "sha256": "e" * 64,
+                                "file_count": 922,
+                            },
+                        },
+                    }
+        ),
+        encoding="utf-8",
+    )
+    manifest_sha = queue.hash_file(manifest)
+    state_dir = tmp_path / "state"
+    running = {
+        "cell_id": rows[0]["cell_id"],
+        "status": "running",
+        "phase": "synthesis",
+        "phase": "synthesis",
+        "pid": 123,
+        "pid_start": "alive",
+        "assigned_gpus": [0],
+        "reservation_mib": 16384,
+    }
+    queue.write_state(state_dir / f"{rows[0]['cell_id']}.json", running)
+    queue.write_state(
+        state_dir / "controller.json",
+        {
+            "status": "validated",
+            "manifest_sha256": manifest_sha,
+            "provider_pilot_sha256": queue.provider_pilots_sha256({}),
+        },
+    )
+    guard_calls = []
+    pilot_freshness_checks = []
+    captured_rows = []
+    monkeypatch.setattr(queue, "validate_manifest", lambda repo, payload: rows)
+    monkeypatch.setattr(
+        queue,
+        "make_admission_guard",
+        lambda **kwargs: lambda row, **guard_kwargs: guard_calls.append(row["cell_id"]),
+    )
+    monkeypatch.setattr(
+        queue,
+        "validate_startup_provider_pilots",
+        lambda *args, **kwargs: pilot_freshness_checks.append(
+            kwargs["require_freshness"]
+        ),
+    )
+    monkeypatch.setattr(
+        queue,
+        "dispatch",
+        lambda candidates, **kwargs: captured_rows.extend(candidates)
+        or [dict(row, status="complete") for row in candidates],
+    )
+    monkeypatch.setattr(
+        queue, "load_terminal_results", lambda repo, candidates, state_dir: []
+    )
+    monkeypatch.setattr(queue, "export_results", lambda rows, values, output: None)
+    args = queue.controller_parser().parse_args(
+        [
+            "--manifest",
+            str(manifest),
+            "--state-dir",
+            str(state_dir),
+            "--log",
+            str(tmp_path / "controller.log"),
+            "--export",
+            str(tmp_path / "export.json"),
+        ]
+    )
+
+    assert queue.controller_main(args) == 0
+    assert [row["cell_id"] for row in captured_rows] == [
+        row["cell_id"] for row in rows
+    ]
+    assert guard_calls == []
+    assert pilot_freshness_checks == [False]
+    assert queue.read_state(state_dir / f"{rows[0]['cell_id']}.json") == running
 
 
 def test_admission_guard_revalidates_manifest_each_time_and_caches_live_auth(
@@ -1015,7 +1859,7 @@ def test_manifest_source_closure_hashes_all_tracked_synthesis_files(tmp_path):
 
 def test_exhausted_candidate_requires_exact_finite_evaluation_and_attempt_number(tmp_path, monkeypatch):
     row = next(r for r in queue.build_scope(tmp_path) if r["profile"] == "opus5" and r["benchmark"] == "gsm_symbolic")
-    run_dir = tmp_path / "outputs" / "generated" / row["output_name"] / "run"
+    run_dir = tmp_path / "outputs" / "generated" / row["output_name"] / f"{row['output_name']}_20260829_120000_abcdef"
     (run_dir / "results").mkdir(parents=True)
     compiled = run_dir / "compiled" / "GeneratedCSD.py"
     compiled.parent.mkdir(parents=True)
@@ -1025,6 +1869,82 @@ def test_exhausted_candidate_requires_exact_finite_evaluation_and_attempt_number
     (run_dir.parent / "latest_run.txt").write_text(str(run_dir), encoding="utf-8")
     monkeypatch.setattr(queue, "_report_matches_row", lambda *args, **kwargs: True)
     assert queue._validated_compiled_output(tmp_path, row["output_name"], min_accuracy=0.1, min_syntax_rate=0.1, job=row) is None
+
+
+def test_synthesis_report_must_match_manifest_execution_source_snapshot():
+    row = next(
+        candidate
+        for candidate in queue.build_scope(Path("/repo"))
+        if candidate["profile"] == "opus5"
+        and candidate["benchmark"] == "gsm_symbolic"
+    )
+    row.update(git_commit="a" * 40, execution_source_sha256="1" * 64)
+    report = {
+        "total_attempts": 1,
+        "run_configuration": {
+            "task_description": row["task"],
+            "output_name": row["output_name"],
+            "git_commit": row["git_commit"],
+            "execution_source_sha256": "0" * 64,
+            "max_iterations": row["max_iterations"],
+            "author_model": {
+                "backend": row["generation_backend"],
+                "model": row["generation_model"],
+                "max_new_tokens": row["synthesis_max_tokens"],
+                "reasoning_budget_tokens": row["synthesis_reasoning_budget"],
+            },
+            "evaluation": {
+                "dataset": row["dataset"],
+                "eval_model": row["eval_model"],
+                "eval_sample_size": row["eval_sample_size"],
+                "eval_max_steps": row["eval_max_steps"],
+                "eval_step_token_budget": row["token_budget"],
+                "eval_max_seconds_per_example": row["eval_max_seconds"],
+                "min_examples_before_threshold_stop": row["eval_sample_size"],
+                "split_provenance": {
+                    "bar_split_name": "train",
+                    "gsm_split_name": "train",
+                    "gsm_split_file": row["heldout_split_file"],
+                },
+            },
+            "synthesis_controls": {
+                "adaptive_helper_mask": row["adaptive_helper_mask"],
+                "helper_selection_policy": row["helper_selection_policy"],
+                "refinement_beam_size": row["beam_size"],
+            },
+            "thresholds": {
+                "min_accuracy": row["min_accuracy"],
+                "min_syntax_rate": row["min_syntax_rate"],
+            },
+        },
+    }
+
+    assert not queue._report_matches_row(report, row, require_exhausted=False)
+    report["run_configuration"]["execution_source_sha256"] = "1" * 64
+    assert queue._report_matches_row(report, row, require_exhausted=False)
+
+
+def test_compiled_output_rejects_latest_run_outside_or_symlinked_outside_row_root(
+    tmp_path
+):
+    row = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["profile"] == "opus5"
+    )
+    output_root = tmp_path / "outputs/generated" / row["output_name"]
+    output_root.mkdir(parents=True)
+    latest = output_root / "latest_run.txt"
+    outside = tmp_path / f"{row['output_name']}_20260829_120000_abcdef"
+    outside.mkdir()
+    latest.write_text(str(outside), encoding="utf-8")
+
+    assert queue._compiled_output(tmp_path, row) is None
+
+    escaped_link = output_root / f"{row['output_name']}_20260829_120001_abcdef"
+    escaped_link.symlink_to(outside, target_is_directory=True)
+    latest.write_text(str(escaped_link), encoding="utf-8")
+    assert queue._compiled_output(tmp_path, row) is None
 
 
 def test_scope_records_effective_provider_limits_separately_from_requested_budget():
@@ -1058,11 +1978,31 @@ def _real_pilot_report(profile, commit, *, output_name="pilot", compiled_dir="/t
         "gpt5.6-sol": ("codex", "gpt-5.6-sol"),
         "gemini3.1-pro": ("vertex", "gemini-3.1-pro-preview"),
     }[profile]
+    author_route = {
+        "opus5": {
+            "auth_mode": "claude_code_max",
+            "config_dir": "/home/aadivyar/.claude-csd-synthesis",
+            "expected_account": "ssdear@gmail.com",
+            "account_verified": True,
+        },
+        "gpt5.6-sol": {
+            "auth_mode": "chatgpt",
+            "account_verified": True,
+        },
+        "gemini3.1-pro": {
+            "auth_mode": "adc",
+            "vertex_project": "paper-project",
+            "location": "global",
+            "adc_sha256": "e" * 64,
+        },
+    }[profile]
     return {
         "timestamp": "2026-08-28T20:25:50.576728+00:00",
         "total_attempts": 1,
         "run_configuration": {
             "git_commit": commit,
+            "execution_source_sha256": "d" * 64,
+            "python_runtime": _test_python_runtime(),
             "output_name": output_name,
             "max_iterations": 1,
             "task_description": queue.TASKS["smiles"],
@@ -1071,6 +2011,7 @@ def _real_pilot_report(profile, commit, *, output_name="pilot", compiled_dir="/t
                 "model": model,
                 "max_new_tokens": 32768,
                 "reasoning_budget_tokens": 4096,
+                "route": author_route,
             },
             "evaluation": {
                 "dataset": "smiles",
@@ -1096,9 +2037,15 @@ def _real_pilot_report(profile, commit, *, output_name="pilot", compiled_dir="/t
                 "compilation": {"success": True, "output_dir": str(compiled_dir)},
                 "evaluation": {
                     "success": True,
+                    "early_stopped": False,
                     "num_examples": 1,
+                    "num_correct": 0,
+                    "accuracy_denominator": 1,
                     "accuracy": 0.0,
                     "syntax_rate": 1.0,
+                    "aux_metrics": {
+                        "smiles_paper_trial": {"unique_valid_count": 0}
+                    },
                     "sample_outputs": [
                         {
                             "actual": "CCOC(=O)C=C",
@@ -1143,6 +2090,21 @@ def test_real_pilot_parser_uses_nested_run_report_and_requires_verifier_eval(tmp
     report["attempts"][0]["evaluation"] = None
     report_path.write_text(json.dumps(report), encoding="utf-8")
     with pytest.raises(queue.ConfigError, match="evaluation"):
+        queue.provider_pilot_from_report(
+            report_path, profile="opus5", git_commit=commit, environment={}
+        )
+
+
+def test_provider_pilot_rejects_report_route_identity_relabel(tmp_path):
+    commit = "a" * 40
+    report_path = tmp_path / "outputs/generated/pilot/results/failure_report.json"
+    report = _write_real_pilot_report(report_path, "opus5", commit)
+    report["run_configuration"]["author_model"]["route"][
+        "expected_account"
+    ] = "another-account@example.com"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(queue.ConfigError, match="author route identity"):
         queue.provider_pilot_from_report(
             report_path, profile="opus5", git_commit=commit, environment={}
         )
@@ -1304,7 +2266,7 @@ def test_exhaustion_rejects_duplicate_attempt_numbers(tmp_path, monkeypatch):
         if r["profile"] == "opus5" and r["benchmark"] == "gsm_symbolic"
     )
     row["git_commit"] = "a" * 40
-    run_dir = tmp_path / "outputs/generated" / row["output_name"] / "run"
+    run_dir = tmp_path / "outputs/generated" / row["output_name"] / f"{row['output_name']}_20260829_120000_abcdef"
     (run_dir / "results").mkdir(parents=True)
     compiled = run_dir / "compiled/GeneratedCSD.py"
     compiled.parent.mkdir(parents=True)
@@ -1340,7 +2302,7 @@ def test_exhaustion_requires_all_declared_attempt_records(tmp_path, monkeypatch)
         if r["profile"] == "opus5" and r["benchmark"] == "gsm_symbolic"
     )
     row["git_commit"] = "a" * 40
-    run_dir = tmp_path / "outputs/generated" / row["output_name"] / "run"
+    run_dir = tmp_path / "outputs/generated" / row["output_name"] / f"{row['output_name']}_20260829_120000_abcdef"
     (run_dir / "results").mkdir(parents=True)
     compiled = run_dir / "compiled/GeneratedCSD.py"
     compiled.parent.mkdir(parents=True)
@@ -1384,7 +2346,7 @@ def test_success_report_requires_full_metrics_and_run_local_compiled_path(
         for r in queue.build_scope(tmp_path)
         if r["profile"] == "opus5" and r["benchmark"] == "gsm_symbolic"
     )
-    run_dir = tmp_path / "outputs/generated" / row["output_name"] / "run"
+    run_dir = tmp_path / "outputs/generated" / row["output_name"] / f"{row['output_name']}_20260829_120000_abcdef"
     (run_dir / "results").mkdir(parents=True)
     compiled = run_dir / "python" / row["output_name"] / "GeneratedCSD.py"
     compiled.parent.mkdir(parents=True)
@@ -1393,9 +2355,17 @@ def test_success_report_requires_full_metrics_and_run_local_compiled_path(
         "total_attempts": 1,
         "compiled_dir": str(compiled.parent),
         "evaluation_result": {
+            "success": True,
+            "early_stopped": False,
             "num_examples": row["eval_sample_size"],
-            "accuracy": row["min_accuracy"],
-            "syntax_rate": row["min_syntax_rate"],
+            "num_correct": row["eval_sample_size"],
+            "accuracy_denominator": row["eval_sample_size"],
+            "accuracy": 1.0,
+            "syntax_rate": 1.0,
+            "sample_outputs": [
+                {"is_correct": True, "is_syntax_valid": True}
+                for _ in range(row["eval_sample_size"])
+            ],
         },
     }
     report_path = run_dir / "results/success_report.json"
@@ -1409,6 +2379,42 @@ def test_success_report_requires_full_metrics_and_run_local_compiled_path(
         min_syntax_rate=row["min_syntax_rate"],
         job=row,
     ) == compiled
+
+    selection = queue._validated_compiled_selection(
+        tmp_path,
+        row["output_name"],
+        min_accuracy=row["min_accuracy"],
+        min_syntax_rate=row["min_syntax_rate"],
+        job=row,
+    )
+    assert selection == {
+        "compiled_csd_path": compiled,
+        "report_path": report_path,
+        "report_sha256": queue.hash_file(report_path),
+        "winning_attempt": 1,
+    }
+
+    report["evaluation_result"]["accuracy"] = 0.5
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert queue._validated_compiled_output(
+        tmp_path,
+        row["output_name"],
+        min_accuracy=row["min_accuracy"],
+        min_syntax_rate=row["min_syntax_rate"],
+        job=row,
+    ) is None
+    report["evaluation_result"]["accuracy"] = 1.0
+
+    report["evaluation_result"]["success"] = False
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert queue._validated_compiled_output(
+        tmp_path,
+        row["output_name"],
+        min_accuracy=row["min_accuracy"],
+        min_syntax_rate=row["min_syntax_rate"],
+        job=row,
+    ) is None
+    report["evaluation_result"]["success"] = True
 
     outside = tmp_path / "outside/GeneratedCSD.py"
     outside.parent.mkdir()
@@ -1432,7 +2438,7 @@ def test_failure_report_rejects_compiled_candidate_outside_current_run(
         for r in queue.build_scope(tmp_path)
         if r["profile"] == "opus5" and r["benchmark"] == "gsm_symbolic"
     )
-    run_dir = tmp_path / "outputs/generated" / row["output_name"] / "run"
+    run_dir = tmp_path / "outputs/generated" / row["output_name"] / f"{row['output_name']}_20260829_120000_abcdef"
     (run_dir / "results").mkdir(parents=True)
     outside = tmp_path / "outside/GeneratedCSD.py"
     outside.parent.mkdir()
@@ -1476,12 +2482,12 @@ def test_failure_report_accepts_compiler_generated_suffixed_output_dir(
         for r in queue.build_scope(tmp_path)
         if r["profile"] == "opus5" and r["benchmark"] == "gsm_symbolic"
     )
-    run_dir = tmp_path / "outputs/generated" / row["output_name"] / "run"
+    run_dir = tmp_path / "outputs/generated" / row["output_name"] / f"{row['output_name']}_20260829_120000_abcdef"
     (run_dir / "results").mkdir(parents=True)
     compiled = (
         run_dir
         / "python"
-        / f"{row['output_name']}_20260828_123456_deadbeef"
+        / f"{row['output_name']}_20260828_123456_deadbe"
         / "GeneratedCSD.py"
     )
     compiled.parent.mkdir(parents=True)
@@ -1495,10 +2501,23 @@ def test_failure_report_accepts_compiler_generated_suffixed_output_dir(
                     "success": number == 1,
                     "output_dir": str(compiled.parent) if number == 1 else None,
                 },
+                "verification": {"success": number == 1},
                 "evaluation": {
+                    "success": number == 1,
+                    "early_stopped": False,
                     "num_examples": row["eval_sample_size"],
+                    "num_correct": 0,
+                    "accuracy_denominator": row["eval_sample_size"],
                     "accuracy": 0.0,
                     "syntax_rate": 0.0,
+                    "sample_outputs": (
+                        [
+                            {"is_correct": False, "is_syntax_valid": False}
+                            for _ in range(row["eval_sample_size"])
+                        ]
+                        if number == 1
+                        else []
+                    ),
                 },
             }
         )
@@ -1515,6 +2534,17 @@ def test_failure_report_accepts_compiler_generated_suffixed_output_dir(
         min_syntax_rate=row["min_syntax_rate"],
         job=row,
     ) == compiled
+    selection = queue._validated_compiled_selection(
+        tmp_path,
+        row["output_name"],
+        min_accuracy=row["min_accuracy"],
+        min_syntax_rate=row["min_syntax_rate"],
+        job=row,
+    )
+    report_path = run_dir / "results/failure_report.json"
+    assert selection["report_path"] == report_path
+    assert selection["report_sha256"] == queue.hash_file(report_path)
+    assert selection["winning_attempt"] == 1
 
 
 def test_restart_recovery_hash_pins_compiled_before_heldout_launch(
@@ -1544,7 +2574,11 @@ def test_restart_recovery_hash_pins_compiled_before_heldout_launch(
         },
     )
     monkeypatch.setattr(queue, "child_is_same_process", lambda state: False)
-    monkeypatch.setattr(queue, "_compiled_output", lambda repo, candidate: compiled)
+    selection = _fake_compiled_selection(tmp_path, compiled)
+    monkeypatch.setattr(queue, "_compiled_selection", lambda repo, candidate: selection)
+    monkeypatch.setattr(
+        queue, "_report_binding_is_valid", lambda state, candidate, repo: True
+    )
     monkeypatch.setattr(
         queue, "heldout_artifact_is_valid", lambda path, candidate: path.is_file()
     )
@@ -1576,3 +2610,11 @@ def test_restart_recovery_hash_pins_compiled_before_heldout_launch(
         runner=runner,
     )
     assert result["status"] == "complete"
+
+
+def test_constrained_window_rate_distinguishes_equal_syntax_by_work():
+    low = {"syntax_rate": 0.87, "metrics": {"mean_constrained_work": 10.0}}
+    high = {"syntax_rate": 0.87, "metrics": {"mean_constrained_work": 20.0}}
+
+    assert queue.constrained_window_rate(low) == 10.0
+    assert queue.constrained_window_rate(high) == 20.0

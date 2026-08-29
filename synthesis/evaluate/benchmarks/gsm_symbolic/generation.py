@@ -258,7 +258,7 @@ def run_crane_csd(
             output-so-far is returned and scored through the normal path.
 
     Returns:
-        Tuple of (output_text, token_count, time_seconds, constrained_segments)
+        Tuple of (output_text, token_count, time_seconds, constrained_segments, helper_trace, constrained_work)
     """
     _dafny = env["_dafny"]
     GeneratedCSD = env["GeneratedCSD"]
@@ -583,4 +583,4 @@ def run_crane_csd(
     except Exception as _dbg_err:
         print(f"[STEP_BREAKDOWN] error printing timings: {_dbg_err}", flush=True)
 
-    return output_text, len(result_tokens), execution_time, constrained_segments, helper_trace
+    return output_text, len(result_tokens), execution_time, constrained_segments, helper_trace, total_cost
