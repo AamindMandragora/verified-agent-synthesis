@@ -129,12 +129,17 @@ never add warm-start inputs, and never delete an interrupted or failed claim.
 
 `run_table5_8_queue.py` is the separate 31-run campaign for the missing
 Table 5 backend cells and Tables 6--8 ablations. It uses exact profiles
-`gpt5.6-sol`/Codex, `gemini3.1-pro`/Vertex, and `opus5`/Claude Code, and always
+`gpt5.6-sol`/Codex, `gemini3.7-flash`/direct Gemini API, and
+`opus5`/Claude Code, and always
 evaluates with `Qwen/Qwen3.5-2B`. Table 5 has 15 runs (the three SMILES class
 rows are combined with sample-count weighting); Tables 6--8 have 6, 6, and 4
 cold 40-attempt runs. The synthesis command uses the canonical train split
 selected inside `run_synthesis`; held-out commands use the matching canonical
 test split and an isolated output file.
+
+The Gemini campaign route loads only `GEMINI_API_KEY` from the canonical
+private `synthesis/.env`, passes no Vertex or backup credential, and binds only
+the successful key's SHA-256 fingerprint in reports, pilots, and manifests.
 
 The manifest records the full commit, CRANE commit, and SHA-256 for every
 direct runtime dependency. A dirty dependency is a launch error. State is

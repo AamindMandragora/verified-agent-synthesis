@@ -20,6 +20,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -98,6 +100,7 @@ class ConfigError(ValueError):
 
 EVAL_MODEL = "Qwen/Qwen3.5-2B"
 CANONICAL_PYTHON = Path("/apps/conda/aadivyar/envs/csd/bin/python")
+CANONICAL_GEMINI_ENV_FILE = Path("/home/aadivyar/csd-generation/synthesis/.env")
 DISK_FIXED_SAFETY_BYTES = 2 * 1024**3
 DISK_BYTES_PER_UNRESOLVED_ROW = 128 * 1024**2
 GPU_SAFETY_MIB = 2_000
@@ -128,7 +131,7 @@ BAR_BINDINGS = {
 SMILES_CLASSES = ("acrylates", "chain_extenders", "isocyanates")
 TABLE5_PROFILES = {
     "gpt5.6-sol": {"generation_backend": "codex", "generation_model": "gpt-5.6-sol"},
-    "gemini3.1-pro": {"generation_backend": "vertex", "generation_model": "gemini-3.1-pro-preview"},
+    "gemini3.7-flash": {"generation_backend": "gemini", "generation_model": "gemini-3.7-flash"},
     "opus5": {"generation_backend": "claude", "generation_model": "claude-opus-5"},
 }
 CANONICAL_SPLITS = {
@@ -199,7 +202,7 @@ JOB_KEYS = frozenset({
     "eval_max_steps", "eval_max_seconds", "gpu_mem_util", "memory_reservation_mib",
     "gpu_scope", "gpu_count", "heldout_split_name", "heldout_split_file", "sample_count",
     "output_name", "heldout_output_json", "log_file", "cold_start", "git_commit",
-    "launch_commit", "vertex_project", "expected_author_route",
+    "launch_commit", "expected_author_route",
 })
 
 
@@ -220,8 +223,8 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
         "eval_model": EVAL_MODEL,
         "synthesis_max_tokens": AUTHOR_TOKEN_BUDGET,
         "synthesis_reasoning_budget": AUTHOR_REASONING_BUDGET,
-        "effective_output_tokens": {"opus5": 64000, "gpt5.6-sol": None, "gemini3.1-pro": 32768}[profile],
-        "effective_thinking_tokens": {"opus5": 48000, "gpt5.6-sol": None, "gemini3.1-pro": None}[profile],
+        "effective_output_tokens": {"opus5": 64000, "gpt5.6-sol": None, "gemini3.7-flash": 32768}[profile],
+        "effective_thinking_tokens": {"opus5": 48000, "gpt5.6-sol": None, "gemini3.7-flash": None}[profile],
         "smiles_class": smiles_class,
         "token_budget": controls.pop("token_budget", 1),
         "beam_size": controls.pop("beam_size", 2),
@@ -309,7 +312,7 @@ def provider_pilot_from_report(
         raise ConfigError("provider pilot report is missing or invalid") from exc
     expected_routes = {
         "gpt5.6-sol": ("codex", "gpt-5.6-sol", None, None),
-        "gemini3.1-pro": ("vertex", "gemini-3.1-pro-preview", 32768, None),
+        "gemini3.7-flash": ("gemini", "gemini-3.7-flash", 32768, None),
         "opus5": ("claude", "claude-opus-5", 64000, 48000),
     }
     if profile not in expected_routes:
@@ -459,19 +462,11 @@ def provider_pilot_from_report(
                 "expected_account": reported_author_route["expected_account"],
             }
         )
-    if profile == "gemini3.1-pro":
-        if (
-            not reported_author_route.get("vertex_project")
-            or not reported_author_route.get("adc_sha256")
-        ):
-            raise ConfigError("Vertex provider pilot has no bound ADC project")
-        pilot.update(
-            {
-                "vertex_project": reported_author_route["vertex_project"],
-                "adc_sha256": reported_author_route["adc_sha256"],
-                "location": reported_author_route["location"],
-            }
-        )
+    if profile == "gemini3.7-flash":
+        key_sha = reported_author_route.get("api_key_sha256")
+        if not isinstance(key_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", key_sha):
+            raise ConfigError("Gemini provider pilot has no bound API key fingerprint")
+        pilot["api_key_sha256"] = key_sha
     return pilot
 
 
@@ -547,32 +542,33 @@ def claude_auth_probe(environment: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def vertex_adc_probe(environment: dict[str, str]) -> dict[str, Any]:
-    """Refresh the exact ADC credential through the same google-auth path as generation."""
+def gemini_api_key_probe(environment: dict[str, str]) -> dict[str, Any]:
+    """Authenticate the exact AI Studio key and require Gemini 3.7 Flash."""
+    api_key = environment.get("GEMINI_API_KEY", "")
+    if not api_key:
+        return {"status": "blocked", "reason": "missing Gemini API key"}
+    request = urllib.request.Request(
+        "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
+        headers={"x-goog-api-key": api_key},
+    )
     try:
-        import google.auth
-        from google.auth.transport.requests import Request
-
-        adc_value = environment.get("GOOGLE_APPLICATION_CREDENTIALS", "")
-        adc = Path(adc_value)
-        expected_project = verified_adc_project(environment)
-        if not adc.is_file() or not expected_project:
-            return {"status": "blocked", "reason": "missing ADC project"}
-        credentials, loaded_project = google.auth.load_credentials_from_file(
-            str(adc),
-            scopes=["https://www.googleapis.com/auth/cloud-platform"],
-        )
-        credentials.refresh(Request())
-    except Exception as exc:  # google-auth uses several provider-specific errors.
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        return {"status": "blocked", "reason": f"HTTP {exc.code}"}
+    except (OSError, TimeoutError, urllib.error.URLError, json.JSONDecodeError) as exc:
         return {"status": "blocked", "reason": type(exc).__name__}
-    project = loaded_project or expected_project
-    if project != expected_project or not getattr(credentials, "token", None):
-        return {"status": "blocked", "reason": "wrong ADC project or empty token"}
+    names = {
+        model.get("name")
+        for model in payload.get("models", [])
+        if isinstance(model, dict)
+    }
+    if "models/gemini-3.7-flash" not in names:
+        return {"status": "blocked", "reason": "gemini-3.7-flash unavailable"}
     return {
         "status": "ready",
-        "vertex_project": expected_project,
-        "adc_sha256": hash_file(adc),
-        "location": "global",
+        "model": "gemini-3.7-flash",
+        "api_key_sha256": sha256_text(api_key),
     }
 
 
@@ -592,7 +588,7 @@ def validate_provider_pilot(
         return f"{profile} provider pilot is bound to a different code commit"
     expected = {
         "gpt5.6-sol": ("codex", "gpt-5.6-sol"),
-        "gemini3.1-pro": ("vertex", "gemini-3.1-pro-preview"),
+        "gemini3.7-flash": ("gemini", "gemini-3.7-flash"),
         "opus5": ("claude", "claude-opus-5"),
     }
     backend, model = expected[profile]
@@ -669,18 +665,12 @@ def validate_startup_provider_pilots(
         profile = str(row["profile"])
         if profile in checked:
             continue
-        checked_environment = dict(environment)
-        if profile == "gemini3.1-pro" and row.get("vertex_project"):
-            project = str(row["vertex_project"])
-            checked_environment["GOOGLE_CLOUD_PROJECT"] = project
-            checked_environment["VERTEX_AI_PROJECT"] = project
-            checked_environment["GOOGLE_CLOUD_LOCATION"] = "global"
         reason = validate_provider_pilot(
             profile,
             provider_pilots.get(profile),
             row.get("git_commit"),
             repo=repo,
-            environment=checked_environment,
+            environment=environment,
             require_freshness=require_freshness,
         )
         if reason is not None:
@@ -704,15 +694,8 @@ def profile_block_reason(
         if probe.get("status") != "ready":
             LOGGER.error("[tableq] auth-block profile=gpt5.6-sol reason=codex-local-auth")
             return "codex local authentication is unavailable or invalid"
-    checked_environment = dict(environment)
-    if row["profile"] == "gemini3.1-pro" and row.get("vertex_project"):
-        if row["vertex_project"] != verified_adc_project(environment):
-            return "gemini3.1-pro row is not bound to the active ADC project"
-        checked_environment["GOOGLE_CLOUD_PROJECT"] = str(row["vertex_project"])
-        checked_environment["VERTEX_AI_PROJECT"] = str(row["vertex_project"])
-        checked_environment["GOOGLE_CLOUD_LOCATION"] = "global"
     try:
-        validate_profile_gates([row], checked_environment)
+        validate_profile_gates([row], environment)
     except ConfigError as exc:
         return str(exc)
     pilot_reason = validate_provider_pilot(
@@ -725,14 +708,11 @@ def profile_block_reason(
     )
     if pilot_reason:
         return pilot_reason
-    if row["profile"] == "gemini3.1-pro":
+    if row["profile"] == "gemini3.7-flash":
         pilot = (provider_pilots or {}).get(row["profile"]) or {}
-        adc = environment.get("GOOGLE_APPLICATION_CREDENTIALS", "")
-        if pilot.get("vertex_project") != row.get("vertex_project") or pilot.get("location") != "global":
-            return "gemini3.1-pro provider pilot is not bound to the approved global project"
-        if not adc or pilot.get("adc_sha256") != hash_file(Path(adc)):
-            return "gemini3.1-pro provider pilot is not bound to the active ADC"
-    if row.get("git_commit") and row["profile"] in {"opus5", "gemini3.1-pro"}:
+        if pilot.get("api_key_sha256") != sha256_text(environment.get("GEMINI_API_KEY", "")):
+            return "gemini3.7-flash provider pilot is not bound to the active API key"
+    if row.get("git_commit") and row["profile"] in {"opus5", "gemini3.7-flash"}:
         auth = (cached_auth or {}).get(row["profile"])
         if not auth or auth.get("status") != "ready":
             return f"{row['profile']} live authentication is unavailable"
@@ -742,11 +722,11 @@ def profile_block_reason(
             or auth.get("config_dir") != pilot.get("config_dir")
         ):
             return "opus5 live authentication does not match the pilot route"
-        if row["profile"] == "gemini3.1-pro" and any(
-            auth.get(key) != pilot.get(key)
-            for key in ("vertex_project", "adc_sha256", "location")
+        if row["profile"] == "gemini3.7-flash" and (
+            auth.get("model") != "gemini-3.7-flash"
+            or auth.get("api_key_sha256") != pilot.get("api_key_sha256")
         ):
-            return "gemini3.1-pro live authentication does not match the pilot route"
+            return "gemini3.7-flash live authentication does not match the pilot route"
     return None
 
 
@@ -769,8 +749,8 @@ def partition_profile_readiness(
         if row.get("git_commit") and row["profile"] not in cached_auth:
             if row["profile"] == "opus5":
                 cached_auth[row["profile"]] = claude_auth_probe(environment)
-            elif row["profile"] == "gemini3.1-pro":
-                cached_auth[row["profile"]] = vertex_adc_probe(environment)
+            elif row["profile"] == "gemini3.7-flash":
+                cached_auth[row["profile"]] = gemini_api_key_probe(environment)
         reason = profile_block_reason(
             row,
             environment,
@@ -840,8 +820,8 @@ def make_admission_guard(
                 cached_probes[profile] = codex_auth_probe(environment)
             elif profile == "opus5":
                 cached_auth[profile] = claude_auth_probe(environment)
-            elif profile == "gemini3.1-pro":
-                cached_auth[profile] = vertex_adc_probe(environment)
+            elif profile == "gemini3.7-flash":
+                cached_auth[profile] = gemini_api_key_probe(environment)
             checked_at[profile] = now
         reason = profile_block_reason(
             candidate,
@@ -864,7 +844,12 @@ def provider_preflight() -> list[dict[str, str]]:
     claude_dir = Path(os.environ.get("CSD_CLAUDE_CONFIG_DIR", "/home/aadivyar/.claude-csd-synthesis"))
     return [
         {"profile": "gpt5.6-sol", "backend": "codex", "status": "not_checked_without_provider_call"},
-        {"profile": "gemini3.1-pro", "backend": "vertex", "status": "credential_path_present" if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") else "credential_not_declared"},
+        {
+            "profile": "gemini3.7-flash",
+            "backend": "gemini",
+            "status": "api_key_present" if os.environ.get("GEMINI_API_KEY") else "api_key_missing",
+            "api_key_sha256": sha256_text(os.environ["GEMINI_API_KEY"]) if os.environ.get("GEMINI_API_KEY") else "",
+        },
         {"profile": "opus5", "backend": "claude", "status": "config_present" if claude_dir.is_dir() else "config_missing"},
     ]
 
@@ -913,7 +898,6 @@ def manifest_payload(repo: Path, rows: list[dict[str, Any]], provider_pilots: di
     source_digest = execution_source_sha256(repo)
     crane_sources = crane_source_hashes(repo)
     materialized = materialize_frozen_bar_sources(repo)
-    vertex_project = verified_adc_project(os.environ)
     bound_rows = [
         dict(
             row,
@@ -922,11 +906,6 @@ def manifest_payload(repo: Path, rows: list[dict[str, Any]], provider_pilots: di
             bar_source_path=materialized[row["benchmark"]],
             expected_author_route=expected_author_route(
                 row["profile"], dict(os.environ)
-            ),
-            **(
-                {"vertex_project": vertex_project}
-                if row["profile"] == "gemini3.1-pro"
-                else {}
             ),
         )
         for row in rows
@@ -1020,19 +999,6 @@ def crane_source_hashes(repo: Path) -> dict[str, str]:
     }
 
 
-def verified_adc_project(environment: dict[str, str]) -> str:
-    """Read the project bound to the configured ADC file, never an endpoint token."""
-    adc = environment.get("GOOGLE_APPLICATION_CREDENTIALS", "")
-    if not adc:
-        return ""
-    try:
-        payload = json.loads(Path(adc).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ""
-    project = payload.get("project_id")
-    return str(project) if isinstance(project, str) and project else ""
-
-
 def expected_author_route(
     profile: str, environment: dict[str, str]
 ) -> dict[str, Any]:
@@ -1046,13 +1012,11 @@ def expected_author_route(
             "expected_account": "ssdear@gmail.com",
             "account_verified": True,
         }
-    if profile == "gemini3.1-pro":
-        adc = Path(environment.get("GOOGLE_APPLICATION_CREDENTIALS", ""))
+    if profile == "gemini3.7-flash":
+        api_key = environment.get("GEMINI_API_KEY", "")
         return {
-            "auth_mode": "adc",
-            "vertex_project": verified_adc_project(environment),
-            "location": "global",
-            "adc_sha256": hash_file(adc) if adc.is_file() else None,
+            "auth_mode": "gemini_api_key",
+            "api_key_sha256": sha256_text(api_key) if api_key else None,
         }
     raise ConfigError(f"unknown provider profile: {profile}")
 
@@ -1110,18 +1074,9 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
         "log_file", "cold_start", "bar_source_sha256",
     }
     for actual, frozen in zip(rows, expected):
-        required_job_keys = JOB_KEYS - {"vertex_project"}
         if (
-            not required_job_keys.issubset(actual)
+            not JOB_KEYS.issubset(actual)
             or set(actual) - JOB_KEYS
-            or (
-                actual.get("profile") == "gemini3.1-pro"
-                and "vertex_project" not in actual
-            )
-            or (
-                actual.get("profile") != "gemini3.1-pro"
-                and "vertex_project" in actual
-            )
         ):
             raise ConfigError(f"job has unknown or missing fields: {actual.get('cell_id', '<unknown>')}")
         for field in immutable_fields:
@@ -1137,8 +1092,6 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
             raise ConfigError(
                 f"row author route differs from current credentials: {actual['cell_id']}"
             )
-        if actual.get("profile") == "gemini3.1-pro" and not actual.get("vertex_project"):
-            raise ConfigError(f"Vertex row is missing its approved ADC project: {actual['cell_id']}")
         copied_bar = Path(str(actual.get("bar_source_path", "")))
         if copied_bar.is_absolute() or not (repo / copied_bar).is_file() or hashlib.sha256((repo / copied_bar).read_bytes()).hexdigest() != actual.get("bar_source_sha256"):
             raise ConfigError(f"bar source is not a copied immutable artifact: {actual['cell_id']}")
@@ -1211,6 +1164,39 @@ def safe_runtime_environment(environment: dict[str, str]) -> dict[str, str]:
         if key in SAFE_RUNTIME_ENV_KEYS
         or key.startswith(SAFE_RUNTIME_ENV_PREFIXES)
     }
+
+
+def campaign_environment(
+    environment: dict[str, str] | None = None,
+    *,
+    credential_file: Path = CANONICAL_GEMINI_ENV_FILE,
+) -> dict[str, str]:
+    """Load only the private Gemini key needed by this campaign."""
+    result = dict(os.environ if environment is None else environment)
+    if result.get("GEMINI_API_KEY"):
+        return result
+    try:
+        lines = credential_file.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return result
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        name, separator, raw_value = line.partition("=")
+        if separator != "=" or name.strip() != "GEMINI_API_KEY":
+            continue
+        try:
+            parsed = shlex.split(raw_value, posix=True)
+        except ValueError as exc:
+            raise ConfigError("private GEMINI_API_KEY entry is malformed") from exc
+        if len(parsed) != 1 or not parsed[0]:
+            raise ConfigError("private GEMINI_API_KEY entry is empty or malformed")
+        result["GEMINI_API_KEY"] = parsed[0]
+        break
+    return result
 
 
 def runtime_data_paths(environment: dict[str, str]) -> dict[str, str]:
@@ -1429,20 +1415,12 @@ def synthesis_environment(row: dict[str, Any], gpus: tuple[int, ...], inherited:
         isolated_home = repo / ".context" / "table5_8" / f"{row['profile']}-home"
         isolated_home.mkdir(parents=True, exist_ok=True)
         env["HOME"] = str(isolated_home)
-    if row["profile"] == "gemini3.1-pro":
-        adc = inherited.get("GOOGLE_APPLICATION_CREDENTIALS")
-        if adc:
-            env["GOOGLE_APPLICATION_CREDENTIALS"] = adc
-        project = str(row.get("vertex_project") or "")
-        if project:
-            env["VERTEX_AI_PROJECT"] = project
-            env["GOOGLE_CLOUD_PROJECT"] = project
-        env["GOOGLE_CLOUD_LOCATION"] = "global"
-        env["VERTEX_AI_LOCATION"] = "global"
-        env["GOOGLE_VERTEX_LOCATION"] = "global"
-        env["VERTEX_AI_BASE_URL"] = "https://aiplatform.googleapis.com/v1"
-        env["CSD_GEMINI_BACKEND"] = "vertex"
-        env["CSD_GEMINI_MODEL"] = "gemini-3.1-pro-preview"
+    if row["profile"] == "gemini3.7-flash":
+        api_key = inherited.get("GEMINI_API_KEY")
+        if api_key:
+            env["GEMINI_API_KEY"] = api_key
+        env["CSD_GEMINI_BACKEND"] = "gemini"
+        env["CSD_GEMINI_MODEL"] = "gemini-3.7-flash"
     if row["dataset"] == "smiles":
         env["CSD_CONSTRAINED_TEMPERATURE"] = "0.7"
     return env
@@ -1740,14 +1718,35 @@ def validate_profile_gates(rows: list[dict[str, Any]], environment: dict[str, st
         if profile == "opus5":
             if environment.get("CSD_CLAUDE_CONFIG_DIR") != "/home/aadivyar/.claude-csd-synthesis" or environment.get("CSD_CLAUDE_EXPECTED_ACCOUNT") != "ssdear@gmail.com":
                 raise ConfigError("opus5 requires the exact Max config directory and account")
-        elif profile == "gemini3.1-pro":
-            adc = environment.get("GOOGLE_APPLICATION_CREDENTIALS", "")
-            if not adc or not Path(adc).is_file() or environment.get("GOOGLE_CLOUD_LOCATION", "global") != "global" or not environment.get("GOOGLE_CLOUD_PROJECT"):
-                LOGGER.error("[tableq] auth-block profile=gemini3.1-pro reason=vertex-adc")
-                raise ConfigError("gemini3.1-pro requires valid global Vertex ADC configuration")
-            if any(key in environment for key in ("GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI")):
-                LOGGER.error("[tableq] auth-block profile=gemini3.1-pro reason=api-key-fallback")
-                raise ConfigError("gemini3.1-pro campaign rejects API-key fallback configuration")
+        elif profile == "gemini3.7-flash":
+            if not environment.get("GEMINI_API_KEY"):
+                LOGGER.error("[tableq] auth-block profile=gemini3.7-flash reason=missing-api-key")
+                raise ConfigError("gemini3.7-flash requires GEMINI_API_KEY")
+            conflicting = {
+                key
+                for key in environment
+                if key in {
+                    "GOOGLE_API_KEY",
+                    "GOOGLE_APPLICATION_CREDENTIALS",
+                    "GOOGLE_GENAI_USE_VERTEXAI",
+                    "VERTEX_AI_PROJECT",
+                    "VERTEX_AI_LOCATION",
+                    "VERTEX_AI_BASE_URL",
+                    "VERTEX_AI_API_KEY",
+                    "VERTEX_AI_ACCESS_TOKEN",
+                    "GOOGLE_CLOUD_PROJECT",
+                    "GOOGLE_CLOUD_LOCATION",
+                    "GOOGLE_VERTEX_LOCATION",
+                }
+                or key.startswith("GEMINI_API_KEY_BACKUP_")
+            }
+            if conflicting:
+                LOGGER.error(
+                    "[tableq] auth-block profile=gemini3.7-flash reason=conflicting-google-route"
+                )
+                raise ConfigError(
+                    "gemini3.7-flash requires exactly one direct Gemini API key"
+                )
 
 
 def load_terminal_results(
@@ -2867,6 +2866,9 @@ def export_results(rows: list[dict[str, Any]], values: list[dict[str, Any]], out
 
 
 def main() -> int:
+    private_environment = campaign_environment(dict(os.environ))
+    if private_environment.get("GEMINI_API_KEY"):
+        os.environ["GEMINI_API_KEY"] = private_environment["GEMINI_API_KEY"]
     if "--controller" in sys.argv[1:]:
         controller_args = [arg for arg in sys.argv[1:] if arg != "--controller"]
         return controller_main(controller_parser().parse_args(controller_args))

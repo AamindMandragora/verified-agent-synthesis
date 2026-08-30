@@ -30,7 +30,7 @@ The experiment tables in `paper/experiments.tex` are entirely `\todo{--}`. No fi
 | Main matrix (4 models × 6 strategies × 3 benchmarks) | **NOT DONE** | `run_all_tests.py --skip-ablations --eval-sample-size <N>` with publication sample size |
 | Step-budget ablation (n=256,512,1024) | **NOT DONE** | Ablation A in `run_all_tests.py` |
 | Synthesis-iterations ablation (K=3,5,10) | **NOT DONE** | Ablation B in `run_all_tests.py` |
-| Synthesizer-model ablation (GPT-5.4, Opus 4.7, Gemini 3.1 Pro) | **NOT DONE** | Ablation C; requires API keys for all three |
+| Synthesizer-model ablation (GPT-5.6 Sol, Opus 5, Gemini 3.7 Flash) | **NOT DONE** | Table 5 campaign; requires verified routes for all three |
 | Per-step token budget (b=1,2,4) | **NOT DONE** | Ablation D in `run_all_tests.py` |
 | Beam refinement × helper selection (B=1,2,4 × utility,bandit) | **NOT DONE** | Ablation E in `run_all_tests.py` |
 | Adaptive helper masking (on/off) | **NOT DONE** | Ablation F in `run_all_tests.py` |
@@ -63,7 +63,7 @@ The experiment tables in `paper/experiments.tex` are entirely `\todo{--}`. No fi
 - The Dafny formalization is complete for all baseline strategies + the generated template.
 - The experiment runner can produce all needed data without code changes.
 - Paper framing/narrative (abstract, intro, approach) appears solid.
-- Three synthesizer backends (GPT-5.4, Opus 4.7, Gemini 3.1 Pro) are already wired in.
+- Three synthesizer backends (GPT-5.6 Sol, Opus 5, Gemini 3.7 Flash) are wired into the Table 5 campaign.
 
 ### Preliminary Signal
 

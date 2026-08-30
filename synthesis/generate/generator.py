@@ -337,6 +337,14 @@ class StrategyGenerator:
                 "auth_mode": "chatgpt",
                 "account_verified": self._codex_account_verified,
             }
+        if self.backend == "gemini":
+            key_sha256 = getattr(self, "_active_gemini_api_key_sha256", None)
+            if key_sha256 is None and self.api_key:
+                key_sha256 = hashlib.sha256(self.api_key.encode("utf-8")).hexdigest()
+            return {
+                "auth_mode": "gemini_api_key",
+                "api_key_sha256": key_sha256,
+            }
         if self.backend == "vertex":
             adc = Path(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", ""))
             adc_sha256 = None
@@ -1808,24 +1816,33 @@ class StrategyGenerator:
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
             "generationConfig": {
                 "maxOutputTokens": self.max_new_tokens,
-                "temperature": self.temperature,
-                "topP": self.top_p,
             },
         }
+        if self.model_name != "gemini-3.7-flash":
+            payload["generationConfig"].update(
+                {"temperature": self.temperature, "topP": self.top_p}
+            )
         keys = self._gemini_api_keys(self.api_key)
         if not keys:
             keys = [""]
         last_exc: Optional[BaseException] = None
         for idx, api_key in enumerate(keys):
-            key = urllib.parse.quote(api_key, safe="")
-            url = f"{base_url}/models/{model}:generateContent?key={key}"
+            url = f"{base_url}/models/{model}:generateContent"
+            headers = {"x-goog-api-key": api_key}
             try:
                 if len(keys) == 1:
-                    data = self._post_json(url, {}, payload)
+                    data = self._post_json(url, headers, payload)
                 else:
                     data = self._post_json(
-                        url, {}, payload, max_retries=0, retryable_statuses=set()
+                        url,
+                        headers,
+                        payload,
+                        max_retries=0,
+                        retryable_statuses=set(),
                     )
+                self._active_gemini_api_key_sha256 = hashlib.sha256(
+                    api_key.encode("utf-8")
+                ).hexdigest()
                 break
             except Exception as exc:
                 last_exc = exc
@@ -2223,18 +2240,19 @@ class StrategyGenerator:
         }
         last_exc: Optional[BaseException] = None
         for idx, api_key in enumerate(api_keys):
-            key = urllib.parse.quote(api_key, safe="")
+            url = f"{base_url.rstrip('/')}/models/{model_path}:generateContent"
+            headers = {"x-goog-api-key": api_key}
             try:
                 if len(api_keys) == 1:
                     data = self._post_json(
-                        f"{base_url.rstrip('/')}/models/{model_path}:generateContent?key={key}",
-                        {},
+                        url,
+                        headers,
                         payload,
                     )
                 else:
                     data = self._post_json(
-                        f"{base_url.rstrip('/')}/models/{model_path}:generateContent?key={key}",
-                        {},
+                        url,
+                        headers,
                         payload,
                         max_retries=0,
                         retryable_statuses=set(),

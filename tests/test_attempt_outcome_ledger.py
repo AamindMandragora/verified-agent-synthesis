@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import hashlib
 import os
 
 from synthesis.evaluate.evaluator import EvaluationResult
@@ -308,10 +309,10 @@ def test_bedrock_generation_uses_aws_converse_without_anthropic_client(monkeypat
 
 
 def test_gemini_generation_uses_google_ai_studio_generate_content(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
     generator = StrategyGenerator(
         model_name="gemini-3.1-flash-lite",
         backend="gemini",
-        api_key="gemini-key",
         max_new_tokens=2048,
     )
     captured = {}
@@ -338,8 +339,8 @@ def test_gemini_generation_uses_google_ai_studio_generate_content(monkeypatch):
 
     assert output.startswith("// CSD_RATIONALE_BEGIN")
     assert "models/gemini-3.1-flash-lite:generateContent" in captured["url"]
-    assert "key=gemini-key" in captured["url"]
-    assert captured["headers"] == {}
+    assert "gemini-key" not in captured["url"]
+    assert captured["headers"] == {"x-goog-api-key": "gemini-key"}
     assert captured["payload"]["systemInstruction"] == {
         "parts": [{"text": "system prompt"}]
     }
@@ -350,19 +351,19 @@ def test_gemini_generation_uses_google_ai_studio_generate_content(monkeypatch):
 
 
 def test_gemini_generation_rotates_to_backup_key_on_quota_exhaustion(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "primary-key")
     monkeypatch.setenv("GEMINI_API_KEY_BACKUP_1", "backup-1-key")
     monkeypatch.setenv("GEMINI_API_KEY_BACKUP_2", "backup-2-key")
     generator = StrategyGenerator(
         model_name="gemini-3.1-flash-lite",
         backend="gemini",
-        api_key="primary-key",
         max_new_tokens=2048,
     )
     calls = []
 
     def fake_post_json(url, headers, payload, max_retries=None, retryable_statuses=None):
-        calls.append((url, max_retries))
-        if "primary-key" in url:
+        calls.append((url, headers, max_retries))
+        if headers.get("x-goog-api-key") == "primary-key":
             error = RuntimeError("HTTP 429: RESOURCE_EXHAUSTED: Gemini credits depleted")
             error.status_code = 429
             error.response_body = "RESOURCE_EXHAUSTED: Gemini credits depleted"
@@ -384,9 +385,38 @@ def test_gemini_generation_rotates_to_backup_key_on_quota_exhaustion(monkeypatch
     output = generator._generate_gemini("system prompt", "user prompt")
 
     assert output.startswith("// CSD_RATIONALE_BEGIN")
-    assert any("primary-key" in url for url, _ in calls)
-    assert any("backup-1-key" in url for url, _ in calls)
-    assert all(max_retries == 0 for _, max_retries in calls)
+    assert any(headers.get("x-goog-api-key") == "primary-key" for _, headers, _ in calls)
+    assert any(headers.get("x-goog-api-key") == "backup-1-key" for _, headers, _ in calls)
+    assert all(max_retries == 0 for _, _, max_retries in calls)
+    assert all("key=" not in url for url, _, _ in calls)
+    assert generator.author_route_identity() == {
+        "auth_mode": "gemini_api_key",
+        "api_key_sha256": hashlib.sha256(b"backup-1-key").hexdigest(),
+    }
+
+
+def test_gemini37_generation_omits_deprecated_sampling_parameters(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+    generator = StrategyGenerator(
+        model_name="gemini-3.7-flash",
+        backend="gemini",
+        max_new_tokens=32768,
+    )
+    captured = {}
+
+    def fake_post_json(url, headers, payload):
+        captured["payload"] = payload
+        return {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}
+
+    generator._post_json = fake_post_json
+    assert generator._generate_gemini("system", "user") == "ok"
+    assert captured["payload"]["generationConfig"] == {
+        "maxOutputTokens": 32768,
+    }
+    assert generator.author_route_identity() == {
+        "auth_mode": "gemini_api_key",
+        "api_key_sha256": hashlib.sha256(b"gemini-key").hexdigest(),
+    }
 
 
 def test_rationale_summary_uses_gemini_flash_lite_backend(monkeypatch):
@@ -414,8 +444,8 @@ def test_rationale_summary_uses_gemini_flash_lite_backend(monkeypatch):
 
     assert summary == "short gemini summary"
     assert "models/gemini-2.5-flash-lite:generateContent" in captured["url"]
-    assert "key=gemini-key" in captured["url"]
-    assert captured["headers"] == {}
+    assert "gemini-key" not in captured["url"]
+    assert captured["headers"] == {"x-goog-api-key": "gemini-key"}
     assert captured["payload"]["generationConfig"]["maxOutputTokens"] == 96
 
 
@@ -429,8 +459,8 @@ def test_rationale_summary_rotates_to_backup_key_on_quota_exhaustion(monkeypatch
     calls = []
 
     def fake_post_json(url, headers, payload, max_retries=None, retryable_statuses=None):
-        calls.append((url, max_retries))
-        if "primary-key" in url:
+        calls.append((url, headers, max_retries))
+        if headers.get("x-goog-api-key") == "primary-key":
             error = RuntimeError("HTTP 429: RESOURCE_EXHAUSTED: Gemini credits depleted")
             error.status_code = 429
             error.response_body = "RESOURCE_EXHAUSTED: Gemini credits depleted"
@@ -448,9 +478,10 @@ def test_rationale_summary_rotates_to_backup_key_on_quota_exhaustion(monkeypatch
     )
 
     assert summary == "short backup summary"
-    assert any("primary-key" in url for url, _ in calls)
-    assert any("backup-1-key" in url for url, _ in calls)
-    assert all(max_retries == 0 for _, max_retries in calls)
+    assert any(headers.get("x-goog-api-key") == "primary-key" for _, headers, _ in calls)
+    assert any(headers.get("x-goog-api-key") == "backup-1-key" for _, headers, _ in calls)
+    assert all(max_retries == 0 for _, _, max_retries in calls)
+    assert all("key=" not in url for url, _, _ in calls)
 
 
 def test_vertex_generation_uses_aiplatform_generate_content(monkeypatch):

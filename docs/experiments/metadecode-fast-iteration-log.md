@@ -793,7 +793,7 @@ refutes H124 and stops that adapter family before paper entry.
 ### H125 preregistration — 2026-08-28T16:55Z
 
 H125 hypothesis: changing only the synthesis author among GPT-5.6 Sol through
-Codex, Gemini 3.1 Pro Preview through Vertex AI, and the live normal Opus route
+Codex, Gemini 3.7 Flash through the direct Gemini API, and the live normal Opus route
 will yield a fair Table 5 comparison under one common Qwen3.5-2B evaluation
 setup.
 
@@ -802,8 +802,14 @@ train and held-out data, cold-start policy, 40-attempt cap, adaptive helper
 mask, bandit policy, beam size, token budget, verification, and all thresholds
 fixed. The SMILES paper value is the sample-count-weighted mean of acrylates,
 chain extenders, and isocyanates. GPT-5.6 Sol must run through `codex exec`;
-Gemini must use Vertex model `gemini-3.1-pro-preview` in `global`; Opus must use
-the exact live verified normal profile and model.
+Gemini must use direct AI Studio model `gemini-3.7-flash` with the approved API
+key; Opus must use the exact live verified normal profile and model.
+
+Amendment — 2026-08-30T05:35Z, before any Table 5--8 campaign launch: the user
+replaced the planned Gemini 3.1 Pro Vertex author with Gemini 3.7 Flash through
+the direct Gemini API after a successful authenticated model-list and minimal
+generation check. No Table 5--8 result was collected under the superseded
+Gemini route. The author model/route remains the only changed variable.
 
 Prior: **70%** that all three provider routes pass a real one-attempt pilot and
 produce provenance-bound terminal artifacts; provider auth/model drift is the

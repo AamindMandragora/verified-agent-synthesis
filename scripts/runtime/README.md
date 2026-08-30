@@ -60,7 +60,9 @@ The missing Table 5--8 synthesis cells are described by
 6 Table 6 token-budget runs, 6 Table 7 beam-size runs, and 4 Table 8 mask
 runs. All rows use the exact `Qwen/Qwen3.5-2B` evaluator and 40 cold
 iterations. Table 5 SMILES results are exported as one sample-count-weighted
-value per author profile.
+value per author profile. Its three author profiles are GPT-5.6 Sol through the
+Codex CLI, Gemini 3.7 Flash through the direct Google AI Studio API, and Claude
+Opus 5 through the approved first-party Max account.
 
 ```bash
 python scripts/runtime/run_table5_8_queue.py --dry-run
@@ -71,4 +73,7 @@ work. A real manifest binds the current commit, the approved CRANE commit,
 and hashes for every runtime dependency. The controller records synthesis and
 held-out phases in locked, replace-written state files, preserves output
 provenance, and waits for free GPUs instead of forcing a dispatch. Provider
-preflight only checks local configuration; it does not spend credits.
+preflight only checks local configuration; it does not spend credits. The
+Gemini route reads only `GEMINI_API_KEY` from the canonical private
+`synthesis/.env`, passes no Vertex or backup credential to the author child,
+and stores only the successful key's SHA-256 fingerprint in sealed evidence.

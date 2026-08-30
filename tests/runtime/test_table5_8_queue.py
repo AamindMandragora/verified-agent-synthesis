@@ -36,7 +36,7 @@ def test_table5_backend_profiles_are_exact():
     rows = [row for row in queue.build_scope(Path("/repo")) if row["table"] == 5]
     assert {(row["profile"], row["generation_backend"], row["generation_model"]) for row in rows} == {
         ("gpt5.6-sol", "codex", "gpt-5.6-sol"),
-        ("gemini3.1-pro", "vertex", "gemini-3.1-pro-preview"),
+        ("gemini3.7-flash", "gemini", "gemini-3.7-flash"),
         ("opus5", "claude", "claude-opus-5"),
     }
     assert {row["benchmark"] for row in rows} == {"gsm_symbolic", "spider", "smiles"}
@@ -72,9 +72,17 @@ def test_table5_smiles_export_is_sample_count_weighted():
 
 
 def test_provider_preflight_is_local_and_secret_free(monkeypatch):
-    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "private-key")
     statuses = queue.provider_preflight()
-    assert {item["profile"] for item in statuses} == {"gpt5.6-sol", "gemini3.1-pro", "opus5"}
+    assert {item["profile"] for item in statuses} == {"gpt5.6-sol", "gemini3.7-flash", "opus5"}
+    gemini = next(item for item in statuses if item["profile"] == "gemini3.7-flash")
+    assert gemini == {
+        "profile": "gemini3.7-flash",
+        "backend": "gemini",
+        "status": "api_key_present",
+        "api_key_sha256": queue.sha256_text("private-key"),
+    }
+    assert "private-key" not in json.dumps(statuses)
     assert all("secret" not in json.dumps(item).lower() for item in statuses)
 
 
@@ -147,7 +155,6 @@ def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, 
         "spider": {"min_accuracy": 59 / 300, "min_syntax_rate": 0.9, "source_path": str(bar_path), "source_sha256": bar_sha},
         "smiles": {"acrylates": {"min_accuracy": 0.14, "min_syntax_rate": 0.9}, "chain_extenders": {"min_accuracy": 0.20, "min_syntax_rate": 0.9}, "isocyanates": {"min_accuracy": 0.30, "min_syntax_rate": 0.9}, "source_path": str(bar_path), "source_sha256": bar_sha},
     })
-    monkeypatch.setattr(queue, "verified_adc_project", lambda environment: "paper-project")
     payload = queue.manifest_payload(tmp_path, queue.build_scope(tmp_path))
     assert payload["crane_commit"] == queue.CANONICAL_CRANE_COMMIT
     assert payload["external_runtime"] == external_runtime
@@ -196,7 +203,6 @@ def test_manifest_rejects_provider_pilot_from_different_source_snapshot(
             "smiles": "bars/smiles.json",
         },
     )
-    monkeypatch.setattr(queue, "verified_adc_project", lambda environment: "project")
     def git_run(argv, **kwargs):
         return types.SimpleNamespace(
             stdout="" if "status" in argv else "a" * 40 + "\n"
@@ -331,7 +337,7 @@ def test_profile_and_heldout_environments_isolate_author_credentials(tmp_path):
     gemini = next(
         candidate
         for candidate in queue.build_scope(tmp_path)
-        if candidate["profile"] == "gemini3.1-pro"
+        if candidate["profile"] == "gemini3.7-flash"
     )
     opus = next(
         candidate
@@ -362,7 +368,11 @@ def test_profile_and_heldout_environments_isolate_author_credentials(tmp_path):
     opus_synthesis = queue.synthesis_environment(opus, (2,), inherited, tmp_path)
     heldout = queue.heldout_environment(gemini, (2,), inherited, tmp_path)
 
-    assert gemini_synthesis["GOOGLE_APPLICATION_CREDENTIALS"] == "/secret/adc.json"
+    assert gemini_synthesis["GEMINI_API_KEY"] == "gemini-secret"
+    assert gemini_synthesis["CSD_GEMINI_BACKEND"] == "gemini"
+    assert gemini_synthesis["CSD_GEMINI_MODEL"] == "gemini-3.7-flash"
+    assert "GOOGLE_APPLICATION_CREDENTIALS" not in gemini_synthesis
+    assert "VERTEX_AI_ACCESS_TOKEN" not in gemini_synthesis
     assert "OPENAI_API_KEY" not in gemini_synthesis
     assert "OPENAI_API_KEY" not in opus_synthesis
     assert "GOOGLE_APPLICATION_CREDENTIALS" not in opus_synthesis
@@ -426,18 +436,18 @@ def test_isolated_home_pins_real_model_cache_and_spider_data_defaults(tmp_path):
         assert environment["SPIDER_DATA_DIR"] == str(spider_data)
 
 
-def test_profile_gate_rejects_wrong_opus_and_vertex_fallbacks(tmp_path):
+def test_profile_gate_rejects_wrong_opus_and_conflicting_gemini_routes(tmp_path):
     opus = [next(r for r in queue.build_scope(Path("/repo")) if r["profile"] == "opus5")]
     with pytest.raises(queue.ConfigError):
         queue.validate_profile_gates(opus, {"CSD_CLAUDE_CONFIG_DIR": "wrong", "CSD_CLAUDE_EXPECTED_ACCOUNT": "wrong"})
-    vertex = [next(r for r in queue.build_scope(Path("/repo")) if r["profile"] == "gemini3.1-pro")]
+    gemini = [next(r for r in queue.build_scope(Path("/repo")) if r["profile"] == "gemini3.7-flash")]
     adc = tmp_path / "adc.json"
     adc.write_text("{}", encoding="utf-8")
-    with pytest.raises(queue.ConfigError):
-        queue.validate_profile_gates(vertex, {"GOOGLE_APPLICATION_CREDENTIALS": str(adc), "GOOGLE_CLOUD_PROJECT": "p", "GOOGLE_CLOUD_LOCATION": "global", "GOOGLE_API_KEY": "fallback"})
-    env = queue.synthesis_environment(vertex[0], (2,), {"GOOGLE_API_KEY": "bad", "GOOGLE_CLOUD_LOCATION": "us"}, tmp_path)
-    assert "GOOGLE_API_KEY" not in env
-    assert env["GOOGLE_CLOUD_LOCATION"] == "global"
+    with pytest.raises(queue.ConfigError, match="exactly one direct Gemini API key"):
+        queue.validate_profile_gates(gemini, {"GEMINI_API_KEY": "good", "GOOGLE_APPLICATION_CREDENTIALS": str(adc)})
+    with pytest.raises(queue.ConfigError, match="GEMINI_API_KEY"):
+        queue.validate_profile_gates(gemini, {})
+    queue.validate_profile_gates(gemini, {"GEMINI_API_KEY": "good"})
 
 
 def test_heldout_budget_and_controller_cli_contract():
@@ -734,9 +744,8 @@ def test_controller_validates_export_separation_before_dispatch(tmp_path, monkey
         queue.controller_main(args)
 
 
-def test_vertex_environment_clears_all_inherited_fallbacks(tmp_path):
-    row = next(r for r in queue.build_scope(Path("/repo")) if r["profile"] == "gemini3.1-pro")
-    row["vertex_project"] = "approved-project"
+def test_gemini_environment_keeps_only_the_direct_ai_studio_key(tmp_path):
+    row = next(r for r in queue.build_scope(Path("/repo")) if r["profile"] == "gemini3.7-flash")
     inherited = {
         "VERTEX_AI_PROJECT": "wrong-project",
         "VERTEX_AI_LOCATION": "us-central1",
@@ -747,19 +756,25 @@ def test_vertex_environment_clears_all_inherited_fallbacks(tmp_path):
         "GOOGLE_CLOUD_LOCATION": "us-central1",
         "GOOGLE_VERTEX_LOCATION": "us-central1",
         "GOOGLE_API_KEY": "wrong-key",
-        "GEMINI_API_KEY": "wrong-key",
+        "GEMINI_API_KEY": "approved-key",
+        "GEMINI_API_KEY_BACKUP_1": "unbound-backup",
         "GOOGLE_GENAI_USE_VERTEXAI": "0",
     }
     env = queue.synthesis_environment(row, (2,), inherited, tmp_path)
-    assert env["GOOGLE_CLOUD_LOCATION"] == "global"
-    assert env["CSD_GEMINI_BACKEND"] == "vertex"
-    assert env["CSD_GEMINI_MODEL"] == "gemini-3.1-pro-preview"
-    assert env["VERTEX_AI_PROJECT"] == "approved-project"
-    assert env["GOOGLE_CLOUD_PROJECT"] == "approved-project"
-    assert env["VERTEX_AI_LOCATION"] == "global"
-    assert env["GOOGLE_VERTEX_LOCATION"] == "global"
-    assert env["VERTEX_AI_BASE_URL"] == "https://aiplatform.googleapis.com/v1"
-    assert not any(key in env for key in inherited if key.endswith(("API_KEY", "ACCESS_TOKEN")) or key == "GOOGLE_GENAI_USE_VERTEXAI")
+    assert env["GEMINI_API_KEY"] == "approved-key"
+    assert env["CSD_GEMINI_BACKEND"] == "gemini"
+    assert env["CSD_GEMINI_MODEL"] == "gemini-3.7-flash"
+    assert "GEMINI_API_KEY_BACKUP_1" not in env
+    assert not any(
+        key in env
+        for key in (
+            "VERTEX_AI_PROJECT", "VERTEX_AI_LOCATION", "VERTEX_AI_BASE_URL",
+            "VERTEX_AI_API_KEY", "VERTEX_AI_ACCESS_TOKEN",
+            "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION",
+            "GOOGLE_VERTEX_LOCATION", "GOOGLE_API_KEY",
+            "GOOGLE_GENAI_USE_VERTEXAI",
+        )
+    )
 
 
 def test_exhausted_failure_report_best_compiled_candidate_is_recoverable(tmp_path, monkeypatch):
@@ -1203,7 +1218,7 @@ def test_admission_guard_does_not_age_out_startup_validated_immutable_pilot(
     guard(row)
 
 
-@pytest.mark.parametrize("profile", ["gpt5.6-sol", "gemini3.1-pro", "opus5"])
+@pytest.mark.parametrize("profile", ["gpt5.6-sol", "gemini3.7-flash", "opus5"])
 def test_compiled_output_uses_strict_cold_report_validation_for_every_profile(
     tmp_path, monkeypatch, profile
 ):
@@ -1976,7 +1991,7 @@ def _real_pilot_report(profile, commit, *, output_name="pilot", compiled_dir="/t
     backend, model = {
         "opus5": ("claude", "claude-opus-5"),
         "gpt5.6-sol": ("codex", "gpt-5.6-sol"),
-        "gemini3.1-pro": ("vertex", "gemini-3.1-pro-preview"),
+        "gemini3.7-flash": ("gemini", "gemini-3.7-flash"),
     }[profile]
     author_route = {
         "opus5": {
@@ -1989,11 +2004,9 @@ def _real_pilot_report(profile, commit, *, output_name="pilot", compiled_dir="/t
             "auth_mode": "chatgpt",
             "account_verified": True,
         },
-        "gemini3.1-pro": {
-            "auth_mode": "adc",
-            "vertex_project": "paper-project",
-            "location": "global",
-            "adc_sha256": "e" * 64,
+        "gemini3.7-flash": {
+            "auth_mode": "gemini_api_key",
+            "api_key_sha256": queue.sha256_text("gemini-key"),
         },
     }[profile]
     return {
@@ -2110,6 +2123,22 @@ def test_provider_pilot_rejects_report_route_identity_relabel(tmp_path):
         )
 
 
+def test_gemini37_pilot_binds_the_active_ai_studio_key(tmp_path):
+    commit = "a" * 40
+    report_path = tmp_path / "outputs/generated/pilot/results/failure_report.json"
+    _write_real_pilot_report(report_path, "gemini3.7-flash", commit)
+    pilot = queue.provider_pilot_from_report(
+        report_path,
+        profile="gemini3.7-flash",
+        git_commit=commit,
+        environment={"GEMINI_API_KEY": "gemini-key"},
+    )
+    assert pilot["backend"] == "gemini"
+    assert pilot["model"] == "gemini-3.7-flash"
+    assert pilot["api_key_sha256"] == queue.sha256_text("gemini-key")
+    assert "gemini-key" not in json.dumps(pilot)
+
+
 def test_provider_pilot_validation_reparses_report_and_rejects_fabricated_fields(
     tmp_path, monkeypatch
 ):
@@ -2188,42 +2217,60 @@ def test_codex_probe_must_complete_the_sentinel_not_only_report_login(tmp_path, 
     assert reason == "codex local authentication is unavailable or invalid"
 
 
-def test_vertex_adc_probe_refreshes_google_auth_and_binds_project(tmp_path, monkeypatch):
-    adc = tmp_path / "adc.json"
-    adc.write_text(json.dumps({"project_id": "paper-project"}), encoding="utf-8")
-    credentials = types.SimpleNamespace(token=None)
+def test_gemini_api_key_probe_lists_the_exact_model_without_exposing_key(monkeypatch):
+    captured = {}
 
-    def refresh(_request):
-        credentials.token = "private-token"
+    class Response:
+        def __enter__(self):
+            return self
 
-    credentials.refresh = refresh
-    auth_module = types.ModuleType("google.auth")
-    auth_module.load_credentials_from_file = lambda *args, **kwargs: (
-        credentials,
-        "paper-project",
-    )
-    requests_module = types.ModuleType("google.auth.transport.requests")
-    requests_module.Request = object
-    transport_module = types.ModuleType("google.auth.transport")
-    transport_module.requests = requests_module
-    google_module = types.ModuleType("google")
-    google_module.auth = auth_module
-    monkeypatch.setitem(sys.modules, "google", google_module)
-    monkeypatch.setitem(sys.modules, "google.auth", auth_module)
-    monkeypatch.setitem(sys.modules, "google.auth.transport", transport_module)
-    monkeypatch.setitem(
-        sys.modules, "google.auth.transport.requests", requests_module
-    )
+        def __exit__(self, *_args):
+            return False
 
-    result = queue.vertex_adc_probe(
-        {"GOOGLE_APPLICATION_CREDENTIALS": str(adc)}
-    )
+        def read(self):
+            return json.dumps(
+                {"models": [{"name": "models/gemini-3.7-flash"}]}
+            ).encode("utf-8")
+
+    def urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["headers"] = dict(request.header_items())
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(queue.urllib.request, "urlopen", urlopen)
+    result = queue.gemini_api_key_probe({"GEMINI_API_KEY": "gemini-key"})
     assert result == {
         "status": "ready",
-        "vertex_project": "paper-project",
-        "adc_sha256": queue.hash_file(adc),
-        "location": "global",
+        "model": "gemini-3.7-flash",
+        "api_key_sha256": queue.sha256_text("gemini-key"),
     }
+    assert "gemini-key" not in captured["url"]
+    assert captured["headers"]["X-goog-api-key"] == "gemini-key"
+    assert captured["timeout"] == 30
+
+
+def test_campaign_environment_loads_only_gemini_key_from_private_env(tmp_path):
+    private_env = tmp_path / ".env"
+    private_env.write_text(
+        "GEMINI_API_KEY='gemini-key'\nOPENAI_API_KEY=must-not-load\n",
+        encoding="utf-8",
+    )
+    original = {"PATH": "/bin"}
+    loaded = queue.campaign_environment(original, credential_file=private_env)
+    assert loaded == {"PATH": "/bin", "GEMINI_API_KEY": "gemini-key"}
+    assert original == {"PATH": "/bin"}
+
+
+def test_gemini_author_route_binds_only_key_fingerprint():
+    route = queue.expected_author_route(
+        "gemini3.7-flash", {"GEMINI_API_KEY": "gemini-key"}
+    )
+    assert route == {
+        "auth_mode": "gemini_api_key",
+        "api_key_sha256": queue.sha256_text("gemini-key"),
+    }
+    assert "gemini-key" not in json.dumps(route)
 
 
 def test_pilot_report_requires_its_real_compiled_artifact(tmp_path):
