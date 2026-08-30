@@ -34,7 +34,7 @@ agent's built-in system instructions.
 
 ## Verification
 
-The campaign/runtime/provider suite passed with `432 passed, 2 warnings`.
+The campaign/runtime/provider suite passed with `433 passed, 2 warnings`.
 The two real bridge tests used the exact Node 24 executable and verified both
 local OAuth loading and secret-free authentication failure output. A separate
 no-prompt live OAuth check returned provider `openai-codex`, model
@@ -47,6 +47,11 @@ requiring the real `success_report.json`, both Dafny files, the compiled Python
 artifact, and successful one-example evaluation evidence inside the same run.
 The production-shaped regression test failed before this repair and passed
 after it.
+
+The first manifest build then exposed a tracked CRANE symlink whose target is a
+directory. The source binder now hashes the symlink marker and exact link target
+instead of following it and trying to open the target as a file. A focused
+tracked-symlink regression test failed before the repair and passed after it.
 
 A broader `pytest tests` collection attempt stopped on four unchanged legacy
 test/import mismatches outside this change. The affected source and test files

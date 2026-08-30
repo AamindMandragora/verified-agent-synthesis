@@ -259,6 +259,33 @@ def test_manifest_rejects_provider_pilot_from_different_source_snapshot(
         )
 
 
+def test_crane_source_hashes_bind_a_tracked_symlink_without_following_it(
+    tmp_path, monkeypatch
+):
+    crane = tmp_path / "legacy" / "CRANE"
+    target = crane / "src" / "ladr" / "util"
+    target.mkdir(parents=True)
+    regular = crane / "README"
+    regular.write_text("crane\n", encoding="utf-8")
+    link = crane / "src" / "mace4.src" / "util"
+    link.parent.mkdir(parents=True)
+    link.symlink_to("../ladr/util", target_is_directory=True)
+    monkeypatch.setattr(
+        queue.subprocess,
+        "run",
+        lambda *args, **kwargs: types.SimpleNamespace(
+            stdout=b"README\0src/mace4.src/util\0"
+        ),
+    )
+
+    hashes = queue.crane_source_hashes(tmp_path)
+
+    assert hashes["legacy/CRANE/README"] == queue.hash_file(regular)
+    assert hashes["legacy/CRANE/src/mace4.src/util"] == queue.sha256_text(
+        "symlink\0../ladr/util"
+    )
+
+
 def test_state_round_trip_records_phase_and_surviving_child(tmp_path):
     path = tmp_path / "state.json"
     queue.write_state(path, {"status": "running", "phase": "synthesis", "pid": 123, "pid_start": "abc"})

@@ -1037,11 +1037,19 @@ def crane_source_hashes(repo: Path) -> dict[str, str]:
         check=True,
         capture_output=True,
     ).stdout.decode("utf-8").split("\0")
-    return {
-        f"legacy/CRANE/{name}": hash_file(crane / name)
-        for name in names
-        if name
-    }
+    hashes: dict[str, str] = {}
+    for name in names:
+        if not name:
+            continue
+        path = crane / name
+        if path.is_symlink():
+            digest = sha256_text(f"symlink\0{os.readlink(path)}")
+        elif path.is_file():
+            digest = hash_file(path)
+        else:
+            raise ConfigError(f"tracked CRANE source is missing or unsupported: {name}")
+        hashes[f"legacy/CRANE/{name}"] = digest
+    return hashes
 
 
 def expected_author_route(
