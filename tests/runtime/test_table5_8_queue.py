@@ -2109,7 +2109,7 @@ def _real_pilot_report(profile, commit, *, output_name="pilot", compiled_dir="/t
             "python_runtime": _test_python_runtime(),
             "output_name": output_name,
             "max_iterations": 1,
-            "task_description": queue.TASKS["smiles"],
+            "task_description": queue.TASKS["gsm_symbolic"],
             "author_model": {
                 "backend": backend,
                 "model": model,
@@ -2118,14 +2118,13 @@ def _real_pilot_report(profile, commit, *, output_name="pilot", compiled_dir="/t
                 "route": author_route,
             },
             "evaluation": {
-                "dataset": "smiles",
+                "dataset": "gsm_symbolic",
                 "eval_model": queue.EVAL_MODEL,
                 "eval_sample_size": 1,
-                "eval_max_steps": 400,
+                "eval_max_steps": 900,
                 "eval_step_token_budget": 1,
                 "eval_max_seconds_per_example": 600.0,
                 "min_examples_before_threshold_stop": 1,
-                "smiles_classes": ["acrylates"],
             },
             "synthesis_controls": {
                 "adaptive_helper_mask": True,
@@ -2147,12 +2146,9 @@ def _real_pilot_report(profile, commit, *, output_name="pilot", compiled_dir="/t
                     "accuracy_denominator": 1,
                     "accuracy": 0.0,
                     "syntax_rate": 1.0,
-                    "aux_metrics": {
-                        "smiles_paper_trial": {"unique_valid_count": 0}
-                    },
                     "sample_outputs": [
                         {
-                            "actual": "CCOC(=O)C=C",
+                            "actual": "42",
                             "is_correct": False,
                             "is_syntax_valid": True,
                         }

@@ -377,15 +377,15 @@ def provider_pilot_from_report(
             and author.get("model") == model
             and author.get("max_new_tokens") == AUTHOR_TOKEN_BUDGET
             and author.get("reasoning_budget_tokens") == AUTHOR_REASONING_BUDGET
-            and route.get("task_description") == TASKS["smiles"]
-            and evaluation_config.get("dataset") == "smiles"
+            and route.get("task_description") == TASKS["gsm_symbolic"]
+            and evaluation_config.get("dataset") == "gsm_symbolic"
             and evaluation_config.get("eval_model") == EVAL_MODEL
             and evaluation_config.get("eval_sample_size") == 1
-            and evaluation_config.get("eval_max_steps") == DATASET_SETTINGS["smiles"]["steps"]
+            and evaluation_config.get("eval_max_steps") == DATASET_SETTINGS["gsm_symbolic"]["steps"]
             and evaluation_config.get("eval_step_token_budget") == 1
             and float(evaluation_config.get("eval_max_seconds_per_example", -1)) == 600.0
             and evaluation_config.get("min_examples_before_threshold_stop") == 1
-            and evaluation_config.get("smiles_classes") in ("acrylates", ["acrylates"])
+            and evaluation_config.get("smiles_classes") in (None, [])
             and controls.get("adaptive_helper_mask") is True
             and controls.get("helper_selection_policy") == "bandit"
             and controls.get("refinement_beam_size") == 2
