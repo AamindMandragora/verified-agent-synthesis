@@ -61,7 +61,8 @@ author-model runs, 3 Table 6 token-budget runs, 3 Table 7 beam-size runs, and 2
 Table 8 mask runs. All rows use the exact `Qwen/Qwen3.5-2B` evaluator and at
 most 40 cold synthesis attempts. The export records held-out accuracy, syntax
 rate, attempts used, accepted/exhausted status, and constrained work for every
-row. Table 5's author profiles are GPT-5.6 Sol through the Codex CLI, Gemini
+row. Table 5's author profiles are GPT-5.6 Sol through the pinned Pi
+provider-only layer with ChatGPT/Codex OAuth, Gemini
 3.7 Flash through the direct Google AI Studio API, and Claude Opus 5 through
 the approved first-party Max account.
 

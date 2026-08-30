@@ -283,7 +283,7 @@ Examples:
         help=(
             "Backend for strategy generation (default: openai). 'claude' uses an "
             "isolated Claude Code Max login (config/account from CSD_CLAUDE_* env); "
-            "'codex' uses the authenticated Codex CLI and fixed gpt-5.6-sol model; "
+            "'codex' uses the pinned Pi provider-only ChatGPT OAuth route and fixed gpt-5.6-sol model; "
             "'claude-bedrock' uses AWS Bedrock; 'anthropic' uses the direct "
             "Anthropic API. API keys always come from the environment/.env (BYOD)."
         ),

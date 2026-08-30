@@ -32,6 +32,12 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from synthesis.evaluate.benchmarks.gsm_symbolic.prompts import GSM_CRANE_COT_TASK
+from synthesis.generate.pi_oauth import (
+    PiBridgeFailure,
+    PiBridgeTimeout,
+    pi_oauth_probe as probe_pi_oauth,
+    stored_pi_oauth_route,
+)
 from synthesis.run_constants import VLLM_GPU_MEMORY_UTILIZATION_BY_MODEL
 from synthesis.source_snapshot import (
     execution_source_hashes,
@@ -158,6 +164,11 @@ SOURCE_PATHS = (
     "synthesis/split_provenance.py",
     "synthesis/generate/generator.py",
     "synthesis/generate/provider_names.py",
+    "synthesis/generate/pi_oauth/__init__.py",
+    "synthesis/generate/pi_oauth/contract.py",
+    "synthesis/generate/pi_oauth/provider/bridge.mjs",
+    "synthesis/generate/pi_oauth/provider/package.json",
+    "synthesis/generate/pi_oauth/provider/package-lock.json",
     "synthesis/evaluate/feedback_loop.py",
     "synthesis/evaluate/evaluator.py",
     "synthesis/evaluate/benchmarks/registry.py",
@@ -487,38 +498,20 @@ def provider_pilot_from_report(
 
 
 def codex_auth_probe(environment: dict[str, str] | None = None) -> dict[str, Any]:
-    """Verify the exact author route with a tiny isolated sentinel request."""
+    """Verify Pi's exact ChatGPT/Codex OAuth route without an author prompt."""
     inherited = dict(os.environ if environment is None else environment)
-    executable = inherited.get("CSD_CODEX_EXECUTABLE", "codex")
-    checked_environment = safe_runtime_environment(inherited)
-    sentinel = "CSD_AUTH_SENTINEL_9f7a"
-    cwd = Path(tempfile.mkdtemp(prefix="tableq-codex-probe-cwd-"))
-    output = cwd / "probe.txt"
     try:
-        result = subprocess.run(
-            [
-                executable, "exec", "--model", "gpt-5.6-sol", "--sandbox", "read-only",
-                "--ephemeral", "--ignore-user-config", "--ignore-rules",
-                "--skip-git-repo-check", "--cd", str(cwd), "--output-last-message",
-                str(output), "-",
-            ],
-            env=checked_environment,
-            input=f"Return exactly {sentinel} and nothing else.\n",
-            capture_output=True,
-            text=True,
-                timeout=90,
-            check=False,
+        return probe_pi_oauth(
+            node_executable=inherited.get("CSD_PI_NODE_EXECUTABLE"),
+            bridge_path=inherited.get("CSD_PI_BRIDGE_PATH"),
+            auth_path=inherited.get("CSD_PI_AUTH_PATH"),
+            timeout_seconds=90,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {"returncode": 1, "stdout": "", "stderr": type(exc).__name__}
-    try:
-        response = output.read_text(encoding="utf-8").strip()
-    except OSError:
-        response = ""
-    finally:
-        import shutil
-        shutil.rmtree(cwd, ignore_errors=True)
-    return {"returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr, "status": "ready" if result.returncode == 0 and response == sentinel else "blocked"}
+    except (PiBridgeFailure, PiBridgeTimeout, OSError, ValueError) as exc:
+        return {
+            "status": "blocked",
+            "reason": type(exc).__name__,
+        }
 
 
 def claude_auth_probe(environment: dict[str, str]) -> dict[str, Any]:
@@ -708,8 +701,8 @@ def profile_block_reason(
     if row["profile"] == "gpt5.6-sol":
         probe = (cached_probes or {}).get("gpt5.6-sol") or codex_auth_probe(environment)
         if probe.get("status") != "ready":
-            LOGGER.error("[tableq] auth-block profile=gpt5.6-sol reason=codex-local-auth")
-            return "codex local authentication is unavailable or invalid"
+            LOGGER.error("[tableq] auth-block profile=gpt5.6-sol reason=pi-oauth")
+            return "Pi ChatGPT/Codex OAuth is unavailable or invalid"
     try:
         validate_profile_gates([row], environment)
     except ConfigError as exc:
@@ -1020,7 +1013,16 @@ def expected_author_route(
 ) -> dict[str, Any]:
     """Return the exact non-secret author identity a report must record."""
     if profile == "gpt5.6-sol":
-        return {"auth_mode": "chatgpt", "account_verified": True}
+        try:
+            return stored_pi_oauth_route(
+                node_executable=environment.get("CSD_PI_NODE_EXECUTABLE"),
+                bridge_path=environment.get("CSD_PI_BRIDGE_PATH"),
+                auth_path=environment.get("CSD_PI_AUTH_PATH"),
+            )
+        except ValueError as exc:
+            raise ConfigError(
+                "gpt5.6-sol requires a bound Pi ChatGPT/Codex OAuth route"
+            ) from exc
     if profile == "opus5":
         return {
             "auth_mode": "claude_code_max",
@@ -1422,8 +1424,14 @@ def synthesis_environment(row: dict[str, Any], gpus: tuple[int, ...], inherited:
         repo / "outputs" / "generated" / str(row["output_name"])
     )
     env["CSD_OUTPUT_NAME"] = str(row["output_name"])
-    if row["profile"] == "gpt5.6-sol" and inherited.get("CSD_CODEX_EXECUTABLE"):
-        env["CSD_CODEX_EXECUTABLE"] = inherited["CSD_CODEX_EXECUTABLE"]
+    if row["profile"] == "gpt5.6-sol":
+        for name in ("CSD_PI_NODE_EXECUTABLE", "CSD_PI_AUTH_PATH"):
+            if inherited.get(name):
+                env[name] = inherited[name]
+        env["CSD_PI_BRIDGE_PATH"] = inherited.get(
+            "CSD_PI_BRIDGE_PATH",
+            str(repo / "synthesis" / "generate" / "pi_oauth" / "provider" / "bridge.mjs"),
+        )
     if row["profile"] == "opus5":
         env["CSD_CLAUDE_CONFIG_DIR"] = "/home/aadivyar/.claude-csd-synthesis"
         env["CSD_CLAUDE_EXPECTED_ACCOUNT"] = "ssdear@gmail.com"
@@ -1734,6 +1742,14 @@ def validate_profile_gates(rows: list[dict[str, Any]], environment: dict[str, st
         if profile == "opus5":
             if environment.get("CSD_CLAUDE_CONFIG_DIR") != "/home/aadivyar/.claude-csd-synthesis" or environment.get("CSD_CLAUDE_EXPECTED_ACCOUNT") != "ssdear@gmail.com":
                 raise ConfigError("opus5 requires the exact Max config directory and account")
+        elif profile == "gpt5.6-sol":
+            for name in (
+                "CSD_PI_NODE_EXECUTABLE",
+                "CSD_PI_BRIDGE_PATH",
+                "CSD_PI_AUTH_PATH",
+            ):
+                if not environment.get(name):
+                    raise ConfigError(f"gpt5.6-sol requires {name}")
         elif profile == "gemini3.7-flash":
             if not environment.get("GEMINI_API_KEY"):
                 LOGGER.error("[tableq] auth-block profile=gemini3.7-flash reason=missing-api-key")

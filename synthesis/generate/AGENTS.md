@@ -24,9 +24,11 @@ Strategy **generation and refinement** prompts and orchestration.
 - Keep direct Gemini and Vertex API-key quota fallback in code, not prompt
   prose: rotate through `GEMINI_API_KEY_BACKUP_N` keys on quota exhaustion and
   avoid delayed retries on a key that has already reported quota exhaustion.
-- The Codex author backend must use the authenticated CLI only: fixed
-  `gpt-5.6-sol`, ChatGPT-login preflight, isolated read-only ephemeral
-  sessions, stdin prompts, and exact `--output-last-message` extraction.
+- The `codex` author backend must use the pinned Pi provider layer with
+  ChatGPT/Codex OAuth and fixed `gpt-5.6-sol`. Call the model provider directly
+  with the campaign system instructions and one user message. Do not start a Pi
+  agent session, expose tools, carry conversation state, use `OPENAI_API_KEY`,
+  or invoke `codex exec`.
 - Keep Bedrock as an explicit low-level backend. Do not require `BEDROCK_BASE_URL`
   for client-mode AWS Converse calls; derive regional HTTP runtime URLs lazily
   only when the HTTP fallback path is used.

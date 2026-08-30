@@ -129,7 +129,7 @@ never add warm-start inputs, and never delete an interrupted or failed claim.
 
 `run_table5_8_queue.py` is the separate 11-run GSM-Symbolic campaign for the
 Table 5 backend cells and Tables 6--8 ablations. It uses exact profiles
-`gpt5.6-sol`/Codex, `gemini3.7-flash`/direct Gemini API, and
+`gpt5.6-sol`/Pi provider-only ChatGPT OAuth, `gemini3.7-flash`/direct Gemini API, and
 `opus5`/Claude Code, and always
 evaluates GSM-Symbolic with `Qwen/Qwen3.5-2B`. Table 5 has 3 author-model
 runs; Tables 6--8 have 3 token-budget, 3 beam-size, and 2 helper-mask runs.
@@ -152,6 +152,7 @@ GPU admission intersects the command-line GPU list with each row's scope and
 requires every selected GPU to fit `max(memory_reservation_mib,
 ceil(gpu_mem_util * total_memory)) + 2,000 MiB`, including earlier worker
 reservations. When no row fits, the controller polls rather than exiting.
-Provider preflight is local-only; it reports configuration presence without
-calling Codex, Vertex, or Claude. Use `--dry-run` to print exact commands; it
-does not write claims or start a provider/GPU job.
+Provider preflight verifies the Pi OAuth route without sending a model prompt,
+while Gemini and Opus startup checks use their exact approved routes. Use
+`--dry-run` to print exact commands; it does not write claims or start a
+provider/GPU job.

@@ -57,6 +57,12 @@ Disallowed prompt content:
 
 Use `python -m synthesis.run_synthesis` from the repo root. Prefer `CUDA_VISIBLE_DEVICES=2,3` unless intentionally using another allocation. By default, **generation** uses **OpenAI** (`OPENAI_API_KEY` and `OPENAI_GENERATION_MODEL` / `--generation-model`); **evaluation** still defaults to local vLLM with Qwen unless you pass other flags. Matrix model ablations must use direct hosted APIs and must not route through Bedrock.
 
+For the paper Tables 5--8 `gpt5.6-sol` profile, the `codex` backend uses the
+pinned Pi provider layer with ChatGPT/Codex OAuth. It sends the campaign system
+instructions and one user message directly to `gpt-5.6-sol`, with no Pi agent
+session, tools, prior conversation, or Codex CLI instructions. It must not use
+`OPENAI_API_KEY` or `codex exec`.
+
 - Quick smoke run (fast sanity check, low sample count):
   `CUDA_VISIBLE_DEVICES=2,3 python -m synthesis.run_synthesis --task "Solve math word problems with constrained symbolic expressions." --dataset gsm_symbolic --min-accuracy 0.0 --min-syntax-rate 0.0 --max-iterations 1 --eval-sample-size 1 --eval-max-steps 256 --output-name smoke_gsm`
 - Standard GSM-Symbolic synthesis run:

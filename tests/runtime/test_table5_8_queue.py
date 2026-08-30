@@ -129,6 +129,14 @@ def test_multi_gpu_rows_get_only_scoped_safe_pair():
 def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, monkeypatch):
     monkeypatch.setattr(
         queue,
+        "expected_author_route",
+        lambda profile, environment: {
+            "auth_mode": profile,
+            "account_verified": True,
+        },
+    )
+    monkeypatch.setattr(
+        queue,
         "python_runtime_fingerprint",
         lambda python, repo: _test_python_runtime(),
     )
@@ -209,6 +217,14 @@ def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, 
 def test_manifest_rejects_provider_pilot_from_different_source_snapshot(
     tmp_path, monkeypatch
 ):
+    monkeypatch.setattr(
+        queue,
+        "expected_author_route",
+        lambda profile, environment: {
+            "auth_mode": profile,
+            "account_verified": True,
+        },
+    )
     monkeypatch.setattr(queue, "execution_source_paths", lambda repo: ())
     monkeypatch.setattr(queue, "execution_source_hashes", lambda repo: {})
     monkeypatch.setattr(
@@ -355,6 +371,86 @@ def test_profile_environment_is_forced_and_smiles_temperature_is_exported(tmp_pa
     assert env["CSD_CLAUDE_EXPECTED_ACCOUNT"] == "ssdear@gmail.com"
     smiles = _fixture_row("smiles")
     assert queue.synthesis_environment(smiles, (2,), {}, tmp_path)["CSD_CONSTRAINED_TEMPERATURE"] == "0.7"
+
+
+def test_gpt_profile_environment_uses_only_pi_oauth_runtime(tmp_path):
+    row = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["profile"] == "gpt5.6-sol"
+    )
+    node = tmp_path / "node"
+    bridge = tmp_path / "bridge.mjs"
+    auth = tmp_path / "auth.json"
+    inherited = {
+        "PATH": "/bin",
+        "CSD_PI_NODE_EXECUTABLE": str(node),
+        "CSD_PI_BRIDGE_PATH": str(bridge),
+        "CSD_PI_AUTH_PATH": str(auth),
+        "OPENAI_API_KEY": "must-not-reach-child",
+        "CODEX_HOME": "/must/not/reach/child",
+        "CSD_CODEX_EXECUTABLE": "/must/not/reach/child/codex",
+    }
+
+    environment = queue.synthesis_environment(row, (2,), inherited, tmp_path)
+
+    assert environment["CSD_PI_NODE_EXECUTABLE"] == str(node)
+    assert environment["CSD_PI_BRIDGE_PATH"] == str(bridge)
+    assert environment["CSD_PI_AUTH_PATH"] == str(auth)
+    assert "OPENAI_API_KEY" not in environment
+    assert "CODEX_HOME" not in environment
+    assert "CSD_CODEX_EXECUTABLE" not in environment
+
+
+def test_gpt_profile_gate_allows_an_unrelated_parent_openai_api_key():
+    row = {"profile": "gpt5.6-sol"}
+    environment = {
+        "CSD_PI_NODE_EXECUTABLE": "/bound/node",
+        "CSD_PI_BRIDGE_PATH": "/bound/bridge.mjs",
+        "CSD_PI_AUTH_PATH": "/bound/auth.json",
+        "OPENAI_API_KEY": "parent-key-is-scrubbed-before-the-child",
+    }
+
+    queue.validate_profile_gates([row], environment)
+
+
+def test_gpt_expected_route_comes_from_stored_pi_oauth_binding(monkeypatch):
+    route = {
+        "auth_mode": "chatgpt_codex_oauth",
+        "provider": "openai-codex",
+        "model": "gpt-5.6-sol",
+        "account_id_sha256": "a" * 64,
+        "account_verified": True,
+        "harness": "pi-provider-only",
+        "pi_version": "0.84.4",
+        "request_contract": "system-instructions-single-user-no-tools-v1",
+        "node_executable": "/bound/node",
+        "node_version": "v24.5.0",
+        "node_sha256": "b" * 64,
+        "bridge_path": "/bound/bridge.mjs",
+        "bridge_sha256": "c" * 64,
+        "package_lock_sha256": "d" * 64,
+        "pi_install_file_count": 123,
+        "pi_install_sha256": "e" * 64,
+    }
+    monkeypatch.setattr(
+        queue,
+        "stored_pi_oauth_route",
+        lambda **_kwargs: route,
+    )
+
+    assert queue.expected_author_route("gpt5.6-sol", {}) == route
+
+
+def test_pi_provider_files_are_part_of_execution_source_binding():
+    for path in (
+        "synthesis/generate/pi_oauth/__init__.py",
+        "synthesis/generate/pi_oauth/contract.py",
+        "synthesis/generate/pi_oauth/provider/bridge.mjs",
+        "synthesis/generate/pi_oauth/provider/package.json",
+        "synthesis/generate/pi_oauth/provider/package-lock.json",
+    ):
+        assert path in queue.SOURCE_PATHS
 
 
 def test_profile_and_heldout_environments_isolate_author_credentials(tmp_path):
@@ -754,7 +850,7 @@ def test_invalid_codex_auth_blocks_codex_without_blocking_ready_opus(monkeypatch
     )
     assert [r["profile"] for r in ready] == ["opus5"]
     assert blocked[0]["status"] == "pending"
-    assert "codex" in blocked[0]["reason"]
+    assert "ChatGPT/Codex OAuth" in blocked[0]["reason"]
 
 
 def test_profile_readiness_probes_each_provider_profile_once_and_requires_opus_pilot(monkeypatch):
@@ -2301,7 +2397,7 @@ def test_codex_probe_must_complete_the_sentinel_not_only_report_login(tmp_path, 
             }
         },
     )
-    assert reason == "codex local authentication is unavailable or invalid"
+    assert reason == "Pi ChatGPT/Codex OAuth is unavailable or invalid"
 
 
 def test_gemini_api_key_probe_lists_the_exact_model_without_exposing_key(monkeypatch):

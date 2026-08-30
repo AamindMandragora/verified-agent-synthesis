@@ -38,6 +38,13 @@ from .prompts import (
 )
 from .rationale import extract_rationale
 from .provider_names import normalize_generation_backend
+from .pi_oauth import (
+    PI_MODEL,
+    PiBridgeFailure,
+    PiBridgeTimeout,
+    pi_oauth_probe,
+    run_pi_bridge,
+)
 from ..run_constants import ANTHROPIC_EFFORT, ANTHROPIC_THINKING_DISPLAY, VLLM_ENFORCE_EAGER
 from ..safe_logging import safe_logging_enabled, text_metadata
 
@@ -55,7 +62,7 @@ class ClaudeTransientError(RuntimeError):
 
 
 class CodexTransientError(RuntimeError):
-    """A temporary Codex CLI failure that must not consume an attempt."""
+    """A temporary Pi/OpenAI-Codex transport failure that consumes no attempt."""
 
 
 class StrategyGenerator:
@@ -97,7 +104,9 @@ class StrategyGenerator:
         claude_retry_delay_seconds: Optional[float] = None,
         claude_telemetry_dir: Optional[str] = None,
         claude_author_lock_file: Optional[str] = None,
-        codex_executable: Optional[str] = None,
+        pi_node_executable: Optional[str] = None,
+        pi_bridge_path: Optional[str] = None,
+        pi_auth_path: Optional[str] = None,
         codex_timeout_seconds: Optional[float] = None,
         codex_max_retries: Optional[int] = None,
         codex_retry_delay_seconds: Optional[float] = None,
@@ -211,9 +220,11 @@ class StrategyGenerator:
         if self.claude_max_retries < 0:
             raise ValueError("claude_max_retries must be non-negative")
         self._claude_account_verified = False
-        self.codex_executable = (
-            codex_executable or os.environ.get("CSD_CODEX_EXECUTABLE") or "codex"
+        self.pi_node_executable = pi_node_executable or os.environ.get(
+            "CSD_PI_NODE_EXECUTABLE"
         )
+        self.pi_bridge_path = pi_bridge_path or os.environ.get("CSD_PI_BRIDGE_PATH")
+        self.pi_auth_path = pi_auth_path or os.environ.get("CSD_PI_AUTH_PATH")
         if codex_timeout_seconds is None:
             codex_timeout_seconds = float(os.environ.get("CSD_CODEX_TIMEOUT_SECONDS", "1800"))
         if codex_max_retries is None:
@@ -235,6 +246,7 @@ class StrategyGenerator:
         if self.codex_retry_delay_seconds < 0:
             raise ValueError("codex_retry_delay_seconds must be non-negative")
         self._codex_account_verified = False
+        self._codex_route_identity: dict[str, object] | None = None
 
         # Auto-detect device
         if device is None:
@@ -333,10 +345,14 @@ class StrategyGenerator:
                 "account_verified": self._claude_account_verified,
             }
         if self.backend == "codex":
-            return {
-                "auth_mode": "chatgpt",
-                "account_verified": self._codex_account_verified,
-            }
+            if self._codex_route_identity is None:
+                return {
+                    "auth_mode": "chatgpt_codex_oauth",
+                    "provider": "openai-codex",
+                    "model": CODEX_MODEL,
+                    "account_verified": False,
+                }
+            return dict(self._codex_route_identity)
         if self.backend == "gemini":
             key_sha256 = getattr(self, "_active_gemini_api_key_sha256", None)
             if key_sha256 is None and self.api_key:
@@ -554,29 +570,9 @@ class StrategyGenerator:
             )
         return executable
 
-    def _resolved_codex_executable(self) -> str:
-        """Resolve the configured Codex executable without invoking a shell."""
-        executable = shutil.which(self.codex_executable)
-        if executable is None:
-            raise ValueError(f"Codex executable not found: {self.codex_executable!r}")
-        return executable
-
-    def _codex_environment(self, home: Path) -> dict[str, str]:
-        """Pass only non-secret process settings plus the configured Codex auth home."""
-        allowed = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR")
-        environment = {name: os.environ[name] for name in allowed if name in os.environ}
-        environment["HOME"] = str(home)
-        # Keep authentication available while the process's ordinary HOME is
-        # disposable.  --ignore-user-config prevents this directory's config
-        # and rules from affecting the isolated invocation.
-        environment["CODEX_HOME"] = os.environ.get(
-            "CODEX_HOME", str(Path.home() / ".codex")
-        )
-        return environment
-
     @staticmethod
     def _safe_codex_error(error: object, *, limit: int = 500) -> str:
-        """Return a short error category without exposing provider output or tokens."""
+        """Return a short category without exposing provider output or OAuth data."""
         text = re.sub(r"\s+", " ", str(error)).strip().lower()
         if any(marker in text for marker in ("login", "auth", "credential", "subscription")):
             return "authentication"
@@ -584,71 +580,8 @@ class StrategyGenerator:
             return "quota"
         return text[:limit] if text else "unknown"
 
-    @staticmethod
-    def _stop_codex_process_group(process: subprocess.Popen) -> None:
-        """Stop Codex and all descendants in its dedicated process group."""
-        process_group = process.pid
-        try:
-            os.killpg(process_group, signal.SIGTERM)
-        except ProcessLookupError:
-            return
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            try:
-                os.killpg(process_group, 0)
-            except ProcessLookupError:
-                break
-            time.sleep(0.05)
-        else:
-            try:
-                os.killpg(process_group, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        try:
-            process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            pass
-
-    def _run_codex_process(
-        self,
-        argv: list[str],
-        *,
-        input_bytes: bytes,
-        cwd: Path,
-        home: Path,
-    ) -> tuple[int, bytes, bytes, float]:
-        """Run one bounded Codex command and clean up its process group."""
-        started = time.monotonic()
-        process = subprocess.Popen(
-            argv,
-            cwd=cwd,
-            env=self._codex_environment(home),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            start_new_session=True,
-        )
-        try:
-            stdout, stderr = process.communicate(
-                input=input_bytes,
-                timeout=self.codex_timeout_seconds,
-            )
-        except subprocess.TimeoutExpired as exc:
-            self._stop_codex_process_group(process)
-            duration = time.monotonic() - started
-            LOGGER.error(
-                "[codex] provider=codex model=%s status=timeout duration_seconds=%.3f",
-                self.model_name,
-                duration,
-            )
-            raise CodexTransientError("Codex execution timed out") from exc
-        except BaseException:
-            self._stop_codex_process_group(process)
-            raise
-        return process.returncode, stdout, stderr, time.monotonic() - started
-
     def _acquire_codex_author_lock(self):
-        """Serialize calls made through the account-wide Codex login."""
+        """Serialize calls made through the account-wide ChatGPT OAuth login."""
         lock_path = self.codex_author_lock_file
         lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
@@ -657,123 +590,127 @@ class StrategyGenerator:
         return lock
 
     def _verify_codex_account(self) -> None:
-        """Require the local Codex CLI to report a ChatGPT login before generation."""
+        """Require Pi to resolve the exact ChatGPT/Codex OAuth account."""
         if self._codex_account_verified:
             return
-        executable = self._resolved_codex_executable()
-        with (
-            tempfile.TemporaryDirectory(prefix="csd-codex-auth-cwd-") as cwd_name,
-            tempfile.TemporaryDirectory(prefix="csd-codex-auth-home-") as home_name,
-        ):
-            returncode, stdout, stderr, duration = self._run_codex_process(
-                [executable, "login", "status"],
-                input_bytes=b"",
-                cwd=Path(cwd_name),
-                home=Path(home_name),
+        try:
+            probe = pi_oauth_probe(
+                node_executable=self.pi_node_executable,
+                bridge_path=self.pi_bridge_path,
+                auth_path=self.pi_auth_path,
+                timeout_seconds=min(self.codex_timeout_seconds, 90),
             )
-        # The CLI has emitted the login status on stderr in some versions.
-        # Combine the two status streams only for this fixed phrase; never
-        # log or expose the account output.
-        status_text = (
-            stdout.decode("utf-8", "replace")
-            + "\n"
-            + stderr.decode("utf-8", "replace")
-        ).lower()
-        if returncode != 0 or "logged in using chatgpt" not in status_text:
+        except (PiBridgeFailure, PiBridgeTimeout, ValueError) as exc:
             LOGGER.error(
-                "[codex] provider=codex model=%s status=login-rejected duration_seconds=%.3f",
+                "[codex] provider=openai-codex model=%s status=oauth-rejected "
+                "error_category=%s",
                 self.model_name,
-                duration,
+                self._safe_codex_error(exc),
             )
             raise ValueError(
-                f"{CODEX_ACCESS_ERROR_MARKER} Codex login status must report ChatGPT login"
-            )
+                f"{CODEX_ACCESS_ERROR_MARKER} ChatGPT/Codex OAuth is unavailable"
+            ) from exc
+        self._codex_route_identity = dict(probe["route"])
         self._codex_account_verified = True
         LOGGER.info(
-            "[codex] provider=codex model=%s status=login-verified duration_seconds=%.3f",
+            "[codex] provider=openai-codex model=%s status=oauth-verified "
+            "duration_seconds=%.3f",
             self.model_name,
-            duration,
+            float(probe["duration_seconds"]),
         )
 
     def _generate_codex(self, system_prompt: str, user_prompt: str) -> str:
-        """Generate through an isolated, read-only, ephemeral Codex CLI session."""
+        """Generate through Pi's provider layer with no coding-agent prompt or tools."""
         self._verify_codex_account()
-        executable = self._resolved_codex_executable()
-        prompt = system_prompt + "\n\n" + user_prompt
-        prompt_bytes = prompt.encode("utf-8")
-        request_hash = hashlib.sha256(prompt_bytes).hexdigest()
+        request = {
+            "operation": "complete",
+            "model": PI_MODEL,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "reasoning": "high",
+            "tools": [],
+            "tool_choice": "none",
+            "previous_response_id": None,
+            "conversation": None,
+        }
+        request_bytes = json.dumps(
+            request, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        request_hash = hashlib.sha256(request_bytes).hexdigest()
         LOGGER.info(
-            "[codex] provider=codex model=%s prompt_bytes=%d prompt_sha256=%s",
+            "[codex] provider=openai-codex model=%s request_bytes=%d "
+            "request_sha256=%s contract=system-instructions-single-user-no-tools-v1",
             self.model_name,
-            len(prompt_bytes),
+            len(request_bytes),
             request_hash,
         )
         last_error: CodexTransientError | None = None
         for retry_number in range(self.codex_max_retries + 1):
             lock = self._acquire_codex_author_lock()
             try:
-                with (
-                    tempfile.TemporaryDirectory(prefix="csd-codex-cwd-") as cwd_name,
-                    tempfile.TemporaryDirectory(prefix="csd-codex-home-") as home_name,
-                    tempfile.TemporaryDirectory(prefix="csd-codex-output-") as output_dir_name,
+                payload, duration = run_pi_bridge(
+                    request,
+                    node_executable=self.pi_node_executable,
+                    bridge_path=self.pi_bridge_path,
+                    auth_path=self.pi_auth_path,
+                    timeout_seconds=self.codex_timeout_seconds,
+                )
+                output = payload.get("text")
+                route = payload.get("route")
+                if not isinstance(output, str) or not output.strip():
+                    raise CodexTransientError("Pi provider returned an empty answer")
+                if not isinstance(route, dict) or self._codex_route_identity is None:
+                    raise CodexTransientError("Pi provider returned no route identity")
+                for field in (
+                    "auth_mode",
+                    "provider",
+                    "model",
+                    "account_id_sha256",
                 ):
-                    cwd = Path(cwd_name)
-                    output_path = Path(output_dir_name) / "last-message.txt"
-                    argv = [
-                        executable,
-                        "exec",
-                        "--model",
-                        CODEX_MODEL,
-                        "--sandbox",
-                        "read-only",
-                        "--ephemeral",
-                        "--ignore-user-config",
-                        "--ignore-rules",
-                        "--skip-git-repo-check",
-                        "--cd",
-                        str(cwd),
-                        "--output-last-message",
-                        str(output_path),
-                        "-",
-                    ]
-                    returncode, _stdout, stderr, duration = self._run_codex_process(
-                        argv,
-                        input_bytes=prompt_bytes,
-                        cwd=cwd,
-                        home=Path(home_name),
-                    )
-                    if returncode != 0:
-                        category = self._safe_codex_error(stderr)
-                        if category == "authentication":
-                            raise RuntimeError(
-                                f"{CODEX_ACCESS_ERROR_MARKER} Codex authentication failed"
-                            )
-                        raise CodexTransientError("Codex execution failed")
-                    if not output_path.is_file():
-                        raise CodexTransientError("Codex did not write a final message")
-                    output_bytes = output_path.read_bytes()
-                    if not output_bytes.strip():
-                        raise CodexTransientError("Codex final message was empty")
-                    output = output_bytes.decode("utf-8").strip()
-                    LOGGER.info(
-                        "[codex] provider=codex model=%s status=success output_bytes=%d "
-                        "output_sha256=%s duration_seconds=%.3f retry=%d",
-                        self.model_name,
-                        len(output_bytes),
-                        hashlib.sha256(output_bytes).hexdigest(),
-                        duration,
-                        retry_number,
-                    )
-                    return output
-            except CodexTransientError as exc:
-                last_error = exc
+                    if route.get(field) != self._codex_route_identity.get(field):
+                        raise RuntimeError(
+                            f"{CODEX_ACCESS_ERROR_MARKER} Pi OAuth account changed"
+                        )
+                output = output.strip()
+                output_bytes = output.encode("utf-8")
+                LOGGER.info(
+                    "[codex] provider=openai-codex model=%s status=success "
+                    "output_bytes=%d output_sha256=%s duration_seconds=%.3f retry=%d",
+                    self.model_name,
+                    len(output_bytes),
+                    hashlib.sha256(output_bytes).hexdigest(),
+                    duration,
+                    retry_number,
+                )
+                return output
+            except PiBridgeTimeout as exc:
+                last_error = CodexTransientError("Pi provider request timed out")
+                last_error.__cause__ = exc
+                LOGGER.error(
+                    "[codex] provider=openai-codex model=%s status=timeout retry=%d/%d",
+                    self.model_name,
+                    retry_number,
+                    self.codex_max_retries,
+                )
+            except PiBridgeFailure as exc:
+                if exc.category == "authentication":
+                    raise RuntimeError(
+                        f"{CODEX_ACCESS_ERROR_MARKER} ChatGPT/Codex OAuth failed"
+                    ) from exc
+                last_error = CodexTransientError(
+                    f"Pi provider request failed: {exc.category}"
+                )
                 LOGGER.warning(
-                    "[codex] provider=codex model=%s status=retry retry=%d/%d request_sha256=%s",
+                    "[codex] provider=openai-codex model=%s status=retry "
+                    "retry=%d/%d request_sha256=%s error_category=%s",
                     self.model_name,
                     retry_number,
                     self.codex_max_retries,
                     request_hash,
+                    exc.category,
                 )
+            except CodexTransientError as exc:
+                last_error = exc
             finally:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
                 lock.close()

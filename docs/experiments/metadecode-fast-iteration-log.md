@@ -811,6 +811,19 @@ the direct Gemini API after a successful authenticated model-list and minimal
 generation check. No Table 5--8 result was collected under the superseded
 Gemini route. The author model/route remains the only changed variable.
 
+Amendment — 2026-08-30, before any Table 5--8 provider pilot or full campaign
+launch: the user required the GPT-5.6 Sol arm to measure the model without the
+Codex CLI's built-in agent instructions. The single route change is to use the
+pinned Pi provider layer with the same ChatGPT/Codex OAuth payer, while bypassing
+Pi's agent session. The request contains the campaign system instructions and
+one user message, reasoning `high`, no tools, and no prior conversation. The
+prior is **90%** that this removes the harness instructions without changing the
+model or payer. The falsifiable prediction is that a sealed provider pilot binds
+`gpt-5.6-sol`, the reviewed Pi package and install bytes, the OAuth account hash,
+and the no-tools request shape, and returns a plain-text author response without
+an API key, Codex CLI process, tool call, or leaked prompt/token text. A mismatch
+blocks every GPT-5.6 Sol campaign row.
+
 Prior: **70%** that all three provider routes pass a real one-attempt pilot and
 produce provenance-bound terminal artifacts; provider auth/model drift is the
 main risk.
