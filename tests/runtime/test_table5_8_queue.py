@@ -2291,6 +2291,36 @@ def test_real_pilot_parser_uses_nested_run_report_and_requires_verifier_eval(tmp
         )
 
 
+def test_real_pilot_parser_accepts_the_production_success_report_shape(tmp_path):
+    commit = "a" * 40
+    report_path = tmp_path / "outputs/generated/pilot/results/success_report.json"
+    report = _write_real_pilot_report(report_path, "opus5", commit)
+    attempt = report.pop("attempts")[0]
+    run_root = report_path.parents[1]
+    dafny_file = run_root / "dafny" / "pilot.dfy"
+    dafny_file.parent.mkdir(parents=True, exist_ok=True)
+    dafny_file.write_text("method Pilot() {}\n", encoding="utf-8")
+    report.update(
+        {
+            "strategy_code": attempt["strategy_code"],
+            "compiled_dir": attempt["compilation"]["output_dir"],
+            "dafny_file": str(dafny_file),
+            "dafny_file_canonical": str(dafny_file.resolve()),
+            "evaluation_result": attempt["evaluation"],
+            "sample_outputs": attempt["evaluation"]["sample_outputs"],
+        }
+    )
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    pilot = queue.provider_pilot_from_report(
+        report_path, profile="opus5", git_commit=commit, environment={}
+    )
+
+    assert pilot["attempt_count"] == 1
+    assert pilot["verification_status"] == "success"
+    assert pilot["evaluation_status"] == "success"
+
+
 def test_provider_pilot_rejects_report_route_identity_relabel(tmp_path):
     commit = "a" * 40
     report_path = tmp_path / "outputs/generated/pilot/results/failure_report.json"

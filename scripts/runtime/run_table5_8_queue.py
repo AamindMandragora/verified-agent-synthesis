@@ -346,7 +346,29 @@ def provider_pilot_from_report(
         raise ConfigError(f"unknown provider pilot profile: {profile}")
     route = payload.get("run_configuration")
     attempts = payload.get("attempts")
-    if not isinstance(route, dict) or not isinstance(attempts, list) or len(attempts) != 1:
+    production_success_report = False
+    if isinstance(attempts, list) and len(attempts) == 1:
+        attempt = attempts[0]
+    elif (
+        path.name == "success_report.json"
+        and isinstance(payload.get("evaluation_result"), dict)
+        and payload.get("sample_outputs")
+        == payload["evaluation_result"].get("sample_outputs")
+    ):
+        production_success_report = True
+        attempt = {
+            "attempt_number": 1,
+            "strategy_code": payload.get("strategy_code"),
+            "verification": {"success": True},
+            "compilation": {
+                "success": True,
+                "output_dir": payload.get("compiled_dir"),
+            },
+            "evaluation": payload.get("evaluation_result"),
+        }
+    else:
+        raise ConfigError("provider pilot must be a one-attempt synthesis report")
+    if not isinstance(route, dict) or not isinstance(attempt, dict):
         raise ConfigError("provider pilot must be a one-attempt synthesis report")
     if payload.get("total_attempts") != 1 or route.get("max_iterations") != 1:
         raise ConfigError("provider pilot must use exactly one attempt")
@@ -406,7 +428,6 @@ def provider_pilot_from_report(
     if not expected_config:
         raise ConfigError("provider pilot report has the wrong route or controls")
 
-    attempt = attempts[0]
     verification = attempt.get("verification") or {}
     compilation = attempt.get("compilation") or {}
     evaluation = attempt.get("evaluation") or {}
@@ -424,6 +445,7 @@ def provider_pilot_from_report(
         or verification.get("success") is not True
         or compilation.get("success") is not True
         or evaluation.get("success") is not True
+        or evaluation.get("early_stopped") is not False
         or evaluation.get("num_examples") != 1
         or not isinstance(sample_outputs, list)
         or len(sample_outputs) != 1
@@ -440,6 +462,20 @@ def provider_pilot_from_report(
         raise ConfigError("provider pilot must reach successful verification and evaluation")
 
     run_root = path.parent.parent
+    if production_success_report:
+        dafny_file = Path(str(payload.get("dafny_file") or ""))
+        canonical_dafny = Path(str(payload.get("dafny_file_canonical") or ""))
+        try:
+            dafny_file.resolve().relative_to((run_root / "dafny").resolve())
+            canonical_dafny.resolve().relative_to((run_root / "dafny").resolve())
+        except (OSError, ValueError) as exc:
+            raise ConfigError("provider pilot verified Dafny evidence is outside its run") from exc
+        if (
+            path.resolve() != (run_root / "results" / "success_report.json").resolve()
+            or not dafny_file.is_file()
+            or not canonical_dafny.is_file()
+        ):
+            raise ConfigError("provider pilot verified Dafny evidence is missing or unbound")
     compiled_dir = Path(str(compilation.get("output_dir") or ""))
     compiled_csd = compiled_dir / "GeneratedCSD.py"
     output_name = route.get("output_name")

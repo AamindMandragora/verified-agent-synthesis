@@ -34,11 +34,19 @@ agent's built-in system instructions.
 
 ## Verification
 
-The campaign/runtime/provider suite passed with `431 passed, 2 warnings`.
+The campaign/runtime/provider suite passed with `432 passed, 2 warnings`.
 The two real bridge tests used the exact Node 24 executable and verified both
 local OAuth loading and secret-free authentication failure output. A separate
 no-prompt live OAuth check returned provider `openai-codex`, model
 `gpt-5.6-sol`, and the account fingerprint above.
+
+The first real pilot exposed that the production success writer stores its
+attempt evidence in top-level `strategy_code`, `compiled_dir`, and
+`evaluation_result` fields. The pilot parser now accepts that exact shape while
+requiring the real `success_report.json`, both Dafny files, the compiled Python
+artifact, and successful one-example evaluation evidence inside the same run.
+The production-shaped regression test failed before this repair and passed
+after it.
 
 A broader `pytest tests` collection attempt stopped on four unchanged legacy
 test/import mismatches outside this change. The affected source and test files
