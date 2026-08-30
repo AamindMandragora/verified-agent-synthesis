@@ -56,13 +56,14 @@ repeated merely because the controller restarted.
 ## Tables 5--8 synthesis queue
 
 The missing Table 5--8 synthesis cells are described by
-`run_table5_8_queue.py`. It builds exactly 31 rows: 15 Table 5 backend runs,
-6 Table 6 token-budget runs, 6 Table 7 beam-size runs, and 4 Table 8 mask
-runs. All rows use the exact `Qwen/Qwen3.5-2B` evaluator and 40 cold
-iterations. Table 5 SMILES results are exported as one sample-count-weighted
-value per author profile. Its three author profiles are GPT-5.6 Sol through the
-Codex CLI, Gemini 3.7 Flash through the direct Google AI Studio API, and Claude
-Opus 5 through the approved first-party Max account.
+`run_table5_8_queue.py`. It builds exactly 11 GSM-Symbolic rows: 3 Table 5
+author-model runs, 3 Table 6 token-budget runs, 3 Table 7 beam-size runs, and 2
+Table 8 mask runs. All rows use the exact `Qwen/Qwen3.5-2B` evaluator and at
+most 40 cold synthesis attempts. The export records held-out accuracy, syntax
+rate, attempts used, accepted/exhausted status, and constrained work for every
+row. Table 5's author profiles are GPT-5.6 Sol through the Codex CLI, Gemini
+3.7 Flash through the direct Google AI Studio API, and Claude Opus 5 through
+the approved first-party Max account.
 
 ```bash
 python scripts/runtime/run_table5_8_queue.py --dry-run

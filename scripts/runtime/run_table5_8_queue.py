@@ -254,22 +254,38 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
 
 
 def build_scope(repo: Path) -> list[dict[str, Any]]:
-    """Return exactly the 31 requested synthesis runs, in stable order."""
+    """Return exactly the 11 requested GSM synthesis runs, in stable order."""
     rows: list[dict[str, Any]] = []
     for profile in TABLE5_PROFILES:
-        for benchmark in ("gsm_symbolic", "spider"):
-            rows.append(_row(f"t5-{profile}-{benchmark}", 5, benchmark, profile, table_cell_id=f"table5-{profile}-{benchmark}"))
-        for smiles_class in SMILES_CLASSES:
-            rows.append(_row(f"t5-{profile}-smiles-{smiles_class}", 5, "smiles", profile, smiles_class=smiles_class, table_cell_id=f"table5-{profile}-smiles"))
+        cell = f"t5-{profile}-gsm_symbolic"
+        rows.append(
+            _row(
+                cell,
+                5,
+                "gsm_symbolic",
+                profile,
+                table_cell_id=f"table5-{profile}-gsm_symbolic",
+            )
+        )
     for table, settings in (
         (6, [(1, 2, True), (2, 2, True), (4, 2, True)]),
         (7, [(1, 1, True), (1, 2, True), (1, 4, True)]),
         (8, [(1, 2, False), (1, 2, True)]),
     ):
         for token_budget, beam_size, mask in settings:
-            for benchmark in ("gsm_symbolic", "spider"):
-                cell = f"t{table}-opus5-{benchmark}-b{token_budget}-B{beam_size}-m{int(mask)}"
-                rows.append(_row(cell, table, benchmark, "opus5", table_cell_id=cell, token_budget=token_budget, beam_size=beam_size, adaptive_helper_mask=mask))
+            cell = f"t{table}-opus5-gsm_symbolic-b{token_budget}-B{beam_size}-m{int(mask)}"
+            rows.append(
+                _row(
+                    cell,
+                    table,
+                    "gsm_symbolic",
+                    "opus5",
+                    table_cell_id=cell,
+                    token_budget=token_budget,
+                    beam_size=beam_size,
+                    adaptive_helper_mask=mask,
+                )
+            )
     return rows
 
 
@@ -1057,8 +1073,8 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
                 f"{profile} provider pilot Python runtime does not match the manifest"
             )
     rows = payload.get("jobs")
-    if not isinstance(rows, list) or len(rows) != 31:
-        raise ConfigError("manifest must contain exactly 31 Table 5--8 jobs")
+    if not isinstance(rows, list) or len(rows) != 11:
+        raise ConfigError("manifest must contain exactly 11 Table 5--8 GSM jobs")
     expected = build_scope(repo)
     immutable_fields = {
         "cell_id", "table", "table_cell_id", "benchmark", "dataset", "task",
@@ -1789,7 +1805,30 @@ def load_terminal_results(
         payload["synthesis_report_sha256"] = state[
             "synthesis_report_sha256"
         ]
+        report_path = Path(str(state["synthesis_report_path"]))
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        attempts = report.get("total_attempts")
+        terminal_status = {
+            "success_report.json": "accepted",
+            "failure_report.json": "exhausted",
+        }.get(report_path.name)
+        if (
+            type(attempts) is not int
+            or not 1 <= attempts <= int(row["max_iterations"])
+            or terminal_status is None
+        ):
+            raise ConfigError(
+                f"synthesis attempt evidence is invalid: {row['cell_id']}"
+            )
+        payload["synthesis_attempts"] = attempts
+        payload["synthesis_terminal_status"] = terminal_status
         payload["winning_attempt"] = state["winning_attempt"]
+        LOGGER.info(
+            "[tableq] synthesis-outcome cell=%s attempts=%s status=%s",
+            row["cell_id"],
+            attempts,
+            terminal_status,
+        )
         values.append(payload)
     return values
 
@@ -2826,6 +2865,20 @@ def export_results(rows: list[dict[str, Any]], values: list[dict[str, Any]], out
             metric = "accuracy"
             if not isinstance(value.get(metric), (int, float)):
                 raise ConfigError(f"missing {metric} for {row['cell_id']}")
+            syntax_rate = value.get("syntax_rate")
+            attempts = value.get("synthesis_attempts")
+            terminal_status = value.get("synthesis_terminal_status")
+            if (
+                not isinstance(syntax_rate, (int, float))
+                or not math.isfinite(float(syntax_rate))
+                or not 0.0 <= float(syntax_rate) <= 1.0
+                or type(attempts) is not int
+                or not 1 <= attempts <= int(row["max_iterations"])
+                or terminal_status not in {"accepted", "exhausted"}
+            ):
+                raise ConfigError(
+                    f"missing synthesis outcome metrics for {row['cell_id']}"
+                )
             value["cw"] = constrained_window_rate(value)
         else:
             trial = value.get("smiles_paper_trial") or {}
@@ -2845,6 +2898,11 @@ def export_results(rows: list[dict[str, Any]], values: list[dict[str, Any]], out
         else:
             metric = "accuracy"
             item[metric] = group[0][metric]
+            item["syntax_rate"] = group[0]["syntax_rate"]
+            item["synthesis_attempts"] = group[0]["synthesis_attempts"]
+            item["synthesis_terminal_status"] = group[0][
+                "synthesis_terminal_status"
+            ]
             item["cw"] = group[0]["cw"]
         cells.append(item)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -2885,8 +2943,8 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     rows = build_scope(args.repo)
-    if len(rows) != 31:
-        raise SystemExit(f"scope error: expected 31 rows, got {len(rows)}")
+    if len(rows) != 11:
+        raise SystemExit(f"scope error: expected 11 rows, got {len(rows)}")
     if args.dry_run:
         for row in rows:
             print(row["cell_id"], shlex.join(synthesis_command(row, Path(sys.executable))))

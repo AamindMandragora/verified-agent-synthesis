@@ -127,15 +127,16 @@ never add warm-start inputs, and never delete an interrupted or failed claim.
 
 ## Paper Tables 5--8 campaign queue
 
-`run_table5_8_queue.py` is the separate 31-run campaign for the missing
+`run_table5_8_queue.py` is the separate 11-run GSM-Symbolic campaign for the
 Table 5 backend cells and Tables 6--8 ablations. It uses exact profiles
 `gpt5.6-sol`/Codex, `gemini3.7-flash`/direct Gemini API, and
 `opus5`/Claude Code, and always
-evaluates with `Qwen/Qwen3.5-2B`. Table 5 has 15 runs (the three SMILES class
-rows are combined with sample-count weighting); Tables 6--8 have 6, 6, and 4
-cold 40-attempt runs. The synthesis command uses the canonical train split
-selected inside `run_synthesis`; held-out commands use the matching canonical
-test split and an isolated output file.
+evaluates GSM-Symbolic with `Qwen/Qwen3.5-2B`. Table 5 has 3 author-model
+runs; Tables 6--8 have 3 token-budget, 3 beam-size, and 2 helper-mask runs.
+Every row records accuracy, syntax rate, synthesis attempts used,
+accepted/exhausted status, and constrained work. The synthesis command uses the
+canonical train split selected inside `run_synthesis`; held-out commands use the
+matching canonical test split and an isolated output file.
 
 The Gemini campaign route loads only `GEMINI_API_KEY` from the canonical
 private `synthesis/.env`, passes no Vertex or backup credential, and binds only

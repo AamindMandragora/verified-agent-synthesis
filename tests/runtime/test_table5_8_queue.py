@@ -22,14 +22,38 @@ def _test_python_runtime():
     }
 
 
+def _fixture_row(
+    benchmark: str,
+    repo: Path = Path("/repo"),
+    *,
+    profile: str = "opus5",
+    cell_suffix: str = "one",
+):
+    if benchmark == "gsm_symbolic":
+        return next(
+            row
+            for row in queue.build_scope(repo)
+            if row["profile"] == profile and row["table"] == 5
+        )
+    smiles_class = "acrylates" if benchmark == "smiles" else None
+    return queue._row(
+        f"fixture-{benchmark}-{profile}-{cell_suffix}",
+        5,
+        benchmark,
+        profile,
+        smiles_class=smiles_class,
+    )
+
+
 def test_exact_table5_to_table8_scope():
     rows = queue.build_scope(Path("/repo"))
-    assert len(rows) == 31
-    assert sum(row["table"] == 5 for row in rows) == 15
-    assert sum(row["table"] == 6 for row in rows) == 6
-    assert sum(row["table"] == 7 for row in rows) == 6
-    assert sum(row["table"] == 8 for row in rows) == 4
+    assert len(rows) == 11
+    assert sum(row["table"] == 5 for row in rows) == 3
+    assert sum(row["table"] == 6 for row in rows) == 3
+    assert sum(row["table"] == 7 for row in rows) == 3
+    assert sum(row["table"] == 8 for row in rows) == 2
     assert all(row["eval_model"] == "Qwen/Qwen3.5-2B" for row in rows)
+    assert {row["benchmark"] for row in rows} == {"gsm_symbolic"}
 
 
 def test_table5_backend_profiles_are_exact():
@@ -39,7 +63,7 @@ def test_table5_backend_profiles_are_exact():
         ("gemini3.7-flash", "gemini", "gemini-3.7-flash"),
         ("opus5", "claude", "claude-opus-5"),
     }
-    assert {row["benchmark"] for row in rows} == {"gsm_symbolic", "spider", "smiles"}
+    assert {row["benchmark"] for row in rows} == {"gsm_symbolic"}
 
 
 def test_ablation_scope_has_exact_single_variable_settings():
@@ -95,7 +119,7 @@ def test_gpu_admission_uses_cold_queue_memory_contract():
 
 
 def test_multi_gpu_rows_get_only_scoped_safe_pair():
-    row = next(r for r in queue.build_scope(Path("/repo")) if r["benchmark"] == "spider")
+    row = queue.build_scope(Path("/repo"))[0]
     snapshot = {gpu: {"used_mib": 0, "free_mib": 40960, "total_mib": 40960} for gpu in (0, 1, 2)}
     assert queue.choose_gpus(row, snapshot, {}, snapshot, (1, 2)) == (1, 2)
     row["gpu_scope"] = [0]
@@ -160,7 +184,7 @@ def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, 
     assert payload["external_runtime"] == external_runtime
     assert payload["python_runtime"] == _test_python_runtime()
     assert set(payload["source_sha256"]) == set(paths)
-    assert len(queue.validate_manifest(tmp_path, payload)) == 31
+    assert len(queue.validate_manifest(tmp_path, payload)) == 11
     wrong_version = json.loads(json.dumps(payload))
     wrong_version["version"] = 2
     with pytest.raises(queue.ConfigError, match="version"):
@@ -281,7 +305,7 @@ def test_external_runtime_binding_pins_qwen_revision_and_spider_tree(tmp_path):
 
 
 def test_heldout_command_uses_test_split_and_provenance(tmp_path):
-    row = next(r for r in queue.build_scope(Path("/repo")) if r["benchmark"] == "spider")
+    row = _fixture_row("spider")
     row.update(
         eval_model_revision="1" * 40,
         eval_model_snapshot_path="/cache/snapshots/" + "1" * 40,
@@ -329,7 +353,7 @@ def test_profile_environment_is_forced_and_smiles_temperature_is_exported(tmp_pa
     env = queue.synthesis_environment(opus, (2, 3), {"CSD_CLAUDE_CONFIG_DIR": "wrong", "CSD_CLAUDE_EXPECTED_ACCOUNT": "wrong"}, tmp_path)
     assert env["CSD_CLAUDE_CONFIG_DIR"] == "/home/aadivyar/.claude-csd-synthesis"
     assert env["CSD_CLAUDE_EXPECTED_ACCOUNT"] == "ssdear@gmail.com"
-    smiles = next(r for r in queue.build_scope(Path("/repo")) if r["benchmark"] == "smiles")
+    smiles = _fixture_row("smiles")
     assert queue.synthesis_environment(smiles, (2,), {}, tmp_path)["CSD_CONSTRAINED_TEMPERATURE"] == "0.7"
 
 
@@ -418,11 +442,7 @@ def test_isolated_home_pins_real_model_cache_and_spider_data_defaults(tmp_path):
     hf_home.mkdir(parents=True)
     spider_data.mkdir(parents=True)
     inherited = {"HOME": str(login_home), "PATH": "/bin"}
-    row = next(
-        candidate
-        for candidate in queue.build_scope(tmp_path)
-        if candidate["profile"] == "opus5" and candidate["benchmark"] == "spider"
-    )
+    row = _fixture_row("spider", tmp_path)
 
     queue.validate_runtime_data_paths(inherited)
     synthesis = queue.synthesis_environment(row, (2,), inherited, tmp_path)
@@ -464,7 +484,7 @@ def test_heldout_budget_and_controller_cli_contract():
 def test_disk_preflight_is_sized_to_unresolved_campaign_rows(tmp_path, monkeypatch):
     required = (
         queue.DISK_FIXED_SAFETY_BYTES
-        + 31 * queue.DISK_BYTES_PER_UNRESOLVED_ROW
+        + 11 * queue.DISK_BYTES_PER_UNRESOLVED_ROW
     )
     monkeypatch.setattr(
         queue.shutil,
@@ -472,13 +492,13 @@ def test_disk_preflight_is_sized_to_unresolved_campaign_rows(tmp_path, monkeypat
         lambda path: types.SimpleNamespace(total=required, used=1, free=required - 1),
     )
     with pytest.raises(queue.ConfigError, match="insufficient disk space"):
-        queue.disk_space_preflight(tmp_path, unresolved_rows=31)
+        queue.disk_space_preflight(tmp_path, unresolved_rows=11)
     monkeypatch.setattr(
         queue.shutil,
         "disk_usage",
         lambda path: types.SimpleNamespace(total=required, used=0, free=required),
     )
-    queue.disk_space_preflight(tmp_path, unresolved_rows=31)
+    queue.disk_space_preflight(tmp_path, unresolved_rows=11)
 
 
 def test_controller_does_not_overwrite_input_manifest(tmp_path):
@@ -509,6 +529,8 @@ def _bind_export_case(row, payload, tmp_path):
     payload["synthesis_report_path"] = str(report)
     payload["synthesis_report_sha256"] = queue.hash_file(report)
     payload["winning_attempt"] = 1
+    payload.setdefault("synthesis_attempts", 1)
+    payload.setdefault("synthesis_terminal_status", "accepted")
     return row, payload
 
 
@@ -538,6 +560,27 @@ def test_export_uses_validated_mean_constrained_work_as_cw(tmp_path):
     assert json.loads((tmp_path / "out.json").read_text())["cells"][0]["cw"] == 17.25
 
 
+def test_export_records_accuracy_syntax_attempts_and_terminal_status(tmp_path):
+    row = queue.build_scope(Path("/repo"))[0]
+    payload = {
+        "cell_id": row["cell_id"],
+        "accuracy": 15 / 49,
+        "syntax_rate": 47 / 49,
+        "synthesis_attempts": 17,
+        "synthesis_terminal_status": "accepted",
+        "metrics": {"mean_constrained_work": 12.5},
+    }
+    row, payload = _bind_export_case(row, payload, tmp_path)
+
+    queue.export_results([row], [payload], tmp_path / "out.json")
+
+    cell = json.loads((tmp_path / "out.json").read_text())["cells"][0]
+    assert cell["accuracy"] == 15 / 49
+    assert cell["syntax_rate"] == 47 / 49
+    assert cell["synthesis_attempts"] == 17
+    assert cell["synthesis_terminal_status"] == "accepted"
+
+
 def test_export_is_bound_to_manifest_commit_and_terminal_artifact(tmp_path):
     row = next(
         candidate
@@ -556,6 +599,8 @@ def test_export_is_bound_to_manifest_commit_and_terminal_artifact(tmp_path):
         "cell_id": row["cell_id"],
         "accuracy": 0.4,
         "syntax_rate": 0.87,
+        "synthesis_attempts": 1,
+        "synthesis_terminal_status": "accepted",
         "metrics": {"mean_constrained_work": 19.0},
         "paper_artifact_path": str(artifact),
         "paper_artifact_sha256": queue.hash_file(artifact),
@@ -595,7 +640,7 @@ def test_export_is_bound_to_manifest_commit_and_terminal_artifact(tmp_path):
 
 
 def test_export_accepts_production_spider_and_smiles_artifact_shapes(tmp_path):
-    spider = next(r for r in queue.build_scope(Path("/repo")) if r["benchmark"] == "spider")
+    spider = _fixture_row("spider")
     spider_payload = {
         "cell_id": spider["cell_id"],
         "accuracy": 0.4,
@@ -610,7 +655,17 @@ def test_export_accepts_production_spider_and_smiles_artifact_shapes(tmp_path):
     assert spider_cell["accuracy"] == 0.4
     assert spider_cell["cw"] == 23.5
 
-    smiles_rows = [r for r in queue.build_scope(Path("/repo")) if r["profile"] == "gpt5.6-sol" and r["benchmark"] == "smiles"]
+    smiles_rows = [
+        queue._row(
+            f"fixture-smiles-gpt5.6-sol-{smiles_class}",
+            5,
+            "smiles",
+            "gpt5.6-sol",
+            smiles_class=smiles_class,
+            table_cell_id="fixture-smiles-gpt5.6-sol",
+        )
+        for smiles_class in queue.SMILES_CLASSES
+    ]
     bound_smiles_rows = []
     values = []
     for row, count, unique in zip(smiles_rows, (100, 100, 100), (10, 20, 30)):
@@ -1013,7 +1068,7 @@ def test_heldout_validator_accepts_real_writer_four_decimal_work_mean(tmp_path):
 
 
 def test_heldout_validator_checks_smiles_trial_counts_and_blank_answers(tmp_path):
-    row = next(r for r in queue.build_scope(Path.cwd()) if r["benchmark"] == "smiles")
+    row = _fixture_row("smiles", Path.cwd())
     compiled = tmp_path / "GeneratedCSD.py"
     compiled.write_text("compiled", encoding="utf-8")
     indices = list(range(row["heldout_sample_size"]))
@@ -1033,7 +1088,10 @@ def test_heldout_validator_checks_smiles_trial_counts_and_blank_answers(tmp_path
 
 
 def test_dispatch_runs_independent_admitted_rows_concurrently(tmp_path, monkeypatch):
-    rows = [r for r in queue.build_scope(tmp_path) if r["benchmark"] == "smiles"][:2]
+    rows = [
+        _fixture_row("smiles", tmp_path, cell_suffix="one"),
+        _fixture_row("smiles", tmp_path, cell_suffix="two"),
+    ]
     snapshot = {
         0: {"used_mib": 0, "free_mib": 40960, "total_mib": 40960},
         1: {"used_mib": 0, "free_mib": 40960, "total_mib": 40960},
@@ -1295,6 +1353,42 @@ def test_terminal_loader_rejects_artifact_bound_to_different_compiled_strategy(
         queue.load_terminal_results(tmp_path, [row], state_dir)
 
 
+def test_terminal_loader_records_synthesis_attempts_and_status(
+    tmp_path, monkeypatch
+):
+    row = queue.build_scope(tmp_path)[0]
+    row.update(manifest_sha256="a" * 64, manifest_commit="b" * 40)
+    artifact = tmp_path / row["heldout_output_json"]
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("{}", encoding="utf-8")
+    report = tmp_path / "success_report.json"
+    report.write_text(json.dumps({"total_attempts": 7}), encoding="utf-8")
+    state_dir = tmp_path / "state"
+    queue.write_state(
+        state_dir / f"{row['cell_id']}.json",
+        {
+            "cell_id": row["cell_id"],
+            "status": "complete",
+            "manifest_sha256": "a" * 64,
+            "manifest_commit": "b" * 40,
+            "compiled_csd_path": str(tmp_path / "GeneratedCSD.py"),
+            "compiled_sha256": "c" * 64,
+            "heldout_output_json": str(artifact),
+            "heldout_sha256": queue.hash_file(artifact),
+            "synthesis_report_path": str(report),
+            "synthesis_report_sha256": queue.hash_file(report),
+            "winning_attempt": 7,
+        },
+    )
+    monkeypatch.setattr(queue, "_report_binding_is_valid", lambda *args: True)
+    monkeypatch.setattr(queue, "heldout_artifact_is_valid", lambda *args: True)
+
+    values = queue.load_terminal_results(tmp_path, [row], state_dir)
+
+    assert values[0]["synthesis_attempts"] == 7
+    assert values[0]["synthesis_terminal_status"] == "accepted"
+
+
 def test_terminal_loader_rejects_selected_synthesis_report_after_mutation(tmp_path):
     row = next(
         candidate
@@ -1358,7 +1452,7 @@ def test_report_binding_rejects_hash_valid_but_semantically_invalid_report(tmp_p
 def test_smiles_validator_binds_accuracy_to_unique_valid_count_not_membership_flags(
     tmp_path,
 ):
-    row = next(r for r in queue.build_scope(Path.cwd()) if r["benchmark"] == "smiles")
+    row = _fixture_row("smiles", Path.cwd())
     compiled = tmp_path / "GeneratedCSD.py"
     compiled.write_text("compiled", encoding="utf-8")
     row.update(
@@ -1440,7 +1534,7 @@ def test_controller_lock_is_single_owner_and_does_not_block_state_lock(tmp_path)
 
 
 def test_dispatch_polls_surviving_child_without_readmitting_it(tmp_path, monkeypatch):
-    row = next(r for r in queue.build_scope(tmp_path) if r["benchmark"] == "smiles")
+    row = _fixture_row("smiles", tmp_path)
     snapshot = {0: {"used_mib": 0, "free_mib": 40960, "total_mib": 40960}}
     state_reads = [
         {
@@ -1482,9 +1576,10 @@ def test_dispatch_polls_surviving_child_without_readmitting_it(tmp_path, monkeyp
 def test_dispatch_reserves_surviving_child_before_any_new_admission(
     tmp_path, monkeypatch
 ):
-    survivor, pending = [
-        row for row in queue.build_scope(tmp_path) if row["gpu_count"] == 1
-    ][:2]
+    survivor, pending = (
+        _fixture_row("smiles", tmp_path, cell_suffix="survivor"),
+        _fixture_row("smiles", tmp_path, cell_suffix="pending"),
+    )
     survivor = dict(survivor, cell_id="survivor")
     pending = dict(pending, cell_id="pending")
     state_dir = tmp_path / "state"
@@ -1534,7 +1629,7 @@ def test_dispatch_reserves_surviving_child_before_any_new_admission(
 def test_dispatch_rechecks_admission_after_gpu_fit_before_launch(
     tmp_path, monkeypatch
 ):
-    row = next(r for r in queue.build_scope(tmp_path) if r["benchmark"] == "smiles")
+    row = _fixture_row("smiles", tmp_path)
     launches = []
     provider_checks = []
     monkeypatch.setattr(
@@ -1570,11 +1665,7 @@ def test_dispatch_rechecks_admission_after_gpu_fit_before_launch(
 def test_dispatch_rejects_unknown_row_state_before_any_admission_or_launch(
     tmp_path, monkeypatch
 ):
-    row = next(
-        candidate
-        for candidate in queue.build_scope(tmp_path)
-        if candidate["benchmark"] == "smiles"
-    )
+    row = _fixture_row("smiles", tmp_path)
     state_dir = tmp_path / "state"
     queue.write_state(
         state_dir / f"{row['cell_id']}.json",
@@ -1612,7 +1703,7 @@ def test_dispatch_rejects_unknown_row_state_before_any_admission_or_launch(
 def test_dispatch_revalidates_terminal_state_without_gpu_or_provider_admission(
     tmp_path, monkeypatch
 ):
-    row = next(r for r in queue.build_scope(tmp_path) if r["benchmark"] == "smiles")
+    row = _fixture_row("smiles", tmp_path)
     state_dir = tmp_path / "state"
     queue.write_state(
         state_dir / f"{row['cell_id']}.json",
@@ -1827,7 +1918,7 @@ def test_logged_child_uses_append_file_and_its_own_process_group(
 
 
 def test_child_start_failure_becomes_durable_failed_state(tmp_path):
-    row = next(r for r in queue.build_scope(tmp_path) if r["benchmark"] == "smiles")
+    row = _fixture_row("smiles", tmp_path)
 
     def runner(argv, **kwargs):
         raise OSError("cannot start")
@@ -1970,7 +2061,7 @@ def test_scope_records_effective_provider_limits_separately_from_requested_budge
 
 
 def test_missing_compiled_fingerprint_becomes_failed_state(tmp_path, monkeypatch):
-    row = next(r for r in queue.build_scope(tmp_path) if r["benchmark"] == "smiles")
+    row = _fixture_row("smiles", tmp_path)
     queue.write_state(tmp_path / "state" / f"{row['cell_id']}.json", {"cell_id": row["cell_id"], "status": "running", "phase": "heldout", "compiled_csd_path": str(tmp_path / "missing.py"), "compiled_sha256": "0" * 64})
     monkeypatch.setattr(queue, "heldout_command", lambda *args: [])
     result = queue.run_row(row, repo=tmp_path, python=Path("python"), state_dir=tmp_path / "state", gpus=(0,), runner=lambda *args, **kwargs: pytest.fail("must not launch"))
@@ -2597,7 +2688,7 @@ def test_failure_report_accepts_compiler_generated_suffixed_output_dir(
 def test_restart_recovery_hash_pins_compiled_before_heldout_launch(
     tmp_path, monkeypatch
 ):
-    row = next(r for r in queue.build_scope(tmp_path) if r["benchmark"] == "smiles")
+    row = _fixture_row("smiles", tmp_path)
     row.update(manifest_sha256="manifest", manifest_commit="manifest")
     state_dir = tmp_path / "state"
     state_path = state_dir / f"{row['cell_id']}.json"
