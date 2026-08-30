@@ -1774,6 +1774,7 @@ def controller_parser() -> argparse.ArgumentParser:
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--poll-seconds", type=float, default=30.0)
     parser.add_argument("--python", type=Path, default=CANONICAL_PYTHON)
+    parser.add_argument("--nvidia-smi", default="nvidia-smi")
     parser.add_argument("--export", type=Path, default=None)
     parser.add_argument("--dry-run", action="store_true")
     return parser
@@ -1969,7 +1970,7 @@ def _controller_main_locked(args: argparse.Namespace) -> int:
         python=args.python,
         state_dir=args.state_dir,
         allowed=args.gpus,
-        snapshot=gpu_memory_snapshot,
+        snapshot=lambda: gpu_memory_snapshot(args.nvidia_smi),
         poll_seconds=args.poll_seconds,
         admission_check=admission_guard,
     )

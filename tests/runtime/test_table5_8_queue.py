@@ -1866,6 +1866,8 @@ def test_dispatch_revalidates_terminal_state_without_gpu_or_provider_admission(
 def test_controller_passes_running_and_blocked_rows_to_dispatch_without_overwrite(
     tmp_path, monkeypatch
 ):
+    from scripts.runtime import run_cold_synthesis_queue as cold_queue
+
     rows = queue.build_scope(tmp_path)[:2]
     manifest = tmp_path / "manifest.json"
     manifest.write_text(
@@ -1916,6 +1918,7 @@ def test_controller_passes_running_and_blocked_rows_to_dispatch_without_overwrit
     guard_calls = []
     pilot_freshness_checks = []
     captured_rows = []
+    gpu_snapshot_calls = []
     monkeypatch.setattr(queue, "validate_manifest", lambda repo, payload: rows)
     monkeypatch.setattr(
         queue,
@@ -1932,8 +1935,16 @@ def test_controller_passes_running_and_blocked_rows_to_dispatch_without_overwrit
     monkeypatch.setattr(
         queue,
         "dispatch",
-        lambda candidates, **kwargs: captured_rows.extend(candidates)
-        or [dict(row, status="complete") for row in candidates],
+        lambda candidates, **kwargs: (
+            kwargs["snapshot"](),
+            captured_rows.extend(candidates),
+            [dict(row, status="complete") for row in candidates],
+        )[-1],
+    )
+    monkeypatch.setattr(
+        cold_queue,
+        "gpu_memory_snapshot",
+        lambda executable: gpu_snapshot_calls.append(executable) or {},
     )
     monkeypatch.setattr(
         queue, "load_terminal_results", lambda repo, candidates, state_dir: []
@@ -1958,6 +1969,7 @@ def test_controller_passes_running_and_blocked_rows_to_dispatch_without_overwrit
     ]
     assert guard_calls == []
     assert pilot_freshness_checks == [False]
+    assert gpu_snapshot_calls == ["nvidia-smi"]
     assert queue.read_state(state_dir / f"{rows[0]['cell_id']}.json") == running
 
 
