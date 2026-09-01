@@ -127,20 +127,29 @@ never add warm-start inputs, and never delete an interrupted or failed claim.
 
 ## Paper Tables 5--8 campaign queue
 
-`run_table5_8_queue.py` is the separate 11-run GSM-Symbolic campaign for the
+`run_table5_8_queue.py` is the separate 8-run GSM-Symbolic campaign for the
 Table 5 backend cells and Tables 6--8 ablations. It uses exact profiles
 `gpt5.6-sol`/Pi provider-only ChatGPT OAuth, `gemini3.7-flash`/direct Gemini API, and
 `opus5`/Claude Code, and always
-evaluates GSM-Symbolic with `Qwen/Qwen3.5-2B`. Table 5 has 3 author-model
-runs; Tables 6--8 have 3 token-budget, 3 beam-size, and 2 helper-mask runs.
-Every row records accuracy, syntax rate, synthesis attempts used,
-accepted/exhausted status, and constrained work. The synthesis command uses the
+evaluates GSM-Symbolic with `Qwen/Qwen3.5-2B`. Table 5 has 3 author-model runs;
+Tables 6--8 add 2 token-budget runs, 2 beam-size runs, and 1 helper-mask run.
+The default Opus run supplies the shared budget-1, beam-2, and mask-on controls,
+so the 8 physical runs populate 11 paper cells. Every row uses exactly one GPU
+and records accuracy, syntax rate, synthesis attempts used, accepted/exhausted
+status, constrained work, phase and total wall times, phase timestamps, and
+available per-attempt evaluation times. Runtime evidence must set
+`phase_timing_coverage` to `all_phases` or disclose a pre-timing restart with
+`recovery_anchor`. The synthesis command uses the
 canonical train split selected inside `run_synthesis`; held-out commands use the
 matching canonical test split and an isolated output file.
 
 The Gemini campaign route loads only `GEMINI_API_KEY` from the canonical
 private `synthesis/.env`, passes no Vertex or backup credential, and binds only
 the successful key's SHA-256 fingerprint in reports, pilots, and manifests.
+`campaign_environment()` must also install the exact canonical non-secret Pi
+Node/bridge/auth-file paths and Claude config/account settings. Do not require a
+normal focal login shell to export those settings separately, and do not place
+credential contents in the repository.
 
 The manifest records the full commit, CRANE commit, and SHA-256 for every
 direct runtime dependency. A dirty dependency is a launch error. State is
@@ -148,8 +157,9 @@ written by replacement under a file lock and records `phase`, PID, and process
 start identity. A restart waits for a surviving child and cannot treat an
 unchanged pre-existing held-out file as this run's result.
 
-GPU admission intersects the command-line GPU list with each row's scope and
-requires every selected GPU to fit `max(memory_reservation_mib,
+GPU admission intersects the command-line GPU list with each row's scope,
+assigns one row to one GPU, and requires the selected GPU to fit
+`max(memory_reservation_mib,
 ceil(gpu_mem_util * total_memory)) + 2,000 MiB`, including earlier worker
 reservations. When no row fits, the controller polls rather than exiting.
 Provider preflight verifies the Pi OAuth route without sending a model prompt,

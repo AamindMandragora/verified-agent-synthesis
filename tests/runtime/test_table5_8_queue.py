@@ -47,13 +47,55 @@ def _fixture_row(
 
 def test_exact_table5_to_table8_scope():
     rows = queue.build_scope(Path("/repo"))
-    assert len(rows) == 11
+    assert len(rows) == 8
     assert sum(row["table"] == 5 for row in rows) == 3
-    assert sum(row["table"] == 6 for row in rows) == 3
-    assert sum(row["table"] == 7 for row in rows) == 3
-    assert sum(row["table"] == 8 for row in rows) == 2
+    assert sum(row["table"] == 6 for row in rows) == 2
+    assert sum(row["table"] == 7 for row in rows) == 2
+    assert sum(row["table"] == 8 for row in rows) == 1
     assert all(row["eval_model"] == "Qwen/Qwen3.5-2B" for row in rows)
     assert {row["benchmark"] for row in rows} == {"gsm_symbolic"}
+    assert all(row["gpu_count"] == 1 for row in rows)
+    assert all(row["memory_reservation_mib"] == 20_480 for row in rows)
+
+
+def test_direct_dry_run_prints_all_eight_physical_runs():
+    repo = Path(__file__).parents[2]
+    result = subprocess.run(
+        [sys.executable, str(repo / "scripts/runtime/run_table5_8_queue.py"), "--dry-run"],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    command_lines = [
+        line
+        for line in result.stdout.splitlines()
+        if line.startswith(("t5-", "t6-", "t7-", "t8-"))
+    ]
+    assert len(command_lines) == 8
+
+
+def test_main_installs_canonical_provider_routes_before_cli_handoff(
+    monkeypatch, capsys
+):
+    canonical = {
+        "CSD_PI_NODE_EXECUTABLE": str(queue.CANONICAL_PI_NODE_EXECUTABLE),
+        "CSD_PI_BRIDGE_PATH": str(queue.CANONICAL_PI_BRIDGE_PATH),
+        "CSD_PI_AUTH_PATH": str(queue.CANONICAL_PI_AUTH_PATH),
+        "CSD_CLAUDE_CONFIG_DIR": str(queue.CANONICAL_CLAUDE_CONFIG_DIR),
+        "CSD_CLAUDE_EXPECTED_ACCOUNT": queue.CANONICAL_CLAUDE_EXPECTED_ACCOUNT,
+    }
+    for name in canonical:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.setattr(sys, "argv", ["run_table5_8_queue.py", "--dry-run"])
+
+    assert queue.main() == 0
+    capsys.readouterr()
+    assert {name: queue.os.environ.get(name) for name in canonical} == canonical
+    queue.validate_profile_gates(
+        queue.build_scope(Path("/repo")), dict(queue.os.environ)
+    )
 
 
 def test_table5_backend_profiles_are_exact():
@@ -69,11 +111,19 @@ def test_table5_backend_profiles_are_exact():
 def test_ablation_scope_has_exact_single_variable_settings():
     rows = queue.build_scope(Path("/repo"))
     token = [row for row in rows if row["table"] == 6]
-    assert {(row["token_budget"], row["beam_size"], row["adaptive_helper_mask"], row["helper_selection_policy"]) for row in token} == {(1, 2, True, "bandit"), (2, 2, True, "bandit"), (4, 2, True, "bandit")}
+    assert {(row["token_budget"], row["beam_size"], row["adaptive_helper_mask"], row["helper_selection_policy"]) for row in token} == {(2, 2, True, "bandit"), (4, 2, True, "bandit")}
     beam = [row for row in rows if row["table"] == 7]
-    assert {(row["token_budget"], row["beam_size"], row["adaptive_helper_mask"], row["helper_selection_policy"]) for row in beam} == {(1, 1, True, "bandit"), (1, 2, True, "bandit"), (1, 4, True, "bandit")}
+    assert {(row["token_budget"], row["beam_size"], row["adaptive_helper_mask"], row["helper_selection_policy"]) for row in beam} == {(1, 1, True, "bandit"), (1, 4, True, "bandit")}
     mask = [row for row in rows if row["table"] == 8]
-    assert {(row["adaptive_helper_mask"], row["beam_size"], row["token_budget"], row["helper_selection_policy"]) for row in mask} == {(False, 2, 1, "bandit"), (True, 2, 1, "bandit")}
+    assert {(row["adaptive_helper_mask"], row["beam_size"], row["token_budget"], row["helper_selection_policy"]) for row in mask} == {(False, 2, 1, "bandit")}
+
+    control = next(row for row in rows if row["cell_id"] == "t5-opus5-gsm_symbolic")
+    assert control["paper_cells"] == [
+        {"table": 5, "table_cell_id": "table5-opus5-gsm_symbolic"},
+        {"table": 6, "table_cell_id": "t6-opus5-gsm_symbolic-b1-B2-m1"},
+        {"table": 7, "table_cell_id": "t7-opus5-gsm_symbolic-b1-B2-m1"},
+        {"table": 8, "table_cell_id": "t8-opus5-gsm_symbolic-b1-B2-m1"},
+    ]
 
 
 def test_commands_bind_canonical_splits_and_no_warm_start():
@@ -118,12 +168,15 @@ def test_gpu_admission_uses_cold_queue_memory_contract():
     assert queue.choose_gpu(row, snapshot, {}, snapshot, (2,)) is None
 
 
-def test_multi_gpu_rows_get_only_scoped_safe_pair():
+def test_one_gpu_rows_fill_distinct_gpu_lanes_without_sharing():
     row = queue.build_scope(Path("/repo"))[0]
     snapshot = {gpu: {"used_mib": 0, "free_mib": 40960, "total_mib": 40960} for gpu in (0, 1, 2)}
-    assert queue.choose_gpus(row, snapshot, {}, snapshot, (1, 2)) == (1, 2)
-    row["gpu_scope"] = [0]
-    assert queue.choose_gpus(row, snapshot, {}, snapshot, (1, 2)) is None
+    demand = queue._demand(row, 40960)
+    assert queue.choose_gpus(row, snapshot, {}, snapshot, (1, 2)) == (1,)
+    assert queue.choose_gpus(row, snapshot, {1: demand}, snapshot, (1, 2)) == (2,)
+    assert queue.choose_gpus(
+        row, snapshot, {1: demand, 2: demand}, snapshot, (1, 2)
+    ) is None
 
 
 def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, monkeypatch):
@@ -192,7 +245,7 @@ def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, 
     assert payload["external_runtime"] == external_runtime
     assert payload["python_runtime"] == _test_python_runtime()
     assert set(payload["source_sha256"]) == set(paths)
-    assert len(queue.validate_manifest(tmp_path, payload)) == 11
+    assert len(queue.validate_manifest(tmp_path, payload)) == 8
     wrong_version = json.loads(json.dumps(payload))
     wrong_version["version"] = 2
     with pytest.raises(queue.ConfigError, match="version"):
@@ -432,9 +485,9 @@ def test_gpt_profile_environment_uses_only_pi_oauth_runtime(tmp_path):
 def test_gpt_profile_gate_allows_an_unrelated_parent_openai_api_key():
     row = {"profile": "gpt5.6-sol"}
     environment = {
-        "CSD_PI_NODE_EXECUTABLE": "/bound/node",
-        "CSD_PI_BRIDGE_PATH": "/bound/bridge.mjs",
-        "CSD_PI_AUTH_PATH": "/bound/auth.json",
+        "CSD_PI_NODE_EXECUTABLE": str(queue.CANONICAL_PI_NODE_EXECUTABLE),
+        "CSD_PI_BRIDGE_PATH": str(queue.CANONICAL_PI_BRIDGE_PATH),
+        "CSD_PI_AUTH_PATH": str(queue.CANONICAL_PI_AUTH_PATH),
         "OPENAI_API_KEY": "parent-key-is-scrubbed-before-the-child",
     }
 
@@ -654,12 +707,39 @@ def _bind_export_case(row, payload, tmp_path):
     payload["winning_attempt"] = 1
     payload.setdefault("synthesis_attempts", 1)
     payload.setdefault("synthesis_terminal_status", "accepted")
+    payload.setdefault(
+        "runtime",
+        {
+            "row_started_at": "2026-09-01T00:00:00Z",
+            "synthesis_started_at": "2026-09-01T00:00:00Z",
+            "synthesis_finished_at": "2026-09-01T00:10:00Z",
+            "synthesis_wall_time_seconds": 600.0,
+            "heldout_started_at": "2026-09-01T00:10:00Z",
+            "heldout_finished_at": "2026-09-01T00:12:00Z",
+            "heldout_wall_time_seconds": 120.0,
+            "row_finished_at": "2026-09-01T00:12:00Z",
+            "total_wall_time_seconds": 720.0,
+            "phase_timing_coverage": "all_phases",
+            "attempt_evaluation_times_seconds": [11.5],
+            "attempt_timing_coverage": "winning_attempt_only",
+            "heldout_evaluator_total_time_seconds": 90.0,
+            "heldout_recorded_run_wall_time_seconds": 120.0,
+        },
+    )
     return row, payload
 
 
 def _fake_compiled_selection(tmp_path, compiled, *, winning_attempt=1):
     report = tmp_path / f"selection-{compiled.parent.name}.json"
-    report.write_text("sealed synthesis report", encoding="utf-8")
+    report.write_text(
+        json.dumps(
+            {
+                "total_attempts": winning_attempt,
+                "evaluation_result": {"total_time_seconds": 11.5},
+            }
+        ),
+        encoding="utf-8",
+    )
     return {
         "compiled_csd_path": compiled,
         "report_path": report,
@@ -704,6 +784,73 @@ def test_export_records_accuracy_syntax_attempts_and_terminal_status(tmp_path):
     assert cell["synthesis_terminal_status"] == "accepted"
 
 
+def test_export_reuses_one_opus_control_for_tables_6_to_8(tmp_path):
+    rows = queue.build_scope(Path("/repo"))
+    bound_rows = []
+    values = []
+    for row in rows:
+        payload = {
+            "cell_id": row["cell_id"],
+            "accuracy": 0.5,
+            "syntax_rate": 0.95,
+            "metrics": {"mean_constrained_work": 12.0},
+        }
+        bound_row, bound_payload = _bind_export_case(row, payload, tmp_path)
+        bound_rows.append(bound_row)
+        values.append(bound_payload)
+
+    queue.export_results(bound_rows, values, tmp_path / "out.json")
+
+    cells = json.loads((tmp_path / "out.json").read_text())["cells"]
+    assert len(cells) == 11
+    control_ids = {
+        "table5-opus5-gsm_symbolic",
+        "t6-opus5-gsm_symbolic-b1-B2-m1",
+        "t7-opus5-gsm_symbolic-b1-B2-m1",
+        "t8-opus5-gsm_symbolic-b1-B2-m1",
+    }
+    controls = [cell for cell in cells if cell["table_cell_id"] in control_ids]
+    assert len(controls) == 4
+    assert {cell["sources"][0]["cell_id"] for cell in controls} == {
+        "t5-opus5-gsm_symbolic"
+    }
+    assert len({cell["sources"][0]["heldout_artifact_sha256"] for cell in controls}) == 1
+
+
+def test_export_records_phase_and_attempt_runtimes(tmp_path):
+    row = queue.build_scope(Path("/repo"))[0]
+    runtime = {
+        "row_started_at": "2026-09-01T00:00:00Z",
+        "synthesis_started_at": "2026-09-01T00:00:00Z",
+        "synthesis_finished_at": "2026-09-01T00:10:00Z",
+        "synthesis_wall_time_seconds": 600.0,
+        "heldout_started_at": "2026-09-01T00:10:00Z",
+        "heldout_finished_at": "2026-09-01T00:12:00Z",
+        "heldout_wall_time_seconds": 120.0,
+        "row_finished_at": "2026-09-01T00:12:00Z",
+        "total_wall_time_seconds": 720.0,
+        "phase_timing_coverage": "all_phases",
+        "attempt_evaluation_times_seconds": [31.25, 28.5],
+        "attempt_timing_coverage": "all_attempts",
+        "heldout_evaluator_total_time_seconds": 90.0,
+        "heldout_recorded_run_wall_time_seconds": 119.5,
+    }
+    payload = {
+        "cell_id": row["cell_id"],
+        "accuracy": 0.5,
+        "syntax_rate": 0.95,
+        "metrics": {"mean_constrained_work": 12.0},
+        "runtime": runtime,
+    }
+    row, payload = _bind_export_case(row, payload, tmp_path)
+
+    queue.export_results([row], [payload], tmp_path / "out.json")
+
+    assert json.loads((tmp_path / "out.json").read_text())["cells"][0][
+        "runtime"
+    ] == runtime
+
+
 def test_export_is_bound_to_manifest_commit_and_terminal_artifact(tmp_path):
     row = next(
         candidate
@@ -730,6 +877,22 @@ def test_export_is_bound_to_manifest_commit_and_terminal_artifact(tmp_path):
         "synthesis_report_path": str(report),
         "synthesis_report_sha256": queue.hash_file(report),
         "winning_attempt": 1,
+        "runtime": {
+            "row_started_at": "2026-09-01T00:00:00Z",
+            "synthesis_started_at": "2026-09-01T00:00:00Z",
+            "synthesis_finished_at": "2026-09-01T00:10:00Z",
+            "synthesis_wall_time_seconds": 600.0,
+            "heldout_started_at": "2026-09-01T00:10:00Z",
+            "heldout_finished_at": "2026-09-01T00:12:00Z",
+            "heldout_wall_time_seconds": 120.0,
+            "row_finished_at": "2026-09-01T00:12:00Z",
+            "total_wall_time_seconds": 720.0,
+            "phase_timing_coverage": "all_phases",
+            "attempt_evaluation_times_seconds": [11.5],
+            "attempt_timing_coverage": "winning_attempt_only",
+            "heldout_evaluator_total_time_seconds": 90.0,
+            "heldout_recorded_run_wall_time_seconds": 120.0,
+        },
         "reevaluation_provenance": {
             "compiled_csd_path": str(compiled),
             "compiled_csd_sha256": queue.hash_file(compiled),
@@ -1481,11 +1644,46 @@ def test_terminal_loader_records_synthesis_attempts_and_status(
 ):
     row = queue.build_scope(tmp_path)[0]
     row.update(manifest_sha256="a" * 64, manifest_commit="b" * 40)
+    runtime = {
+        "row_started_at": "2026-09-01T00:00:00Z",
+        "synthesis_started_at": "2026-09-01T00:00:00Z",
+        "synthesis_finished_at": "2026-09-01T00:10:00Z",
+        "synthesis_wall_time_seconds": 600.0,
+        "heldout_started_at": "2026-09-01T00:10:00Z",
+        "heldout_finished_at": "2026-09-01T00:12:00Z",
+        "heldout_wall_time_seconds": 120.0,
+        "row_finished_at": "2026-09-01T00:12:00Z",
+        "total_wall_time_seconds": 720.0,
+        "phase_timing_coverage": "all_phases",
+        "attempt_evaluation_times_seconds": [31.25],
+        "attempt_timing_coverage": "winning_attempt_only",
+        "heldout_evaluator_total_time_seconds": 90.0,
+        "heldout_recorded_run_wall_time_seconds": 119.5,
+    }
     artifact = tmp_path / row["heldout_output_json"]
     artifact.parent.mkdir(parents=True, exist_ok=True)
-    artifact.write_text("{}", encoding="utf-8")
+    artifact.write_text(
+        json.dumps(
+            {
+                "metrics": {
+                    "evaluator_total_time_seconds": 90.0,
+                    "run_wall_time_seconds": 119.5,
+                },
+                "controller_runtime": runtime,
+            }
+        ),
+        encoding="utf-8",
+    )
     report = tmp_path / "success_report.json"
-    report.write_text(json.dumps({"total_attempts": 7}), encoding="utf-8")
+    report.write_text(
+        json.dumps(
+            {
+                "total_attempts": 7,
+                "evaluation_result": {"total_time_seconds": 31.25},
+            }
+        ),
+        encoding="utf-8",
+    )
     state_dir = tmp_path / "state"
     queue.write_state(
         state_dir / f"{row['cell_id']}.json",
@@ -1501,6 +1699,16 @@ def test_terminal_loader_records_synthesis_attempts_and_status(
             "synthesis_report_path": str(report),
             "synthesis_report_sha256": queue.hash_file(report),
             "winning_attempt": 7,
+            "row_started_at": "2026-09-01T00:00:00Z",
+            "synthesis_started_at": "2026-09-01T00:00:00Z",
+            "synthesis_finished_at": "2026-09-01T00:10:00Z",
+            "synthesis_wall_time_seconds": 600.0,
+            "heldout_started_at": "2026-09-01T00:10:00Z",
+            "heldout_finished_at": "2026-09-01T00:12:00Z",
+            "heldout_wall_time_seconds": 120.0,
+            "row_finished_at": "2026-09-01T00:12:00Z",
+            "total_wall_time_seconds": 720.0,
+            "phase_timing_coverage": "all_phases",
         },
     )
     monkeypatch.setattr(queue, "_report_binding_is_valid", lambda *args: True)
@@ -1510,6 +1718,7 @@ def test_terminal_loader_records_synthesis_attempts_and_status(
 
     assert values[0]["synthesis_attempts"] == 7
     assert values[0]["synthesis_terminal_status"] == "accepted"
+    assert values[0]["runtime"] == runtime
 
 
 def test_terminal_loader_rejects_selected_synthesis_report_after_mutation(tmp_path):
@@ -2502,7 +2711,7 @@ def test_gemini_api_key_probe_lists_the_exact_model_without_exposing_key(monkeyp
     assert captured["timeout"] == 30
 
 
-def test_campaign_environment_loads_only_gemini_key_from_private_env(tmp_path):
+def test_campaign_environment_adds_canonical_nonsecret_provider_routes(tmp_path):
     private_env = tmp_path / ".env"
     private_env.write_text(
         "GEMINI_API_KEY='gemini-key'\nOPENAI_API_KEY=must-not-load\n",
@@ -2510,7 +2719,16 @@ def test_campaign_environment_loads_only_gemini_key_from_private_env(tmp_path):
     )
     original = {"PATH": "/bin"}
     loaded = queue.campaign_environment(original, credential_file=private_env)
-    assert loaded == {"PATH": "/bin", "GEMINI_API_KEY": "gemini-key"}
+    assert loaded == {
+        "PATH": "/bin",
+        "GEMINI_API_KEY": "gemini-key",
+        "CSD_PI_NODE_EXECUTABLE": str(queue.CANONICAL_PI_NODE_EXECUTABLE),
+        "CSD_PI_BRIDGE_PATH": str(queue.CANONICAL_PI_BRIDGE_PATH),
+        "CSD_PI_AUTH_PATH": str(queue.CANONICAL_PI_AUTH_PATH),
+        "CSD_CLAUDE_CONFIG_DIR": str(queue.CANONICAL_CLAUDE_CONFIG_DIR),
+        "CSD_CLAUDE_EXPECTED_ACCOUNT": queue.CANONICAL_CLAUDE_EXPECTED_ACCOUNT,
+    }
+    queue.validate_profile_gates(queue.build_scope(Path("/repo")), loaded)
     assert original == {"PATH": "/bin"}
 
 
@@ -2909,6 +3127,71 @@ def test_restart_recovery_hash_pins_compiled_before_heldout_launch(
         runner=runner,
     )
     assert result["status"] == "complete"
+
+
+def test_pre_timing_heldout_recovery_anchors_unknown_phase_times(
+    tmp_path, monkeypatch
+):
+    row = _fixture_row("smiles", tmp_path)
+    row.update(manifest_sha256="manifest", manifest_commit="manifest")
+    state_dir = tmp_path / "state"
+    state_path = state_dir / f"{row['cell_id']}.json"
+    compiled = tmp_path / "compiled/GeneratedCSD.py"
+    compiled.parent.mkdir()
+    compiled.write_text("compiled", encoding="utf-8")
+    selection = _fake_compiled_selection(tmp_path, compiled)
+    queue.write_state(
+        state_path,
+        {
+            "cell_id": row["cell_id"],
+            "status": "running",
+            "phase": "heldout",
+            "manifest_sha256": "manifest",
+            "manifest_commit": "manifest",
+            "compiled_csd_path": str(compiled),
+            "compiled_sha256": queue.hash_file(compiled),
+            **queue._selection_state(selection),
+        },
+    )
+    monkeypatch.setattr(queue, "child_is_same_process", lambda state: False)
+    monkeypatch.setattr(
+        queue, "_report_binding_is_valid", lambda state, candidate, repo: True
+    )
+    monkeypatch.setattr(
+        queue, "heldout_artifact_is_valid", lambda path, candidate: path.is_file()
+    )
+    command = []
+
+    class Process:
+        pid = 456
+        returncode = 0
+
+        def communicate(self):
+            output = Path(command[command.index("--output-json") + 1])
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text("{}", encoding="utf-8")
+            return "", ""
+
+    def runner(argv, **kwargs):
+        command[:] = argv
+        return Process()
+
+    result = queue.run_row(
+        row,
+        repo=tmp_path,
+        python=Path("python"),
+        state_dir=state_dir,
+        gpus=(0,),
+        runner=runner,
+    )
+
+    assert result["status"] == "complete"
+    artifact = json.loads(Path(result["heldout_output_json"]).read_text())
+    runtime = artifact["controller_runtime"]
+    assert runtime["phase_timing_coverage"] == "recovery_anchor"
+    assert runtime["synthesis_wall_time_seconds"] == 0.0
+    assert runtime["row_started_at"] == runtime["synthesis_started_at"]
+    assert runtime["synthesis_started_at"] == runtime["synthesis_finished_at"]
 
 
 def test_constrained_window_rate_distinguishes_equal_syntax_by_work():

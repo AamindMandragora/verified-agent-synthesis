@@ -68,6 +68,117 @@ def hash_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def utc_timestamp(epoch: float | None = None) -> str:
+    """Return one stable UTC timestamp for persisted controller evidence."""
+    moment = datetime.fromtimestamp(
+        time.time() if epoch is None else float(epoch), tz=timezone.utc
+    )
+    return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _nonnegative_seconds(value: Any, *, field: str) -> float:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"runtime field {field} is missing or invalid") from exc
+    if not math.isfinite(seconds) or seconds < 0:
+        raise ConfigError(f"runtime field {field} is missing or invalid")
+    return round(seconds, 4)
+
+
+def _persisted_epoch(state: dict[str, Any], field: str, default: float) -> float:
+    """Reuse a phase start across controller restarts or initialize it once."""
+    raw = state.get(field)
+    if raw is None:
+        return float(default)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"runtime field {field} is invalid") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ConfigError(f"runtime field {field} is invalid")
+    return value
+
+
+def _runtime_evidence(
+    state: dict[str, Any], report: dict[str, Any], heldout: dict[str, Any]
+) -> dict[str, Any]:
+    """Build a validated, artifact-storable timing summary for one row."""
+    timestamp_fields = (
+        "row_started_at",
+        "synthesis_started_at",
+        "synthesis_finished_at",
+        "heldout_started_at",
+        "heldout_finished_at",
+        "row_finished_at",
+    )
+    runtime: dict[str, Any] = {}
+    for field in timestamp_fields:
+        value = state.get(field)
+        if not isinstance(value, str):
+            raise ConfigError(f"runtime field {field} is missing or invalid")
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ConfigError(f"runtime field {field} is missing or invalid") from exc
+        runtime[field] = value
+    for field in (
+        "synthesis_wall_time_seconds",
+        "heldout_wall_time_seconds",
+        "total_wall_time_seconds",
+    ):
+        runtime[field] = _nonnegative_seconds(state.get(field), field=field)
+    if runtime["total_wall_time_seconds"] + 0.01 < (
+        runtime["synthesis_wall_time_seconds"]
+            + runtime["heldout_wall_time_seconds"]
+    ):
+        raise ConfigError("total row runtime is shorter than its two phases")
+    phase_coverage = state.get("phase_timing_coverage")
+    if phase_coverage not in {"all_phases", "recovery_anchor"}:
+        raise ConfigError("runtime field phase_timing_coverage is missing or invalid")
+    runtime["phase_timing_coverage"] = phase_coverage
+
+    total_attempts = report.get("total_attempts")
+    attempts = report.get("attempts")
+    attempt_times: list[float | None] = []
+    coverage = "not_recorded"
+    if isinstance(attempts, list) and type(total_attempts) is int:
+        for attempt in attempts:
+            evaluation = attempt.get("evaluation") if isinstance(attempt, dict) else None
+            raw = evaluation.get("total_time_seconds") if isinstance(evaluation, dict) else None
+            if isinstance(raw, (int, float)) and math.isfinite(float(raw)) and raw >= 0:
+                attempt_times.append(round(float(raw), 4))
+            else:
+                attempt_times.append(None)
+        coverage = (
+            "all_attempts"
+            if len(attempt_times) == total_attempts and all(value is not None for value in attempt_times)
+            else "partial_attempts"
+        )
+    else:
+        evaluation = report.get("evaluation_result")
+        raw = evaluation.get("total_time_seconds") if isinstance(evaluation, dict) else None
+        if isinstance(raw, (int, float)) and math.isfinite(float(raw)) and raw >= 0:
+            attempt_times = [round(float(raw), 4)]
+            coverage = "winning_attempt_only"
+    runtime["attempt_evaluation_times_seconds"] = attempt_times
+    runtime["attempt_timing_coverage"] = coverage
+
+    metrics = heldout.get("metrics")
+    metrics = metrics if isinstance(metrics, dict) else {}
+    for source_key, output_key in (
+        ("evaluator_total_time_seconds", "heldout_evaluator_total_time_seconds"),
+        ("run_wall_time_seconds", "heldout_recorded_run_wall_time_seconds"),
+    ):
+        raw = metrics.get(source_key)
+        runtime[output_key] = (
+            None
+            if raw is None
+            else _nonnegative_seconds(raw, field=output_key)
+        )
+    return runtime
+
+
 def start_logged_child(
     argv: list[str], *, cwd: Path, env: dict[str, str], log_path: Path
 ) -> subprocess.Popen:
@@ -107,6 +218,16 @@ class ConfigError(ValueError):
 EVAL_MODEL = "Qwen/Qwen3.5-2B"
 CANONICAL_PYTHON = Path("/apps/conda/aadivyar/envs/csd/bin/python")
 CANONICAL_GEMINI_ENV_FILE = Path("/home/aadivyar/csd-generation/synthesis/.env")
+CANONICAL_PI_NODE_EXECUTABLE = Path(
+    "/home/aadivyar/.local/share/cursor-agent/versions/2026.07.23-e383d2b/node"
+)
+CANONICAL_PI_BRIDGE_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "synthesis/generate/pi_oauth/provider/bridge.mjs"
+)
+CANONICAL_PI_AUTH_PATH = Path("/home/aadivyar/.pi/csd-table5-8/auth.json")
+CANONICAL_CLAUDE_CONFIG_DIR = Path("/home/aadivyar/.claude-csd-synthesis")
+CANONICAL_CLAUDE_EXPECTED_ACCOUNT = "ssdear@gmail.com"
 DISK_FIXED_SAFETY_BYTES = 2 * 1024**3
 DISK_BYTES_PER_UNRESOLVED_ROW = 128 * 1024**2
 GPU_SAFETY_MIB = 2_000
@@ -203,7 +324,7 @@ SOURCE_PATHS = (
 
 MANIFEST_KEYS = frozenset({"version", "git_commit", "crane_commit", "crane_source_sha256", "source_sha256", "execution_source_sha256", "external_runtime", "python_runtime", "jobs", "provider_pilots", "provider_pilot_sha256"})
 JOB_KEYS = frozenset({
-    "cell_id", "table", "table_cell_id", "benchmark", "dataset", "task", "profile",
+    "cell_id", "table", "table_cell_id", "paper_cells", "benchmark", "dataset", "task", "profile",
     "generation_backend", "generation_model", "eval_model", "synthesis_max_tokens",
     "synthesis_reasoning_budget",
     "effective_output_tokens", "effective_thinking_tokens",
@@ -221,10 +342,15 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
     settings = DATASET_SETTINGS[benchmark]
     author = TABLE5_PROFILES[profile]
     sample = settings["feedback"]
+    table_cell_id = controls.pop("table_cell_id", cell_id)
+    paper_cells = controls.pop(
+        "paper_cells", [{"table": table, "table_cell_id": table_cell_id}]
+    )
     return {
         "cell_id": cell_id,
         "table": table,
-        "table_cell_id": controls.pop("table_cell_id", cell_id),
+        "table_cell_id": table_cell_id,
+        "paper_cells": paper_cells,
         "benchmark": benchmark,
         "dataset": benchmark,
         "task": TASKS[benchmark],
@@ -251,9 +377,9 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
         "eval_max_steps": settings["steps"],
         "eval_max_seconds": 600.0,
         "gpu_mem_util": float(VLLM_GPU_MEMORY_UTILIZATION_BY_MODEL[EVAL_MODEL]),
-        "memory_reservation_mib": 14_336,
+        "memory_reservation_mib": 20_480,
         "gpu_scope": [0, 1, 2, 3],
-        "gpu_count": 2 if benchmark in {"gsm_symbolic", "spider"} else 1,
+        "gpu_count": 1,
         "heldout_split_name": "test",
         "heldout_split_file": CANONICAL_SPLITS.get(benchmark),
         "sample_count": settings["heldout"],
@@ -265,10 +391,18 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
 
 
 def build_scope(repo: Path) -> list[dict[str, Any]]:
-    """Return exactly the 11 requested GSM synthesis runs, in stable order."""
+    """Return eight cold runs that populate eleven paper cells."""
     rows: list[dict[str, Any]] = []
     for profile in TABLE5_PROFILES:
         cell = f"t5-{profile}-gsm_symbolic"
+        paper_cells = None
+        if profile == "opus5":
+            paper_cells = [
+                {"table": 5, "table_cell_id": "table5-opus5-gsm_symbolic"},
+                {"table": 6, "table_cell_id": "t6-opus5-gsm_symbolic-b1-B2-m1"},
+                {"table": 7, "table_cell_id": "t7-opus5-gsm_symbolic-b1-B2-m1"},
+                {"table": 8, "table_cell_id": "t8-opus5-gsm_symbolic-b1-B2-m1"},
+            ]
         rows.append(
             _row(
                 cell,
@@ -276,12 +410,13 @@ def build_scope(repo: Path) -> list[dict[str, Any]]:
                 "gsm_symbolic",
                 profile,
                 table_cell_id=f"table5-{profile}-gsm_symbolic",
+                **({"paper_cells": paper_cells} if paper_cells is not None else {}),
             )
         )
     for table, settings in (
-        (6, [(1, 2, True), (2, 2, True), (4, 2, True)]),
-        (7, [(1, 1, True), (1, 2, True), (1, 4, True)]),
-        (8, [(1, 2, False), (1, 2, True)]),
+        (6, [(2, 2, True), (4, 2, True)]),
+        (7, [(1, 1, True), (1, 4, True)]),
+        (8, [(1, 2, False)]),
     ):
         for token_budget, beam_size, mask in settings:
             cell = f"t{table}-opus5-gsm_symbolic-b{token_budget}-B{beam_size}-m{int(mask)}"
@@ -323,6 +458,84 @@ def constrained_window_rate(value: dict[str, Any]) -> float:
     if not isinstance(work, (int, float)) or work < 0:
         raise ConfigError("result is missing validated mean_constrained_work for CW")
     return float(work)
+
+
+RUNTIME_EXPORT_KEYS = frozenset(
+    {
+        "row_started_at",
+        "synthesis_started_at",
+        "synthesis_finished_at",
+        "synthesis_wall_time_seconds",
+        "heldout_started_at",
+        "heldout_finished_at",
+        "heldout_wall_time_seconds",
+        "row_finished_at",
+        "total_wall_time_seconds",
+        "phase_timing_coverage",
+        "attempt_evaluation_times_seconds",
+        "attempt_timing_coverage",
+        "heldout_evaluator_total_time_seconds",
+        "heldout_recorded_run_wall_time_seconds",
+    }
+)
+
+
+def validated_runtime(value: dict[str, Any], *, cell_id: str) -> dict[str, Any]:
+    """Validate the timing summary embedded in a held-out artifact."""
+    runtime = value.get("runtime")
+    if not isinstance(runtime, dict) or set(runtime) != RUNTIME_EXPORT_KEYS:
+        raise ConfigError(f"missing runtime evidence for {cell_id}")
+    for field in (
+        "row_started_at",
+        "synthesis_started_at",
+        "synthesis_finished_at",
+        "heldout_started_at",
+        "heldout_finished_at",
+        "row_finished_at",
+    ):
+        raw = runtime.get(field)
+        if not isinstance(raw, str):
+            raise ConfigError(f"missing runtime evidence for {cell_id}")
+        try:
+            datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ConfigError(f"missing runtime evidence for {cell_id}") from exc
+    for field in (
+        "synthesis_wall_time_seconds",
+        "heldout_wall_time_seconds",
+        "total_wall_time_seconds",
+    ):
+        _nonnegative_seconds(runtime.get(field), field=field)
+    if runtime.get("phase_timing_coverage") not in {
+        "all_phases",
+        "recovery_anchor",
+    }:
+        raise ConfigError(f"missing runtime evidence for {cell_id}")
+    attempt_times = runtime.get("attempt_evaluation_times_seconds")
+    if not isinstance(attempt_times, list) or any(
+        item is not None
+        and (
+            not isinstance(item, (int, float))
+            or not math.isfinite(float(item))
+            or item < 0
+        )
+        for item in attempt_times
+    ):
+        raise ConfigError(f"missing runtime evidence for {cell_id}")
+    if runtime.get("attempt_timing_coverage") not in {
+        "all_attempts",
+        "partial_attempts",
+        "winning_attempt_only",
+        "not_recorded",
+    }:
+        raise ConfigError(f"missing runtime evidence for {cell_id}")
+    for field in (
+        "heldout_evaluator_total_time_seconds",
+        "heldout_recorded_run_wall_time_seconds",
+    ):
+        if runtime.get(field) is not None:
+            _nonnegative_seconds(runtime[field], field=field)
+    return dict(runtime)
 
 
 def provider_pilot_from_report(
@@ -554,7 +767,7 @@ def claude_auth_probe(environment: dict[str, str]) -> dict[str, Any]:
     """Check the exact first-party Max account without sending a prompt."""
     executable = environment.get("CSD_CLAUDE_EXECUTABLE", "claude")
     checked = dict(environment)
-    checked["CLAUDE_CONFIG_DIR"] = "/home/aadivyar/.claude-csd-synthesis"
+    checked["CLAUDE_CONFIG_DIR"] = str(CANONICAL_CLAUDE_CONFIG_DIR)
     try:
         result = subprocess.run(
             [executable, "auth", "status", "--json"],
@@ -573,7 +786,7 @@ def claude_auth_probe(environment: dict[str, str]) -> dict[str, Any]:
     exact = (
         result.returncode == 0
         and payload.get("loggedIn") is True
-        and payload.get("email") == "ssdear@gmail.com"
+        and payload.get("email") == CANONICAL_CLAUDE_EXPECTED_ACCOUNT
         and payload.get("authMethod") == "claude.ai"
         and payload.get("apiProvider") == "firstParty"
         and str(payload.get("subscriptionType", "")).lower() == "max"
@@ -582,8 +795,8 @@ def claude_auth_probe(environment: dict[str, str]) -> dict[str, Any]:
         return {"status": "blocked", "reason": "wrong Claude account or route"}
     return {
         "status": "ready",
-        "account": "ssdear@gmail.com",
-        "config_dir": "/home/aadivyar/.claude-csd-synthesis",
+        "account": CANONICAL_CLAUDE_EXPECTED_ACCOUNT,
+        "config_dir": str(CANONICAL_CLAUDE_CONFIG_DIR),
     }
 
 
@@ -640,8 +853,8 @@ def validate_provider_pilot(
     if pilot.get("backend") != backend or pilot.get("model") != model:
         return f"{profile} provider pilot has the wrong route"
     if profile == "opus5" and (
-        pilot.get("config_dir") != "/home/aadivyar/.claude-csd-synthesis"
-        or pilot.get("expected_account") != "ssdear@gmail.com"
+        pilot.get("config_dir") != str(CANONICAL_CLAUDE_CONFIG_DIR)
+        or pilot.get("expected_account") != CANONICAL_CLAUDE_EXPECTED_ACCOUNT
     ):
         return "opus5 provider pilot has the wrong account or config"
     if pilot.get("attempt_count") != 1:
@@ -886,7 +1099,9 @@ def make_admission_guard(
 
 def provider_preflight() -> list[dict[str, str]]:
     """Check only local configuration; never call a paid provider."""
-    claude_dir = Path(os.environ.get("CSD_CLAUDE_CONFIG_DIR", "/home/aadivyar/.claude-csd-synthesis"))
+    claude_dir = Path(
+        os.environ.get("CSD_CLAUDE_CONFIG_DIR", str(CANONICAL_CLAUDE_CONFIG_DIR))
+    )
     return [
         {"profile": "gpt5.6-sol", "backend": "codex", "status": "not_checked_without_provider_call"},
         {
@@ -1070,8 +1285,8 @@ def expected_author_route(
     if profile == "opus5":
         return {
             "auth_mode": "claude_code_max",
-            "config_dir": "/home/aadivyar/.claude-csd-synthesis",
-            "expected_account": "ssdear@gmail.com",
+            "config_dir": str(CANONICAL_CLAUDE_CONFIG_DIR),
+            "expected_account": CANONICAL_CLAUDE_EXPECTED_ACCOUNT,
             "account_verified": True,
         }
     if profile == "gemini3.7-flash":
@@ -1119,11 +1334,11 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
                 f"{profile} provider pilot Python runtime does not match the manifest"
             )
     rows = payload.get("jobs")
-    if not isinstance(rows, list) or len(rows) != 11:
-        raise ConfigError("manifest must contain exactly 11 Table 5--8 GSM jobs")
+    if not isinstance(rows, list) or len(rows) != 8:
+        raise ConfigError("manifest must contain exactly 8 Table 5--8 GSM jobs")
     expected = build_scope(repo)
     immutable_fields = {
-        "cell_id", "table", "table_cell_id", "benchmark", "dataset", "task",
+        "cell_id", "table", "table_cell_id", "paper_cells", "benchmark", "dataset", "task",
         "profile", "generation_backend", "generation_model", "eval_model",
         "smiles_class", "token_budget", "beam_size", "adaptive_helper_mask",
         "helper_selection_policy", "max_iterations", "min_accuracy",
@@ -1233,8 +1448,17 @@ def campaign_environment(
     *,
     credential_file: Path = CANONICAL_GEMINI_ENV_FILE,
 ) -> dict[str, str]:
-    """Load only the private Gemini key needed by this campaign."""
+    """Install exact non-secret routes and load only the private Gemini key."""
     result = dict(os.environ if environment is None else environment)
+    result.update(
+        {
+            "CSD_PI_NODE_EXECUTABLE": str(CANONICAL_PI_NODE_EXECUTABLE),
+            "CSD_PI_BRIDGE_PATH": str(CANONICAL_PI_BRIDGE_PATH),
+            "CSD_PI_AUTH_PATH": str(CANONICAL_PI_AUTH_PATH),
+            "CSD_CLAUDE_CONFIG_DIR": str(CANONICAL_CLAUDE_CONFIG_DIR),
+            "CSD_CLAUDE_EXPECTED_ACCOUNT": CANONICAL_CLAUDE_EXPECTED_ACCOUNT,
+        }
+    )
     if result.get("GEMINI_API_KEY"):
         return result
     try:
@@ -1469,16 +1693,18 @@ def synthesis_environment(row: dict[str, Any], gpus: tuple[int, ...], inherited:
     )
     env["CSD_OUTPUT_NAME"] = str(row["output_name"])
     if row["profile"] == "gpt5.6-sol":
-        for name in ("CSD_PI_NODE_EXECUTABLE", "CSD_PI_AUTH_PATH"):
-            if inherited.get(name):
-                env[name] = inherited[name]
+        env["CSD_PI_NODE_EXECUTABLE"] = inherited.get(
+            "CSD_PI_NODE_EXECUTABLE", str(CANONICAL_PI_NODE_EXECUTABLE)
+        )
         env["CSD_PI_BRIDGE_PATH"] = inherited.get(
-            "CSD_PI_BRIDGE_PATH",
-            str(repo / "synthesis" / "generate" / "pi_oauth" / "provider" / "bridge.mjs"),
+            "CSD_PI_BRIDGE_PATH", str(CANONICAL_PI_BRIDGE_PATH)
+        )
+        env["CSD_PI_AUTH_PATH"] = inherited.get(
+            "CSD_PI_AUTH_PATH", str(CANONICAL_PI_AUTH_PATH)
         )
     if row["profile"] == "opus5":
-        env["CSD_CLAUDE_CONFIG_DIR"] = "/home/aadivyar/.claude-csd-synthesis"
-        env["CSD_CLAUDE_EXPECTED_ACCOUNT"] = "ssdear@gmail.com"
+        env["CSD_CLAUDE_CONFIG_DIR"] = str(CANONICAL_CLAUDE_CONFIG_DIR)
+        env["CSD_CLAUDE_EXPECTED_ACCOUNT"] = CANONICAL_CLAUDE_EXPECTED_ACCOUNT
     if row["profile"] != "gpt5.6-sol":
         isolated_home = repo / ".context" / "table5_8" / f"{row['profile']}-home"
         isolated_home.mkdir(parents=True, exist_ok=True)
@@ -1785,16 +2011,22 @@ def validate_profile_gates(rows: list[dict[str, Any]], environment: dict[str, st
         profile = row["profile"]
         LOGGER.info("[tableq] profile-gate profile=%s", profile)
         if profile == "opus5":
-            if environment.get("CSD_CLAUDE_CONFIG_DIR") != "/home/aadivyar/.claude-csd-synthesis" or environment.get("CSD_CLAUDE_EXPECTED_ACCOUNT") != "ssdear@gmail.com":
+            if (
+                environment.get("CSD_CLAUDE_CONFIG_DIR")
+                != str(CANONICAL_CLAUDE_CONFIG_DIR)
+                or environment.get("CSD_CLAUDE_EXPECTED_ACCOUNT")
+                != CANONICAL_CLAUDE_EXPECTED_ACCOUNT
+            ):
                 raise ConfigError("opus5 requires the exact Max config directory and account")
         elif profile == "gpt5.6-sol":
-            for name in (
-                "CSD_PI_NODE_EXECUTABLE",
-                "CSD_PI_BRIDGE_PATH",
-                "CSD_PI_AUTH_PATH",
-            ):
-                if not environment.get(name):
-                    raise ConfigError(f"gpt5.6-sol requires {name}")
+            expected = {
+                "CSD_PI_NODE_EXECUTABLE": str(CANONICAL_PI_NODE_EXECUTABLE),
+                "CSD_PI_BRIDGE_PATH": str(CANONICAL_PI_BRIDGE_PATH),
+                "CSD_PI_AUTH_PATH": str(CANONICAL_PI_AUTH_PATH),
+            }
+            for name, value in expected.items():
+                if environment.get(name) != value:
+                    raise ConfigError(f"gpt5.6-sol requires canonical {name}")
         elif profile == "gemini3.7-flash":
             if not environment.get("GEMINI_API_KEY"):
                 LOGGER.error("[tableq] auth-block profile=gemini3.7-flash reason=missing-api-key")
@@ -1868,6 +2100,12 @@ def load_terminal_results(
         ]
         report_path = Path(str(state["synthesis_report_path"]))
         report = json.loads(report_path.read_text(encoding="utf-8"))
+        runtime = _runtime_evidence(state, report, payload)
+        if payload.get("controller_runtime") != runtime:
+            raise ConfigError(
+                f"held-out runtime evidence is incomplete or unbound: {row['cell_id']}"
+            )
+        payload["runtime"] = runtime
         attempts = report.get("total_attempts")
         terminal_status = {
             "success_report.json": "accepted",
@@ -1889,6 +2127,13 @@ def load_terminal_results(
             row["cell_id"],
             attempts,
             terminal_status,
+        )
+        LOGGER.info(
+            "[tableq] runtime cell=%s synthesis_seconds=%.4f heldout_seconds=%.4f total_seconds=%.4f",
+            row["cell_id"],
+            runtime["synthesis_wall_time_seconds"],
+            runtime["heldout_wall_time_seconds"],
+            runtime["total_wall_time_seconds"],
         )
         values.append(payload)
     return values
@@ -2460,12 +2705,49 @@ def run_row(
         if recovered_fingerprint is None:
             recovered = None
         else:
+            synthesis_finished_epoch = time.time()
+            had_measured_synthesis_timing = all(
+                prior.get(field) is not None
+                for field in (
+                    "row_started_epoch",
+                    "row_started_at",
+                    "synthesis_started_epoch",
+                    "synthesis_started_at",
+                )
+            )
+            synthesis_started_epoch = _persisted_epoch(
+                prior, "synthesis_started_epoch", synthesis_finished_epoch
+            )
+            row_started_epoch = _persisted_epoch(
+                prior, "row_started_epoch", synthesis_started_epoch
+            )
             prior = dict(
                 prior,
                 phase="heldout",
+                row_started_epoch=row_started_epoch,
+                row_started_at=prior.get("row_started_at")
+                or utc_timestamp(row_started_epoch),
+                synthesis_started_epoch=synthesis_started_epoch,
+                synthesis_started_at=prior.get("synthesis_started_at")
+                or utc_timestamp(synthesis_started_epoch),
+                synthesis_finished_at=utc_timestamp(synthesis_finished_epoch),
+                synthesis_wall_time_seconds=round(
+                    synthesis_finished_epoch - synthesis_started_epoch, 4
+                ),
+                phase_timing_coverage=prior.get("phase_timing_coverage")
+                or (
+                    "all_phases"
+                    if had_measured_synthesis_timing
+                    else "recovery_anchor"
+                ),
                 **_selection_state(recovered_selection),
             )
             save(prior)
+            LOGGER.info(
+                "[tableq] phase-finished cell=%s phase=synthesis wall_seconds=%.4f recovered=true",
+                row["cell_id"],
+                prior["synthesis_wall_time_seconds"],
+            )
             phase = "heldout"
     if recovered is None and phase == "synthesis" and prior.get("status") == "running":
         failed = dict(prior, status="failed", reason="synthesis child ended without a new bound compiled artifact", exit_code=1)
@@ -2476,6 +2758,10 @@ def run_row(
     if phase == "synthesis":
         latest = repo / "outputs" / "generated" / str(row["output_name"]) / "latest_run.txt"
         before_output = artifact_fingerprint(latest)
+        synthesis_started_epoch = time.time()
+        row_started_epoch = _persisted_epoch(
+            prior, "row_started_epoch", synthesis_started_epoch
+        )
         starting = dict(
             prior,
             manifest_sha256=row.get("manifest_sha256"),
@@ -2489,6 +2775,12 @@ def run_row(
             reservation_mib=reserved_mib,
             log_file=str(log_path),
             output_before=before_output,
+            row_started_epoch=row_started_epoch,
+            row_started_at=prior.get("row_started_at")
+            or utc_timestamp(row_started_epoch),
+            synthesis_started_epoch=synthesis_started_epoch,
+            synthesis_started_at=utc_timestamp(synthesis_started_epoch),
+            phase_timing_coverage="all_phases",
         )
         save(starting)
         try:
@@ -2512,6 +2804,19 @@ def run_row(
         save(running)
         _output, _ = wait_logged_child(process)
         exit_code = process.returncode
+        synthesis_finished_epoch = time.time()
+        running.update(
+            synthesis_finished_at=utc_timestamp(synthesis_finished_epoch),
+            synthesis_wall_time_seconds=round(
+                synthesis_finished_epoch - synthesis_started_epoch, 4
+            ),
+        )
+        LOGGER.info(
+            "[tableq] phase-finished cell=%s phase=synthesis wall_seconds=%.4f exit_code=%s",
+            row["cell_id"],
+            running["synthesis_wall_time_seconds"],
+            exit_code,
+        )
         running.pop("pid", None); running.pop("pid_start", None)
         has_new_run = artifact_is_new_or_replaced(latest, before_output)
         if not has_new_run:
@@ -2571,6 +2876,36 @@ def run_row(
         compiled_sha256=expected_compiled_sha,
         manifest_commit=prior.get("manifest_commit"),
     )
+    heldout_started_epoch = _persisted_epoch(
+        prior, "heldout_started_epoch", time.time()
+    )
+    synthesis_timing_fields = (
+        "row_started_epoch",
+        "row_started_at",
+        "synthesis_started_epoch",
+        "synthesis_started_at",
+        "synthesis_finished_at",
+        "synthesis_wall_time_seconds",
+    )
+    phase_timing_coverage = prior.get("phase_timing_coverage")
+    if phase_timing_coverage is not None and phase_timing_coverage not in {
+        "all_phases",
+        "recovery_anchor",
+    }:
+        raise ConfigError("runtime field phase_timing_coverage is invalid")
+    if not all(prior.get(field) is not None for field in synthesis_timing_fields):
+        prior = dict(
+            prior,
+            row_started_epoch=heldout_started_epoch,
+            row_started_at=utc_timestamp(heldout_started_epoch),
+            synthesis_started_epoch=heldout_started_epoch,
+            synthesis_started_at=utc_timestamp(heldout_started_epoch),
+            synthesis_finished_at=utc_timestamp(heldout_started_epoch),
+            synthesis_wall_time_seconds=0.0,
+            phase_timing_coverage="recovery_anchor",
+        )
+    elif phase_timing_coverage is None:
+        prior = dict(prior, phase_timing_coverage="all_phases")
     starting = dict(
         prior,
         status="starting",
@@ -2579,6 +2914,9 @@ def run_row(
         reservation_mib=reserved_mib,
         log_file=str(log_path),
         heldout_output_before=before,
+        heldout_started_epoch=heldout_started_epoch,
+        heldout_started_at=prior.get("heldout_started_at")
+        or utc_timestamp(heldout_started_epoch),
     )
     save(starting)
     try:
@@ -2604,9 +2942,49 @@ def run_row(
     save(running)
     _output, _ = wait_logged_child(process)
     exit_code = process.returncode
+    heldout_finished_epoch = time.time()
+    row_started_epoch = _persisted_epoch(
+        running, "row_started_epoch", heldout_started_epoch
+    )
+    running.update(
+        heldout_finished_at=utc_timestamp(heldout_finished_epoch),
+        heldout_wall_time_seconds=round(
+            heldout_finished_epoch - heldout_started_epoch, 4
+        ),
+        row_finished_at=utc_timestamp(heldout_finished_epoch),
+        total_wall_time_seconds=round(
+            heldout_finished_epoch - row_started_epoch, 4
+        ),
+    )
+    LOGGER.info(
+        "[tableq] phase-finished cell=%s phase=heldout wall_seconds=%.4f total_seconds=%.4f exit_code=%s",
+        row["cell_id"],
+        running["heldout_wall_time_seconds"],
+        running["total_wall_time_seconds"],
+        exit_code,
+    )
     running.pop("pid", None); running.pop("pid_start", None)
     if exit_code != 0 or not artifact_is_new_or_replaced(temporary, None) or not heldout_artifact_is_valid(temporary, heldout_row):
         failed = dict(running, status="failed", exit_code=exit_code or 1, reason="held-out evaluation failed or produced no artifact")
+        save(failed)
+        return failed
+    report_path = Path(str(running["synthesis_report_path"]))
+    report_payload = json.loads(report_path.read_text(encoding="utf-8"))
+    heldout_payload = json.loads(temporary.read_text(encoding="utf-8"))
+    heldout_payload["controller_runtime"] = _runtime_evidence(
+        running, report_payload, heldout_payload
+    )
+    temporary.write_text(
+        json.dumps(heldout_payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    if not heldout_artifact_is_valid(temporary, heldout_row):
+        failed = dict(
+            running,
+            status="failed",
+            exit_code=1,
+            reason="held-out runtime evidence failed artifact revalidation",
+        )
         save(failed)
         return failed
     temporary.replace(final_output)
@@ -2920,8 +3298,14 @@ def export_results(rows: list[dict[str, Any]], values: list[dict[str, Any]], out
             or source["winning_attempt"] < 1
         ):
             raise ConfigError(f"missing sealed export evidence for {row['cell_id']}")
-        value.update({"cell_id": row["cell_id"], "table": row["table"], "table_cell_id": row["table_cell_id"], "benchmark": row["benchmark"]})
+        value.update(
+            {
+                "cell_id": row["cell_id"],
+                "benchmark": row["benchmark"],
+            }
+        )
         value["paper_source"] = source
+        value["runtime"] = validated_runtime(value, cell_id=str(row["cell_id"]))
         if row["benchmark"] != "smiles":
             metric = "accuracy"
             if not isinstance(value.get(metric), (int, float)):
@@ -2949,7 +3333,25 @@ def export_results(rows: list[dict[str, Any]], values: list[dict[str, Any]], out
                 raise ConfigError(f"missing validated smiles_paper_trial for {row['cell_id']}")
             value["sample_count"] = count
             value["unique_valid_rate"] = unique / count
-        groups.setdefault(row["table_cell_id"], []).append(value)
+        paper_cells = row.get("paper_cells")
+        if not isinstance(paper_cells, list) or not paper_cells:
+            raise ConfigError(f"missing paper-cell mapping for {row['cell_id']}")
+        for mapping in paper_cells:
+            if (
+                not isinstance(mapping, dict)
+                or set(mapping) != {"table", "table_cell_id"}
+                or type(mapping.get("table")) is not int
+                or mapping["table"] not in {5, 6, 7, 8}
+                or not isinstance(mapping.get("table_cell_id"), str)
+                or not mapping["table_cell_id"]
+            ):
+                raise ConfigError(f"invalid paper-cell mapping for {row['cell_id']}")
+            mapped = dict(
+                value,
+                table=mapping["table"],
+                table_cell_id=mapping["table_cell_id"],
+            )
+            groups.setdefault(mapping["table_cell_id"], []).append(mapped)
     for cell_id, group in groups.items():
         item = {"table_cell_id": cell_id, "table": group[0]["table"], "benchmark": group[0]["benchmark"]}
         item["sources"] = [value["paper_source"] for value in group]
@@ -2965,6 +3367,7 @@ def export_results(rows: list[dict[str, Any]], values: list[dict[str, Any]], out
                 "synthesis_terminal_status"
             ]
             item["cw"] = group[0]["cw"]
+            item["runtime"] = group[0]["runtime"]
         cells.append(item)
     output.parent.mkdir(parents=True, exist_ok=True)
     temp = output.with_suffix(output.suffix + ".tmp")
@@ -2986,8 +3389,16 @@ def export_results(rows: list[dict[str, Any]], values: list[dict[str, Any]], out
 
 def main() -> int:
     private_environment = campaign_environment(dict(os.environ))
-    if private_environment.get("GEMINI_API_KEY"):
-        os.environ["GEMINI_API_KEY"] = private_environment["GEMINI_API_KEY"]
+    for name in (
+        "GEMINI_API_KEY",
+        "CSD_PI_NODE_EXECUTABLE",
+        "CSD_PI_BRIDGE_PATH",
+        "CSD_PI_AUTH_PATH",
+        "CSD_CLAUDE_CONFIG_DIR",
+        "CSD_CLAUDE_EXPECTED_ACCOUNT",
+    ):
+        if private_environment.get(name):
+            os.environ[name] = private_environment[name]
     if "--controller" in sys.argv[1:]:
         controller_args = [arg for arg in sys.argv[1:] if arg != "--controller"]
         return controller_main(controller_parser().parse_args(controller_args))
@@ -3004,8 +3415,8 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     rows = build_scope(args.repo)
-    if len(rows) != 11:
-        raise SystemExit(f"scope error: expected 11 rows, got {len(rows)}")
+    if len(rows) != 8:
+        raise SystemExit(f"scope error: expected 8 rows, got {len(rows)}")
     if args.dry_run:
         for row in rows:
             print(row["cell_id"], shlex.join(synthesis_command(row, Path(sys.executable))))

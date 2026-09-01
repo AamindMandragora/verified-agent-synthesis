@@ -62,6 +62,10 @@ pinned Pi provider layer with ChatGPT/Codex OAuth. It sends the campaign system
 instructions and one user message directly to `gpt-5.6-sol`, with no Pi agent
 session, tools, prior conversation, or Codex CLI instructions. It must not use
 `OPENAI_API_KEY` or `codex exec`.
+The Tables 5--8 controller launches 8 one-GPU GSM-Symbolic runs and maps the
+shared default Opus control into 11 paper cells. Its terminal evidence must keep
+synthesis, held-out, and total wall times plus phase timestamps and any
+available per-attempt evaluation times.
 
 - Quick smoke run (fast sanity check, low sample count):
   `CUDA_VISIBLE_DEVICES=2,3 python -m synthesis.run_synthesis --task "Solve math word problems with constrained symbolic expressions." --dataset gsm_symbolic --min-accuracy 0.0 --min-syntax-rate 0.0 --max-iterations 1 --eval-sample-size 1 --eval-max-steps 256 --output-name smoke_gsm`
