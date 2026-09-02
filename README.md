@@ -42,6 +42,12 @@ The synthesis loop runs these stages repeatedly until thresholds are met or iter
 
 Runtime artifacts now live under `outputs/`:
 
+The paper Tables 5--8 queue uses `Qwen/Qwen2.5-1.5B-Instruct` on the fixed
+GSM-Symbolic split with a 20/49 accuracy and 47/49 syntax target. It runs seven
+fresh synthesis rows and one sealed historical Opus control; that control is
+recompiled and reevaluated, and is kept explicitly separate from fresh accepted
+synthesis results.
+
 - `outputs/generated/`
 - `outputs/baselines/`
 

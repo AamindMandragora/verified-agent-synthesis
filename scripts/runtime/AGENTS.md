@@ -130,8 +130,9 @@ never add warm-start inputs, and never delete an interrupted or failed claim.
 `run_table5_8_queue.py` is the separate 8-run GSM-Symbolic campaign for the
 Table 5 backend cells and Tables 6--8 ablations. It uses exact profiles
 `gpt5.6-sol`/Pi provider-only ChatGPT OAuth, `gemini3.7-flash`/direct Gemini API, and
-`opus5`/Claude Code, and always
-evaluates GSM-Symbolic with `Qwen/Qwen3.5-2B`. Table 5 has 3 author-model runs;
+`opus5`/Claude Code, and always evaluates GSM-Symbolic with
+`Qwen/Qwen2.5-1.5B-Instruct` against the exact 20/49 accuracy and 47/49 syntax
+target. Table 5 has 2 fresh author-model runs plus 1 sealed historical Opus row;
 Tables 6--8 add 2 token-budget runs, 2 beam-size runs, and 1 helper-mask run.
 The default Opus run supplies the shared budget-1, beam-2, and mask-on controls,
 so the 8 physical runs populate 11 paper cells. Every row uses exactly one GPU
@@ -142,6 +143,13 @@ available per-attempt evaluation times. Runtime evidence must set
 `recovery_anchor`. The synthesis command uses the
 canonical train split selected inside `run_synthesis`; held-out commands use the
 matching canonical test split and an isolated output file.
+
+The historical Opus control must bind cold attempt 38 and copy its exact Dafny,
+success report, run log, and old held-out result into the sealed campaign. The
+controller must recompile that exact Dafny and run a new held-out evaluation,
+without making an Opus author call. Export it as `imported_below_target` unless
+its historical training metrics actually met the current target; never relabel
+it as a fresh or accepted synthesis run.
 
 The Gemini campaign route loads only `GEMINI_API_KEY` from the canonical
 private `synthesis/.env`, passes no Vertex or backup credential, and binds only

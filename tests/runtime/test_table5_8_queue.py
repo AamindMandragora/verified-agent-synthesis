@@ -52,10 +52,24 @@ def test_exact_table5_to_table8_scope():
     assert sum(row["table"] == 6 for row in rows) == 2
     assert sum(row["table"] == 7 for row in rows) == 2
     assert sum(row["table"] == 8 for row in rows) == 1
-    assert all(row["eval_model"] == "Qwen/Qwen3.5-2B" for row in rows)
+    assert all(
+        row["eval_model"] == "Qwen/Qwen2.5-1.5B-Instruct" for row in rows
+    )
     assert {row["benchmark"] for row in rows} == {"gsm_symbolic"}
     assert all(row["gpu_count"] == 1 for row in rows)
     assert all(row["memory_reservation_mib"] == 20_480 for row in rows)
+    assert all(row["min_accuracy"] == 20 / 49 for row in rows)
+    assert all(row["min_syntax_rate"] == 47 / 49 for row in rows)
+    imported = [row for row in rows if row["execution_mode"] == "imported_strategy"]
+    fresh = [row for row in rows if row["execution_mode"] == "fresh_synthesis"]
+    assert [row["cell_id"] for row in imported] == ["t5-opus5-gsm_symbolic"]
+    assert len(fresh) == 7
+    assert imported[0]["imported_evidence"]["historical_attempt"] == 38
+    assert imported[0]["imported_evidence"]["historical_train"] == {
+        "correct": 11,
+        "syntax_valid": 45,
+        "sample_count": 49,
+    }
 
 
 def test_direct_dry_run_prints_all_eight_physical_runs():
@@ -128,8 +142,15 @@ def test_ablation_scope_has_exact_single_variable_settings():
 
 def test_commands_bind_canonical_splits_and_no_warm_start():
     for row in queue.build_scope(Path("/repo")):
+        if row["execution_mode"] == "imported_strategy":
+            with pytest.raises(queue.ConfigError, match="does not launch synthesis"):
+                queue.synthesis_command(row, Path("/env/python"))
+            continue
         command = queue.synthesis_command(row, Path("/env/python"))
-        assert command[command.index("--eval-model") + 1] == "Qwen/Qwen3.5-2B"
+        assert (
+            command[command.index("--eval-model") + 1]
+            == "Qwen/Qwen2.5-1.5B-Instruct"
+        )
         assert command[command.index("--max-iterations") + 1] == "40"
         assert "--initial-strategy-file" not in command
         assert command[command.index("--generation-backend") + 1] == row["generation_backend"]
@@ -138,6 +159,141 @@ def test_commands_bind_canonical_splits_and_no_warm_start():
         if row["table"] in (6, 7, 8):
             assert command[command.index("--refinement-beam-size") + 1] == str(row["beam_size"])
             assert command[command.index("--helper-selection-policy") + 1] == "bandit"
+
+
+def test_imported_opus_evidence_is_copied_into_the_sealed_campaign(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    artifacts = {}
+    for name, contents in {
+        "strategy_dafny": b"method Main() {}\n",
+        "run_log": b"SUCCESS after 38 attempt(s)\n",
+        "success_report": b'{"total_attempts": 38}\n',
+        "heldout_result": b'{"accuracy": 0.2857142857142857}\n',
+    }.items():
+        path = source / name
+        path.write_bytes(contents)
+        artifacts[name] = {
+            "source_path": str(path),
+            "sha256": queue.hash_file(path),
+        }
+    row = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["execution_mode"] == "imported_strategy"
+    )
+    row["imported_evidence"] = dict(
+        row["imported_evidence"], artifacts=artifacts
+    )
+
+    [sealed] = queue.materialize_imported_evidence(tmp_path, [row])
+    approved_evidence = json.loads(json.dumps(sealed["imported_evidence"]))
+
+    assert sealed["execution_mode"] == "imported_strategy"
+    for name, binding in sealed["imported_evidence"]["artifacts"].items():
+        sealed_path = tmp_path / binding["sealed_path"]
+        assert sealed_path.is_file()
+        assert queue.hash_file(sealed_path) == artifacts[name]["sha256"]
+    queue.validate_imported_evidence(tmp_path, sealed)
+
+    strategy = (
+        tmp_path
+        / sealed["imported_evidence"]["artifacts"]["strategy_dafny"]["sealed_path"]
+    )
+    strategy.write_text("changed\n", encoding="utf-8")
+    with pytest.raises(queue.ConfigError, match="imported strategy evidence changed"):
+        queue.validate_imported_evidence(tmp_path, sealed)
+
+    changed_sha = queue.hash_file(strategy)
+    sealed["imported_evidence"]["artifacts"]["strategy_dafny"]["sha256"] = changed_sha
+    with pytest.raises(queue.ConfigError, match="approved import specification"):
+        queue.validate_imported_evidence(
+            tmp_path, sealed, expected_evidence=approved_evidence
+        )
+
+    strategy.write_text("method Main() {}\n", encoding="utf-8")
+    sealed["imported_evidence"] = json.loads(json.dumps(approved_evidence))
+    sealed["imported_evidence"]["extra_metadata"] = "not approved"
+    with pytest.raises(queue.ConfigError, match="schema is invalid"):
+        queue.validate_imported_evidence(tmp_path, sealed)
+
+    sealed["imported_evidence"] = json.loads(json.dumps(approved_evidence))
+    sealed["imported_evidence"]["artifacts"]["extra_artifact"] = {
+        "source_path": "/tmp/unapproved",
+        "sealed_path": ".context/table5_8/imports/unapproved",
+        "sha256": "0" * 64,
+    }
+    with pytest.raises(queue.ConfigError, match="schema is invalid"):
+        queue.validate_imported_evidence(tmp_path, sealed)
+
+
+def test_imported_opus_strategy_is_recompiled_and_reported_without_author_call(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    artifacts = {}
+    for name, contents in {
+        "strategy_dafny": b"method Main() {}\n",
+        "run_log": b"SUCCESS after 38 attempt(s)\n",
+        "success_report": (
+            b'{"total_attempts": 38, "evaluation_result": '
+            b'{"total_time_seconds": 210.19532680511475}}\n'
+        ),
+        "heldout_result": b'{"accuracy": 0.2857142857142857}\n',
+    }.items():
+        path = source / name
+        path.write_bytes(contents)
+        artifacts[name] = {
+            "source_path": str(path),
+            "sha256": queue.hash_file(path),
+        }
+    row = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["execution_mode"] == "imported_strategy"
+    )
+    row["imported_evidence"] = dict(row["imported_evidence"], artifacts=artifacts)
+    [row] = queue.materialize_imported_evidence(tmp_path, [row])
+    row.update(git_commit="a" * 40, execution_source_sha256="b" * 64)
+    compile_calls = []
+
+    class FakeCompiler:
+        def __init__(self, *, output_dir, **kwargs):
+            self.output_dir = output_dir
+
+        def compile(self, source_text, output_name):
+            compile_calls.append((source_text, output_name))
+            output = self.output_dir / output_name
+            output.mkdir(parents=True)
+            (output / "GeneratedCSD.py").write_text("compiled\n", encoding="utf-8")
+            return types.SimpleNamespace(success=True, output_dir=output)
+
+    monkeypatch.setattr(queue, "DafnyCompiler", FakeCompiler)
+
+    selection = queue._prepare_imported_selection(tmp_path, row)
+
+    assert compile_calls == [("method Main() {}\n", row["output_name"])]
+    assert selection["winning_attempt"] == 38
+    report = json.loads(selection["report_path"].read_text(encoding="utf-8"))
+    assert report["terminal_status"] == "imported_below_target"
+    assert report["target_reached"] is False
+    assert report["evaluation_result"]["accuracy"] == 11 / 49
+    assert report["evaluation_result"]["total_time_seconds"] == 210.19532680511475
+    assert report["compiled_from_dafny_sha256"] == artifacts["strategy_dafny"]["sha256"]
+    run_source = selection["report_path"].parent.parent / "dafny" / "GeneratedCSD.dfy"
+    assert report["compiled_from_dafny_path"] == str(run_source.resolve())
+    assert queue.hash_file(run_source) == artifacts["strategy_dafny"]["sha256"]
+    assert queue._imported_selection(tmp_path, row) == selection
+
+    with pytest.raises(queue.ConfigError, match="existing imported run"):
+        queue._prepare_imported_selection(tmp_path, row)
+
+    run_source.unlink()
+    assert queue._imported_selection(tmp_path, row) is None
+
+    selection["compiled_csd_path"].write_text("changed\n", encoding="utf-8")
+    assert queue._imported_selection(tmp_path, row) is None
 
 
 def test_table5_smiles_export_is_sample_count_weighted():
@@ -364,7 +520,7 @@ def test_environment_binds_selected_gpu_cap_and_opus_account(monkeypatch, tmp_pa
 def test_external_runtime_binding_pins_qwen_revision_and_spider_tree(tmp_path):
     login_home = tmp_path / "home"
     hf_home = login_home / ".cache" / "huggingface"
-    model_root = hf_home / "hub" / "models--Qwen--Qwen3.5-2B"
+    model_root = hf_home / "hub" / "models--Qwen--Qwen2.5-1.5B-Instruct"
     revision = "1" * 40
     (model_root / "refs").mkdir(parents=True)
     (model_root / "refs" / "main").write_text(revision + "\n", encoding="utf-8")
@@ -432,7 +588,7 @@ def test_artifact_guard_rejects_unchanged_preexisting_output(tmp_path):
 def test_frozen_common_bars_and_author_token_budget_are_bound():
     rows = queue.build_scope(Path("/repo"))
     expected = {
-        "gsm_symbolic": (13 / 49, 0.9),
+        "gsm_symbolic": (20 / 49, 47 / 49),
         "spider": (59 / 300, 0.9),
         "smiles": {"acrylates": (0.14, 0.9), "chain_extenders": (0.20, 0.9), "isocyanates": (0.30, 0.9)},
     }
@@ -1144,7 +1300,13 @@ def test_exhausted_failure_report_best_compiled_candidate_is_recoverable(tmp_pat
 
 
 def test_synthesis_exhaustion_with_best_candidate_continues_to_heldout(tmp_path, monkeypatch):
-    row = next(r for r in queue.build_scope(tmp_path) if r["profile"] == "opus5" and r["benchmark"] == "gsm_symbolic")
+    row = next(
+        r
+        for r in queue.build_scope(tmp_path)
+        if r["profile"] == "opus5"
+        and r["benchmark"] == "gsm_symbolic"
+        and r["execution_mode"] == "fresh_synthesis"
+    )
     latest = tmp_path / "outputs" / "generated" / row["output_name"] / "latest_run.txt"
     compiled = tmp_path / "compiled" / "GeneratedCSD.py"
     compiled.parent.mkdir(parents=True)
@@ -1449,6 +1611,8 @@ def test_every_generated_option_is_in_real_synthesis_parser_help():
     )
     assert help_result.returncode == 0, help_result.stderr
     for row in queue.build_scope(Path("/repo")):
+        if row["execution_mode"] == "imported_strategy":
+            continue
         command = queue.synthesis_command(row, Path("python"))
         flags = [part for part in command if part.startswith("--")]
         assert all(flag in help_result.stdout for flag in flags), (row["cell_id"], flags)
@@ -1566,7 +1730,11 @@ def test_admission_guard_does_not_age_out_startup_validated_immutable_pilot(
 def test_compiled_output_uses_strict_cold_report_validation_for_every_profile(
     tmp_path, monkeypatch, profile
 ):
-    row = next(r for r in queue.build_scope(tmp_path) if r["profile"] == profile)
+    row = next(
+        r
+        for r in queue.build_scope(tmp_path)
+        if r["profile"] == profile and r["execution_mode"] == "fresh_synthesis"
+    )
     compiled = tmp_path / profile / "GeneratedCSD.py"
     compiled.parent.mkdir(parents=True)
     compiled.write_text("compiled", encoding="utf-8")
@@ -1992,6 +2160,40 @@ def test_dispatch_rechecks_admission_after_gpu_fit_before_launch(
         )
     assert launches == []
     assert provider_checks == [True]
+
+
+def test_dispatch_imported_strategy_does_not_require_provider_admission(
+    tmp_path, monkeypatch
+):
+    row = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["execution_mode"] == "imported_strategy"
+    )
+    admissions = []
+    monkeypatch.setattr(
+        queue,
+        "run_row",
+        lambda candidate, **kwargs: {
+            "cell_id": candidate["cell_id"],
+            "status": "complete",
+        },
+    )
+
+    results = queue.dispatch(
+        [row],
+        repo=tmp_path,
+        python=Path("python"),
+        state_dir=tmp_path / "state",
+        allowed=(3,),
+        snapshot=lambda: {
+            3: {"total_mib": 40960, "free_mib": 40960, "used_mib": 0}
+        },
+        admission_check=lambda candidate, **kwargs: admissions.append(kwargs),
+    )
+
+    assert results[0]["status"] == "complete"
+    assert admissions == [{"require_provider": False}]
 
 
 def test_dispatch_rejects_unknown_row_state_before_any_admission_or_launch(

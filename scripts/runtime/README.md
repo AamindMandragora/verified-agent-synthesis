@@ -56,12 +56,17 @@ repeated merely because the controller restarted.
 ## Tables 5--8 synthesis queue
 
 The missing Table 5--8 synthesis cells are described by
-`run_table5_8_queue.py`. It launches exactly 8 GSM-Symbolic runs: 3 Table 5
-author-model runs, 2 additional Table 6 token-budget runs, 2 additional Table 7
+`run_table5_8_queue.py`. It manages exactly 8 GSM-Symbolic rows: 2 fresh Table 5
+author-model runs, 1 sealed historical Opus Table 5 row, 2 additional Table 6 token-budget runs, 2 additional Table 7
 beam-size runs, and 1 additional Table 8 mask-off run. The default Opus run is
 the shared budget-1, beam-2, and mask-on control, so those 8 runs populate 11
 paper cells without rerunning the same configuration. Every run uses one GPU,
-the exact `Qwen/Qwen3.5-2B` evaluator, and at most 40 cold synthesis attempts.
+the exact `Qwen/Qwen2.5-1.5B-Instruct` evaluator, and fresh rows use at most 40
+cold synthesis attempts. The target is 20/49 accuracy and 47/49 syntax. The
+Opus control reuses historical cold attempt 38, seals its original Dafny,
+report, log, and held-out bytes, recompiles that Dafny with current code, and
+runs a fresh held-out evaluation. It is labeled `imported_below_target`, not a
+new accepted synthesis result.
 The export records held-out accuracy, syntax rate, attempts used,
 accepted/exhausted status, constrained work, synthesis and held-out wall time,
 total wall time, phase timestamps, and available per-attempt evaluation times.

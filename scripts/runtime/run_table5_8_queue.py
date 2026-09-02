@@ -39,6 +39,8 @@ from synthesis.generate.pi_oauth import (
     stored_pi_oauth_route,
 )
 from synthesis.run_constants import VLLM_GPU_MEMORY_UTILIZATION_BY_MODEL
+from synthesis.project_defaults import default_dafny_path
+from synthesis.verify.compiler import DafnyCompiler
 from synthesis.source_snapshot import (
     execution_source_hashes,
     execution_source_paths,
@@ -215,7 +217,7 @@ def wait_logged_child(process: Any) -> tuple[Any, Any]:
 class ConfigError(ValueError):
     """The manifest or runtime configuration cannot be safely launched."""
 
-EVAL_MODEL = "Qwen/Qwen3.5-2B"
+EVAL_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
 CANONICAL_PYTHON = Path("/apps/conda/aadivyar/envs/csd/bin/python")
 CANONICAL_GEMINI_ENV_FILE = Path("/home/aadivyar/csd-generation/synthesis/.env")
 CANONICAL_PI_NODE_EXECUTABLE = Path(
@@ -236,10 +238,10 @@ AUTHOR_TOKEN_BUDGET = 32768
 AUTHOR_REASONING_BUDGET = 4096
 BAR_BINDINGS = {
     "gsm_symbolic": {
-        "min_accuracy": 13 / 49,
-        "min_syntax_rate": 0.9,
-        "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/.context/claude_recovery_queue_0715/pending_manifest.json",
-        "source_sha256": "b6e2c6e4cc22120ef59b6f40b19456a30beb5f52197ea8c690909653747c7e99",
+        "min_accuracy": 20 / 49,
+        "min_syntax_rate": 47 / 49,
+        "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/saved-results/2026-08-05-corrected-full-baseline-evidence.json",
+        "source_sha256": "57392e149cea23efe6f596b921c6cd3d74ae7519e7c286393adadc9bdb579ab7",
     },
     "spider": {
         "min_accuracy": 59 / 300,
@@ -253,6 +255,30 @@ BAR_BINDINGS = {
         "isocyanates": {"min_accuracy": 0.30, "min_syntax_rate": 0.9},
         "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/saved-results/2026-08-05-corrected-full-baseline-cold-manifest.json",
         "source_sha256": "06c285b2c948c16d9d09b3473ed34ed08ff12ac7efd81bbaaf767d53a0a4d05c",
+    },
+}
+IMPORTED_OPUS_BASE = {
+    "source_git_commit": "9d009711635064cc8f8d8d752b3163972034771b",
+    "historical_attempt": 38,
+    "historical_train": {"correct": 11, "syntax_valid": 45, "sample_count": 49},
+    "historical_heldout": {"correct": 14, "syntax_valid": 45, "sample_count": 49},
+    "artifacts": {
+        "strategy_dafny": {
+            "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/outputs/generated/coldq_fullbaseline_20260803_gsm-qwen25-1p5b/coldq_fullbaseline_20260803_gsm-qwen25-1p5b_20260804_060028_e0a771/dafny/GeneratedCSD.dfy",
+            "sha256": "5c0a3e900eb18d1c9e661f11b82a0d0c11e3f5250e61bfcc7f9378cc2c06e8fa",
+        },
+        "run_log": {
+            "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/outputs/generated/coldq_fullbaseline_20260803_gsm-qwen25-1p5b/run.log",
+            "sha256": "f08750c3eb2367472b227a054db8d6d0ce890d3fe0fc728e54b7ade0e6a04792",
+        },
+        "success_report": {
+            "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/outputs/generated/coldq_fullbaseline_20260803_gsm-qwen25-1p5b/coldq_fullbaseline_20260803_gsm-qwen25-1p5b_20260804_060028_e0a771/results/success_report.json",
+            "sha256": "ff71e5bbb8409ba8394ed68493c0e6fe4cef061fea666196a7a0a8c338ba998b",
+        },
+        "heldout_result": {
+            "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/outputs/reeval/full_baseline_corrected_20260805/gsm-qwen25-1p5b.json",
+            "sha256": "050a5722ab7577e637d81b1838d28b54bf243581c8300aa53922b56f7753b861",
+        },
     },
 }
 SMILES_CLASSES = ("acrylates", "chain_extenders", "isocyanates")
@@ -334,7 +360,7 @@ JOB_KEYS = frozenset({
     "eval_max_steps", "eval_max_seconds", "gpu_mem_util", "memory_reservation_mib",
     "gpu_scope", "gpu_count", "heldout_split_name", "heldout_split_file", "sample_count",
     "output_name", "heldout_output_json", "log_file", "cold_start", "git_commit",
-    "launch_commit", "expected_author_route",
+    "launch_commit", "expected_author_route", "execution_mode", "imported_evidence",
 })
 
 
@@ -346,6 +372,8 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
     paper_cells = controls.pop(
         "paper_cells", [{"table": table, "table_cell_id": table_cell_id}]
     )
+    execution_mode = controls.pop("execution_mode", "fresh_synthesis")
+    imported_evidence = controls.pop("imported_evidence", None)
     return {
         "cell_id": cell_id,
         "table": table,
@@ -387,6 +415,8 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
         "heldout_output_json": f"outputs/reeval/table5_8/{cell_id}.json",
         "log_file": f"outputs/generated/table5_8_{cell_id}/run.log",
         "cold_start": True,
+        "execution_mode": execution_mode,
+        "imported_evidence": imported_evidence,
     }
 
 
@@ -410,6 +440,10 @@ def build_scope(repo: Path) -> list[dict[str, Any]]:
                 "gsm_symbolic",
                 profile,
                 table_cell_id=f"table5-{profile}-gsm_symbolic",
+                execution_mode=(
+                    "imported_strategy" if profile == "opus5" else "fresh_synthesis"
+                ),
+                imported_evidence=(IMPORTED_OPUS_BASE if profile == "opus5" else None),
                 **({"paper_cells": paper_cells} if paper_cells is not None else {}),
             )
         )
@@ -436,11 +470,26 @@ def build_scope(repo: Path) -> list[dict[str, Any]]:
 
 
 def synthesis_command(row: dict[str, Any], python: Path) -> list[str]:
+    if row.get("execution_mode") != "fresh_synthesis":
+        raise ConfigError(
+            f"{row['cell_id']} is imported evidence and does not launch synthesis"
+        )
     cmd = [str(python), "-m", "synthesis.run_synthesis", "--task", row["task"], "--dataset", row["dataset"], "--min-accuracy", str(row["min_accuracy"]), "--min-syntax-rate", str(row["min_syntax_rate"]), "--max-iterations", "40", "--eval-model", EVAL_MODEL, "--eval-sample-size", str(row["eval_sample_size"]), "--eval-max-steps", str(row["eval_max_steps"]), "--eval-step-token-budget", str(row["token_budget"]), "--eval-max-seconds-per-example", "600", "--eval-min-examples-before-threshold-stop", str(row["eval_sample_size"]), "--generation-model", row["generation_model"], "--generation-backend", row["generation_backend"], "--synthesis-max-tokens", str(row["synthesis_max_tokens"]), "--synthesizer-reasoning-budget", str(row["synthesis_reasoning_budget"]), "--device", "auto", "--vllm-gpu-memory-utilization", str(row["gpu_mem_util"]), "--refinement-beam-size", str(row["beam_size"]), "--helper-selection-policy", row["helper_selection_policy"]]
     cmd.append("--adaptive-helper-mask" if row["adaptive_helper_mask"] else "--no-adaptive-helper-mask")
     if row["dataset"] == "smiles":
         cmd += ["--smiles-classes", row["smiles_class"], "--smiles-samples-per-class", str(row["eval_sample_size"]), "--smiles-final-samples-per-class", str(row["heldout_sample_size"])]
     return cmd
+
+
+def planned_command(row: dict[str, Any], python: Path) -> list[str]:
+    """Describe one row action without starting provider or GPU work."""
+    if row.get("execution_mode") == "imported_strategy":
+        strategy = row["imported_evidence"]["artifacts"]["strategy_dafny"]
+        return [
+            "controller-import-compile-heldout",
+            str(strategy.get("sealed_path") or strategy.get("source_path")),
+        ]
+    return synthesis_command(row, python)
 
 
 def weighted_smiles_rate(values: Iterable[dict[str, Any]]) -> float:
@@ -1158,6 +1207,7 @@ def manifest_payload(repo: Path, rows: list[dict[str, Any]], provider_pilots: di
     source_digest = execution_source_sha256(repo)
     crane_sources = crane_source_hashes(repo)
     materialized = materialize_frozen_bar_sources(repo)
+    rows = materialize_imported_evidence(repo, rows)
     bound_rows = [
         dict(
             row,
@@ -1221,6 +1271,154 @@ def materialize_frozen_bar_sources(repo: Path) -> dict[str, str]:
         temp.replace(target)
         paths[benchmark] = str(target.relative_to(repo))
     return paths
+
+
+def materialize_imported_evidence(
+    repo: Path, rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Copy every imported source byte into the campaign package."""
+    materialized: list[dict[str, Any]] = []
+    for row in rows:
+        if row.get("execution_mode") != "imported_strategy":
+            materialized.append(row)
+            continue
+        evidence = row.get("imported_evidence")
+        artifacts = evidence.get("artifacts") if isinstance(evidence, dict) else None
+        if not isinstance(artifacts, dict) or set(artifacts) != {
+            "strategy_dafny",
+            "run_log",
+            "success_report",
+            "heldout_result",
+        }:
+            raise ConfigError("imported strategy evidence is incomplete")
+        target_dir = repo / ".context" / "table5_8" / "imports" / row["cell_id"]
+        target_dir.mkdir(parents=True, exist_ok=True)
+        sealed_artifacts: dict[str, dict[str, str]] = {}
+        for name, binding in artifacts.items():
+            source = Path(str(binding.get("source_path") or ""))
+            expected_sha = str(binding.get("sha256") or "")
+            if (
+                not source.is_file()
+                or re.fullmatch(r"[0-9a-f]{64}", expected_sha) is None
+                or hash_file(source) != expected_sha
+            ):
+                raise ConfigError(f"imported strategy source changed: {name}")
+            target = target_dir / name
+            temporary = target.with_suffix(".tmp")
+            shutil.copyfile(source, temporary)
+            temporary.replace(target)
+            sealed_artifacts[name] = {
+                "source_path": str(source),
+                "sealed_path": str(target.relative_to(repo)),
+                "sha256": expected_sha,
+            }
+        sealed = dict(
+            row,
+            imported_evidence=dict(evidence, artifacts=sealed_artifacts),
+        )
+        validate_imported_evidence(repo, sealed)
+        materialized.append(sealed)
+    return materialized
+
+
+def validate_imported_evidence(
+    repo: Path,
+    row: dict[str, Any],
+    *,
+    expected_evidence: dict[str, Any] | None = None,
+) -> None:
+    """Reject missing, moved, or changed bytes for an imported strategy row."""
+    if row.get("execution_mode") == "fresh_synthesis":
+        if row.get("imported_evidence") is not None:
+            raise ConfigError("fresh synthesis row contains imported evidence")
+        return
+    if row.get("execution_mode") != "imported_strategy":
+        raise ConfigError("unknown row execution mode")
+    evidence = row.get("imported_evidence")
+    artifacts = evidence.get("artifacts") if isinstance(evidence, dict) else None
+    if not isinstance(artifacts, dict):
+        raise ConfigError("imported strategy evidence is incomplete")
+    artifact_names = {
+        "strategy_dafny",
+        "run_log",
+        "success_report",
+        "heldout_result",
+    }
+    if set(evidence) != {
+        "source_git_commit",
+        "historical_attempt",
+        "historical_train",
+        "historical_heldout",
+        "artifacts",
+    } or set(artifacts) != artifact_names:
+        raise ConfigError("imported evidence schema is invalid")
+    if (
+        re.fullmatch(r"[0-9a-f]{40}", str(evidence["source_git_commit"])) is None
+        or type(evidence["historical_attempt"]) is not int
+        or evidence["historical_attempt"] < 1
+    ):
+        raise ConfigError("imported evidence schema is invalid")
+    for metrics_name in ("historical_train", "historical_heldout"):
+        metrics = evidence.get(metrics_name)
+        if (
+            not isinstance(metrics, dict)
+            or set(metrics) != {"correct", "syntax_valid", "sample_count"}
+            or any(type(metrics[key]) is not int for key in metrics)
+            or metrics["sample_count"] < 1
+            or not 0 <= metrics["correct"] <= metrics["sample_count"]
+            or not 0 <= metrics["syntax_valid"] <= metrics["sample_count"]
+        ):
+            raise ConfigError("imported evidence schema is invalid")
+    for binding in artifacts.values():
+        if not isinstance(binding, dict) or set(binding) != {
+            "source_path",
+            "sealed_path",
+            "sha256",
+        }:
+            raise ConfigError("imported evidence schema is invalid")
+    if expected_evidence is not None:
+        for key in (
+            "source_git_commit",
+            "historical_attempt",
+            "historical_train",
+            "historical_heldout",
+        ):
+            if evidence.get(key) != expected_evidence.get(key):
+                raise ConfigError("imported evidence differs from approved import specification")
+        expected_artifacts = expected_evidence.get("artifacts")
+        if not isinstance(expected_artifacts, dict):
+            raise ConfigError("approved import specification is incomplete")
+        if set(expected_artifacts) != artifact_names:
+            raise ConfigError("approved import specification is incomplete")
+        for name in artifact_names:
+            actual_binding = artifacts.get(name)
+            expected_binding = expected_artifacts.get(name)
+            if (
+                not isinstance(actual_binding, dict)
+                or not isinstance(expected_binding, dict)
+                or set(expected_binding) != {"source_path", "sha256"}
+                or actual_binding.get("source_path") != expected_binding.get("source_path")
+                or actual_binding.get("sha256") != expected_binding.get("sha256")
+            ):
+                raise ConfigError("imported evidence differs from approved import specification")
+    expected_root = (
+        repo / ".context" / "table5_8" / "imports" / str(row["cell_id"])
+    ).resolve()
+    for name in artifact_names:
+        binding = artifacts.get(name)
+        if not isinstance(binding, dict):
+            raise ConfigError("imported strategy evidence is incomplete")
+        sealed = repo / str(binding.get("sealed_path") or "")
+        try:
+            resolved = sealed.resolve(strict=True)
+        except OSError as exc:
+            raise ConfigError("imported strategy evidence changed") from exc
+        if (
+            resolved.parent != expected_root
+            or resolved.name != name
+            or hash_file(resolved) != binding.get("sha256")
+        ):
+            raise ConfigError("imported strategy evidence changed")
 
 
 def validate_crane_checkout(repo: Path) -> None:
@@ -1348,7 +1546,7 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
         "heldout_sample_size", "eval_max_steps", "eval_max_seconds", "gpu_mem_util",
         "memory_reservation_mib", "gpu_scope", "gpu_count", "heldout_split_name",
         "heldout_split_file", "sample_count", "output_name", "heldout_output_json",
-        "log_file", "cold_start", "bar_source_sha256",
+        "log_file", "cold_start", "bar_source_sha256", "execution_mode",
     }
     for actual, frozen in zip(rows, expected):
         if (
@@ -1359,6 +1557,22 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
         for field in immutable_fields:
             if actual.get(field) != frozen.get(field):
                 raise ConfigError(f"manifest field {field} differs for {frozen['cell_id']}")
+        if actual.get("execution_mode") == "imported_strategy":
+            validate_imported_evidence(
+                repo, actual, expected_evidence=frozen["imported_evidence"]
+            )
+            for key in (
+                "source_git_commit",
+                "historical_attempt",
+                "historical_train",
+                "historical_heldout",
+            ):
+                if actual["imported_evidence"].get(key) != frozen["imported_evidence"].get(key):
+                    raise ConfigError(
+                        f"imported evidence {key} differs for {frozen['cell_id']}"
+                    )
+        elif actual.get("imported_evidence") is not None:
+            raise ConfigError(f"fresh row has imported evidence: {actual['cell_id']}")
         if actual.get("git_commit") != payload.get("git_commit"):
             raise ConfigError(f"row commit is not bound to manifest commit: {actual['cell_id']}")
         if actual.get("launch_commit") != payload.get("git_commit"):
@@ -1614,7 +1828,7 @@ def external_runtime_binding(environment: dict[str, str]) -> dict[str, Any]:
     model_root = (
         Path(paths["HF_HOME"])
         / "hub"
-        / "models--Qwen--Qwen3.5-2B"
+        / f"models--{EVAL_MODEL.replace('/', '--')}"
     )
     ref = model_root / "refs" / "main"
     try:
@@ -2110,6 +2324,7 @@ def load_terminal_results(
         terminal_status = {
             "success_report.json": "accepted",
             "failure_report.json": "exhausted",
+            "import_report.json": "imported_below_target",
         }.get(report_path.name)
         if (
             type(attempts) is not int
@@ -2154,7 +2369,7 @@ def _controller_main_locked(args: argparse.Namespace) -> int:
     if args.dry_run:
         for row in rows:
             LOGGER.info("[tableq] dry-run cell=%s", row["cell_id"])
-            print(row["cell_id"], shlex.join(synthesis_command(row, args.python)))
+            print(row["cell_id"], shlex.join(planned_command(row, args.python)))
         return 0
     disk_space_preflight(repo, unresolved_rows=len(rows))
     validate_runtime_data_paths(dict(os.environ))
@@ -2562,7 +2777,169 @@ def _validated_compiled_output(
     return None if selection is None else selection["compiled_csd_path"]
 
 
+def _imported_report_path(repo: Path, row: dict[str, Any]) -> Path:
+    strategy_sha = row["imported_evidence"]["artifacts"]["strategy_dafny"]["sha256"]
+    run_name = f"{row['output_name']}_imported_{strategy_sha[:12]}"
+    return (
+        repo
+        / "outputs"
+        / "generated"
+        / str(row["output_name"])
+        / run_name
+        / "results"
+        / "import_report.json"
+    )
+
+
+def _historical_import_total_time(repo: Path, row: dict[str, Any]) -> float:
+    """Read the sealed winning-attempt evaluation time from the old report."""
+    binding = row["imported_evidence"]["artifacts"]["success_report"]
+    report_path = (repo / binding["sealed_path"]).resolve(strict=True)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    evaluation = report.get("evaluation_result")
+    raw = evaluation.get("total_time_seconds") if isinstance(evaluation, dict) else None
+    if (
+        report.get("total_attempts") != row["imported_evidence"]["historical_attempt"]
+        or not isinstance(raw, (int, float))
+        or not math.isfinite(float(raw))
+        or raw < 0
+    ):
+        raise ConfigError("sealed historical report has invalid attempt timing")
+    return float(raw)
+
+
+def _imported_selection(repo: Path, row: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        validate_imported_evidence(repo, row)
+        report_path = _imported_report_path(repo, row).resolve(strict=True)
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        expected = row["imported_evidence"]
+        historical = expected["historical_train"]
+        expected_total_time = _historical_import_total_time(repo, row)
+        run_dir = report_path.parent.parent
+        source_copy = (run_dir / "dafny" / "GeneratedCSD.dfy").resolve(strict=True)
+        source_sha = expected["artifacts"]["strategy_dafny"]["sha256"]
+        expected_compiled = (
+            run_dir / "python" / str(row["output_name"]) / "GeneratedCSD.py"
+        ).resolve()
+        expected_evaluation = {
+            "num_examples": historical["sample_count"],
+            "accuracy": historical["correct"] / historical["sample_count"],
+            "syntax_rate": historical["syntax_valid"] / historical["sample_count"],
+            "total_time_seconds": expected_total_time,
+        }
+        if (
+            set(report) != {
+                "report_type",
+                "cell_id",
+                "git_commit",
+                "execution_source_sha256",
+                "total_attempts",
+                "terminal_status",
+                "target_reached",
+                "evaluation_result",
+                "source_evidence",
+                "compiled_from_dafny_path",
+                "compiled_from_dafny_sha256",
+                "compiled_csd_path",
+                "compiled_csd_sha256",
+            }
+            or report.get("report_type") != "imported_strategy"
+            or report.get("cell_id") != row["cell_id"]
+            or report.get("git_commit") != row.get("git_commit")
+            or report.get("execution_source_sha256")
+            != row.get("execution_source_sha256")
+            or report.get("source_evidence") != expected
+            or report.get("total_attempts") != expected["historical_attempt"]
+            or report.get("terminal_status") != "imported_below_target"
+            or report.get("target_reached") is not False
+            or report.get("evaluation_result") != expected_evaluation
+            or report.get("compiled_from_dafny_path") != str(source_copy)
+            or report.get("compiled_from_dafny_sha256") != source_sha
+            or hash_file(source_copy) != source_sha
+        ):
+            return None
+        compiled = Path(str(report.get("compiled_csd_path") or "")).resolve(strict=True)
+        if (
+            compiled != expected_compiled
+            or hash_file(compiled) != report.get("compiled_csd_sha256")
+        ):
+            return None
+        return {
+            "compiled_csd_path": compiled,
+            "report_path": report_path,
+            "report_sha256": hash_file(report_path),
+            "winning_attempt": int(expected["historical_attempt"]),
+        }
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _prepare_imported_selection(repo: Path, row: dict[str, Any]) -> dict[str, Any]:
+    """Recompile one sealed historical strategy and write a current import report."""
+    validate_imported_evidence(repo, row)
+    report_path = _imported_report_path(repo, row)
+    run_dir = report_path.parent.parent
+    if run_dir.exists():
+        raise ConfigError("existing imported run failed evidence validation")
+    dafny_dir = run_dir / "dafny"
+    python_dir = run_dir / "python"
+    report_path.parent.mkdir(parents=True, exist_ok=False)
+    dafny_dir.mkdir(parents=True, exist_ok=False)
+    source_binding = row["imported_evidence"]["artifacts"]["strategy_dafny"]
+    sealed_source = repo / source_binding["sealed_path"]
+    source_copy = dafny_dir / "GeneratedCSD.dfy"
+    shutil.copyfile(sealed_source, source_copy)
+    compiler = DafnyCompiler(
+        dafny_path=default_dafny_path(), output_dir=python_dir, timeout=120
+    )
+    result = compiler.compile(source_copy.read_text(encoding="utf-8"), row["output_name"])
+    if not result.success or result.output_dir is None:
+        raise ConfigError("imported strategy failed current Dafny compilation")
+    compiled = Path(result.output_dir) / "GeneratedCSD.py"
+    if not compiled.is_file():
+        raise ConfigError("imported strategy compilation produced no GeneratedCSD.py")
+    historical = row["imported_evidence"]["historical_train"]
+    historical_total_time = _historical_import_total_time(repo, row)
+    report = {
+        "report_type": "imported_strategy",
+        "cell_id": row["cell_id"],
+        "git_commit": row.get("git_commit"),
+        "execution_source_sha256": row.get("execution_source_sha256"),
+        "total_attempts": row["imported_evidence"]["historical_attempt"],
+        "terminal_status": "imported_below_target",
+        "target_reached": (
+            historical["correct"] / historical["sample_count"]
+            >= float(row["min_accuracy"])
+            and historical["syntax_valid"] / historical["sample_count"]
+            >= float(row["min_syntax_rate"])
+        ),
+        "evaluation_result": {
+            "num_examples": historical["sample_count"],
+            "accuracy": historical["correct"] / historical["sample_count"],
+            "syntax_rate": historical["syntax_valid"] / historical["sample_count"],
+            "total_time_seconds": historical_total_time,
+        },
+        "source_evidence": row["imported_evidence"],
+        "compiled_from_dafny_path": str(source_copy.resolve()),
+        "compiled_from_dafny_sha256": hash_file(source_copy),
+        "compiled_csd_path": str(compiled.resolve()),
+        "compiled_csd_sha256": hash_file(compiled),
+    }
+    temporary = report_path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temporary.replace(report_path)
+    latest = report_path.parents[2] / "latest_run.txt"
+    latest.write_text(str(run_dir.resolve()) + "\n", encoding="utf-8")
+    selection = _imported_selection(repo, row)
+    if selection is None:
+        raise ConfigError("new imported strategy report failed evidence validation")
+    return selection
+
+
 def _compiled_selection(repo: Path, row: dict[str, Any]) -> dict[str, Any] | None:
+    if row.get("execution_mode") == "imported_strategy":
+        return _imported_selection(repo, row)
     cold_job = dict(
         row,
         train_sample_size=row["eval_sample_size"],
@@ -2596,13 +2973,17 @@ def _report_binding_is_valid(
             or hash_file(report_path) != expected_sha
         ):
             return False
-        selection = _validated_compiled_selection(
-            repo,
-            str(row["output_name"]),
-            min_accuracy=float(row["min_accuracy"]),
-            min_syntax_rate=float(row["min_syntax_rate"]),
-            job=row,
-            report_path_override=report_path,
+        selection = (
+            _imported_selection(repo, row)
+            if row.get("execution_mode") == "imported_strategy"
+            else _validated_compiled_selection(
+                repo,
+                str(row["output_name"]),
+                min_accuracy=float(row["min_accuracy"]),
+                min_syntax_rate=float(row["min_syntax_rate"]),
+                job=row,
+                report_path_override=report_path,
+            )
         )
         if selection is None:
             return False
@@ -2643,7 +3024,7 @@ def run_row(
     """Run one synthesis then its held-out evaluation with restart state."""
     path = _state_path(state_dir, row)
     if dry_run:
-        return {"cell_id": row["cell_id"], "status": "dry_run", "command": synthesis_command(row, python)}
+        return {"cell_id": row["cell_id"], "status": "dry_run", "command": planned_command(row, python)}
     def save(payload: dict[str, Any]) -> None:
         with state_lock(state_dir):
             write_state(path, payload)
@@ -2671,9 +3052,12 @@ def run_row(
             LOGGER.info("[tableq] surviving child cell=%s phase=%s pid=%s", row["cell_id"], prior.get("phase"), prior.get("pid"))
             return prior
         phase = str(prior.get("phase") or "synthesis")
-    synthesis_env = synthesis_environment(row, gpus, os.environ, repo)
+    imported = row.get("execution_mode") == "imported_strategy"
+    synthesis_env = (
+        {} if imported else synthesis_environment(row, gpus, os.environ, repo)
+    )
     heldout_env = heldout_environment(row, gpus, os.environ, repo)
-    command = synthesis_command(row, python)
+    command = None if imported else synthesis_command(row, python)
     log_path = repo / str(row["log_file"])
     reserved_mib = int(
         reservation_mib
@@ -2755,7 +3139,65 @@ def run_row(
         save(failed)
         return failed
 
-    if phase == "synthesis":
+    if phase == "synthesis" and imported:
+        latest = repo / "outputs" / "generated" / str(row["output_name"]) / "latest_run.txt"
+        before_output = artifact_fingerprint(latest)
+        synthesis_started_epoch = time.time()
+        row_started_epoch = _persisted_epoch(
+            prior, "row_started_epoch", synthesis_started_epoch
+        )
+        running = dict(
+            prior,
+            manifest_sha256=row.get("manifest_sha256"),
+            manifest_commit=row.get("manifest_commit")
+            or row.get("manifest_sha256")
+            or row.get("git_commit"),
+            cell_id=row["cell_id"],
+            status="running",
+            phase="synthesis",
+            assigned_gpus=list(gpus),
+            reservation_mib=reserved_mib,
+            log_file=str(log_path),
+            output_before=before_output,
+            row_started_epoch=row_started_epoch,
+            row_started_at=prior.get("row_started_at")
+            or utc_timestamp(row_started_epoch),
+            synthesis_started_epoch=synthesis_started_epoch,
+            synthesis_started_at=utc_timestamp(synthesis_started_epoch),
+            phase_timing_coverage="all_phases",
+        )
+        save(running)
+        LOGGER.info(
+            "[tableq] import-compile cell=%s historical_attempt=%s",
+            row["cell_id"],
+            row["imported_evidence"]["historical_attempt"],
+        )
+        try:
+            selection = _prepare_imported_selection(repo, row)
+        except Exception as exc:
+            failed = dict(
+                running,
+                status="failed",
+                exit_code=1,
+                reason=f"imported strategy compilation failed: {type(exc).__name__}",
+            )
+            save(failed)
+            return failed
+        synthesis_finished_epoch = time.time()
+        prior = dict(
+            running,
+            status="pending",
+            phase="heldout",
+            synthesis_exit_code=0,
+            synthesis_finished_at=utc_timestamp(synthesis_finished_epoch),
+            synthesis_wall_time_seconds=round(
+                synthesis_finished_epoch - synthesis_started_epoch, 4
+            ),
+            **_selection_state(selection),
+        )
+        save(prior)
+
+    if phase == "synthesis" and not imported:
         latest = repo / "outputs" / "generated" / str(row["output_name"]) / "latest_run.txt"
         before_output = artifact_fingerprint(latest)
         synthesis_started_epoch = time.time()
@@ -3082,7 +3524,10 @@ def dispatch(
                 continue
             if admission_check is not None:
                 phase = str((state or {}).get("phase") or "synthesis")
-                require_provider = phase == "synthesis"
+                require_provider = (
+                    phase == "synthesis"
+                    and row.get("execution_mode") == "fresh_synthesis"
+                )
                 try:
                     admission_check(row, require_provider=require_provider)
                 except ConfigError as exc:
@@ -3132,7 +3577,7 @@ def dispatch(
             time.sleep(max(0.1, poll_seconds))
         elif pending and not admitted:
             if dry_run:
-                results.extend({"cell_id": row["cell_id"], "status": "waiting", "command": synthesis_command(row, python)} for row in pending)
+                results.extend({"cell_id": row["cell_id"], "status": "waiting", "command": planned_command(row, python)} for row in pending)
                 break
             time.sleep(max(0.1, poll_seconds))
     return results
@@ -3319,7 +3764,8 @@ def export_results(rows: list[dict[str, Any]], values: list[dict[str, Any]], out
                 or not 0.0 <= float(syntax_rate) <= 1.0
                 or type(attempts) is not int
                 or not 1 <= attempts <= int(row["max_iterations"])
-                or terminal_status not in {"accepted", "exhausted"}
+                or terminal_status
+                not in {"accepted", "exhausted", "imported_below_target"}
             ):
                 raise ConfigError(
                     f"missing synthesis outcome metrics for {row['cell_id']}"
@@ -3419,7 +3865,7 @@ def main() -> int:
         raise SystemExit(f"scope error: expected 8 rows, got {len(rows)}")
     if args.dry_run:
         for row in rows:
-            print(row["cell_id"], shlex.join(synthesis_command(row, Path(sys.executable))))
+            print(row["cell_id"], shlex.join(planned_command(row, Path(sys.executable))))
         return 0
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"],
