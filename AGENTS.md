@@ -62,11 +62,12 @@ pinned Pi provider layer with ChatGPT/Codex OAuth. It sends the campaign system
 instructions and one user message directly to `gpt-5.6-sol`, with no Pi agent
 session, tools, prior conversation, or Codex CLI instructions. It must not use
 `OPENAI_API_KEY` or `codex exec`.
-The Tables 5--8 controller manages 8 one-GPU GSM-Symbolic rows with the exact
+The Table 5 controller manages 3 one-GPU GSM-Symbolic rows with the exact
 `Qwen/Qwen2.5-1.5B-Instruct` evaluator and 20/49 accuracy plus 47/49 syntax
-target. Seven rows use fresh synthesis; the shared default Opus control reuses
-sealed historical cold attempt 38, recompiles its exact Dafny, and receives a
-fresh held-out evaluation. Those rows map into 11 paper cells. Terminal evidence must keep
+target. GPT-5.6 Sol and Gemini 3.7 Flash use fresh synthesis; the Opus control
+reuses sealed historical cold attempt 38, recompiles its exact Dafny, and
+receives a fresh held-out evaluation. The uncollected Tables 6--8 parameter
+ablations are excluded. Terminal evidence must keep
 synthesis, held-out, and total wall times plus phase timestamps and any
 available per-attempt evaluation times.
 

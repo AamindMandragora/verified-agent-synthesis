@@ -125,17 +125,16 @@ never add warm-start inputs, and never delete an interrupted or failed claim.
   and SMILES dataset loaders, and `.context/run_post14b_rebar_queue.py`.
   Startup rejects any staged or unstaged tracked worktree change.
 
-## Paper Tables 5--8 campaign queue
+## Paper Table 5 synthesizer campaign queue
 
-`run_table5_8_queue.py` is the separate 8-run GSM-Symbolic campaign for the
-Table 5 backend cells and Tables 6--8 ablations. It uses exact profiles
+`run_table5_8_queue.py` is the separate 3-run GSM-Symbolic campaign for the
+Table 5 backend cells. It uses exact profiles
 `gpt5.6-sol`/Pi provider-only ChatGPT OAuth, `gemini3.7-flash`/direct Gemini API, and
 `opus5`/Claude Code, and always evaluates GSM-Symbolic with
 `Qwen/Qwen2.5-1.5B-Instruct` against the exact 20/49 accuracy and 47/49 syntax
-target. Table 5 has 2 fresh author-model runs plus 1 sealed historical Opus row;
-Tables 6--8 add 2 token-budget runs, 2 beam-size runs, and 1 helper-mask run.
-The default Opus run supplies the shared budget-1, beam-2, and mask-on controls,
-so the 8 physical runs populate 11 paper cells. Every row uses exactly one GPU
+target. Table 5 has 2 fresh author-model runs plus 1 sealed historical Opus row.
+The uncollected token-budget, beam-size, and helper-mask settings for Tables
+6--8 are excluded. Every row uses exactly one GPU
 and records accuracy, syntax rate, synthesis attempts used, accepted/exhausted
 status, constrained work, phase and total wall times, phase timestamps, and
 available per-attempt evaluation times. Runtime evidence must set

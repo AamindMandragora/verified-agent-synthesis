@@ -45,13 +45,10 @@ def _fixture_row(
     )
 
 
-def test_exact_table5_to_table8_scope():
+def test_exact_table5_synthesizer_scope():
     rows = queue.build_scope(Path("/repo"))
-    assert len(rows) == 8
-    assert sum(row["table"] == 5 for row in rows) == 3
-    assert sum(row["table"] == 6 for row in rows) == 2
-    assert sum(row["table"] == 7 for row in rows) == 2
-    assert sum(row["table"] == 8 for row in rows) == 1
+    assert len(rows) == 3
+    assert {row["table"] for row in rows} == {5}
     assert all(
         row["eval_model"] == "Qwen/Qwen2.5-1.5B-Instruct" for row in rows
     )
@@ -63,7 +60,10 @@ def test_exact_table5_to_table8_scope():
     imported = [row for row in rows if row["execution_mode"] == "imported_strategy"]
     fresh = [row for row in rows if row["execution_mode"] == "fresh_synthesis"]
     assert [row["cell_id"] for row in imported] == ["t5-opus5-gsm_symbolic"]
-    assert len(fresh) == 7
+    assert {row["profile"] for row in fresh} == {
+        "gpt5.6-sol",
+        "gemini3.7-flash",
+    }
     assert imported[0]["imported_evidence"]["historical_attempt"] == 38
     assert imported[0]["imported_evidence"]["historical_train"] == {
         "correct": 11,
@@ -72,7 +72,7 @@ def test_exact_table5_to_table8_scope():
     }
 
 
-def test_direct_dry_run_prints_all_eight_physical_runs():
+def test_direct_dry_run_prints_all_three_physical_runs():
     repo = Path(__file__).parents[2]
     result = subprocess.run(
         [sys.executable, str(repo / "scripts/runtime/run_table5_8_queue.py"), "--dry-run"],
@@ -84,9 +84,9 @@ def test_direct_dry_run_prints_all_eight_physical_runs():
     command_lines = [
         line
         for line in result.stdout.splitlines()
-        if line.startswith(("t5-", "t6-", "t7-", "t8-"))
+        if line.startswith("t5-")
     ]
-    assert len(command_lines) == 8
+    assert len(command_lines) == 3
 
 
 def test_main_installs_canonical_provider_routes_before_cli_handoff(
@@ -122,21 +122,21 @@ def test_table5_backend_profiles_are_exact():
     assert {row["benchmark"] for row in rows} == {"gsm_symbolic"}
 
 
-def test_ablation_scope_has_exact_single_variable_settings():
+def test_dropped_parameter_ablations_are_not_in_scope():
     rows = queue.build_scope(Path("/repo"))
-    token = [row for row in rows if row["table"] == 6]
-    assert {(row["token_budget"], row["beam_size"], row["adaptive_helper_mask"], row["helper_selection_policy"]) for row in token} == {(2, 2, True, "bandit"), (4, 2, True, "bandit")}
-    beam = [row for row in rows if row["table"] == 7]
-    assert {(row["token_budget"], row["beam_size"], row["adaptive_helper_mask"], row["helper_selection_policy"]) for row in beam} == {(1, 1, True, "bandit"), (1, 4, True, "bandit")}
-    mask = [row for row in rows if row["table"] == 8]
-    assert {(row["adaptive_helper_mask"], row["beam_size"], row["token_budget"], row["helper_selection_policy"]) for row in mask} == {(False, 2, 1, "bandit")}
-
+    assert all(
+        (
+            row["token_budget"],
+            row["beam_size"],
+            row["adaptive_helper_mask"],
+            row["helper_selection_policy"],
+        )
+        == (1, 2, True, "bandit")
+        for row in rows
+    )
     control = next(row for row in rows if row["cell_id"] == "t5-opus5-gsm_symbolic")
     assert control["paper_cells"] == [
         {"table": 5, "table_cell_id": "table5-opus5-gsm_symbolic"},
-        {"table": 6, "table_cell_id": "t6-opus5-gsm_symbolic-b1-B2-m1"},
-        {"table": 7, "table_cell_id": "t7-opus5-gsm_symbolic-b1-B2-m1"},
-        {"table": 8, "table_cell_id": "t8-opus5-gsm_symbolic-b1-B2-m1"},
     ]
 
 
@@ -401,7 +401,7 @@ def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, 
     assert payload["external_runtime"] == external_runtime
     assert payload["python_runtime"] == _test_python_runtime()
     assert set(payload["source_sha256"]) == set(paths)
-    assert len(queue.validate_manifest(tmp_path, payload)) == 8
+    assert len(queue.validate_manifest(tmp_path, payload)) == 3
     wrong_version = json.loads(json.dumps(payload))
     wrong_version["version"] = 2
     with pytest.raises(queue.ConfigError, match="version"):
@@ -803,7 +803,13 @@ def test_profile_gate_rejects_wrong_opus_and_conflicting_gemini_routes(tmp_path)
 
 
 def test_heldout_budget_and_controller_cli_contract():
-    row = next(r for r in queue.build_scope(Path("/repo")) if r["table"] == 6 and r["token_budget"] == 4)
+    row = queue._row(
+        "fixture-budget-four",
+        6,
+        "gsm_symbolic",
+        "opus5",
+        token_budget=4,
+    )
     cmd = queue.heldout_command(row, Path("python"), Path("compiled.py"))
     assert cmd[cmd.index("--step-token-budget") + 1] == "4"
     parser = queue.controller_parser()
@@ -940,7 +946,7 @@ def test_export_records_accuracy_syntax_attempts_and_terminal_status(tmp_path):
     assert cell["synthesis_terminal_status"] == "accepted"
 
 
-def test_export_reuses_one_opus_control_for_tables_6_to_8(tmp_path):
+def test_export_contains_only_the_three_synthesizer_cells(tmp_path):
     rows = queue.build_scope(Path("/repo"))
     bound_rows = []
     values = []
@@ -958,19 +964,12 @@ def test_export_reuses_one_opus_control_for_tables_6_to_8(tmp_path):
     queue.export_results(bound_rows, values, tmp_path / "out.json")
 
     cells = json.loads((tmp_path / "out.json").read_text())["cells"]
-    assert len(cells) == 11
-    control_ids = {
+    assert len(cells) == 3
+    assert {cell["table_cell_id"] for cell in cells} == {
+        "table5-gpt5.6-sol-gsm_symbolic",
+        "table5-gemini3.7-flash-gsm_symbolic",
         "table5-opus5-gsm_symbolic",
-        "t6-opus5-gsm_symbolic-b1-B2-m1",
-        "t7-opus5-gsm_symbolic-b1-B2-m1",
-        "t8-opus5-gsm_symbolic-b1-B2-m1",
     }
-    controls = [cell for cell in cells if cell["table_cell_id"] in control_ids]
-    assert len(controls) == 4
-    assert {cell["sources"][0]["cell_id"] for cell in controls} == {
-        "t5-opus5-gsm_symbolic"
-    }
-    assert len({cell["sources"][0]["heldout_artifact_sha256"] for cell in controls}) == 1
 
 
 def test_export_records_phase_and_attempt_runtimes(tmp_path):
@@ -1300,12 +1299,11 @@ def test_exhausted_failure_report_best_compiled_candidate_is_recoverable(tmp_pat
 
 
 def test_synthesis_exhaustion_with_best_candidate_continues_to_heldout(tmp_path, monkeypatch):
-    row = next(
-        r
-        for r in queue.build_scope(tmp_path)
-        if r["profile"] == "opus5"
-        and r["benchmark"] == "gsm_symbolic"
-        and r["execution_mode"] == "fresh_synthesis"
+    row = queue._row(
+        "fixture-fresh-opus-exhaustion",
+        5,
+        "gsm_symbolic",
+        "opus5",
     )
     latest = tmp_path / "outputs" / "generated" / row["output_name"] / "latest_run.txt"
     compiled = tmp_path / "compiled" / "GeneratedCSD.py"
@@ -1572,7 +1570,13 @@ def test_dispatch_runs_independent_admitted_rows_concurrently(tmp_path, monkeypa
 
 
 def test_command_parser_accepts_all_table_controls():
-    row = next(r for r in queue.build_scope(Path("/repo")) if r["table"] == 8 and not r["adaptive_helper_mask"])
+    row = queue._row(
+        "fixture-mask-off",
+        8,
+        "gsm_symbolic",
+        "opus5",
+        adaptive_helper_mask=False,
+    )
     cmd = queue.synthesis_command(row, Path("/opt/anaconda/bin/python"))
     result = subprocess.run(cmd[:3] + ["--help"], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
@@ -1726,8 +1730,8 @@ def test_admission_guard_does_not_age_out_startup_validated_immutable_pilot(
     guard(row)
 
 
-@pytest.mark.parametrize("profile", ["gpt5.6-sol", "gemini3.7-flash", "opus5"])
-def test_compiled_output_uses_strict_cold_report_validation_for_every_profile(
+@pytest.mark.parametrize("profile", ["gpt5.6-sol", "gemini3.7-flash"])
+def test_compiled_output_uses_strict_cold_report_validation_for_each_fresh_profile(
     tmp_path, monkeypatch, profile
 ):
     row = next(

@@ -421,18 +421,10 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
 
 
 def build_scope(repo: Path) -> list[dict[str, Any]]:
-    """Return eight cold runs that populate eleven paper cells."""
+    """Return the three Table 5 synthesizer-model comparison rows."""
     rows: list[dict[str, Any]] = []
     for profile in TABLE5_PROFILES:
         cell = f"t5-{profile}-gsm_symbolic"
-        paper_cells = None
-        if profile == "opus5":
-            paper_cells = [
-                {"table": 5, "table_cell_id": "table5-opus5-gsm_symbolic"},
-                {"table": 6, "table_cell_id": "t6-opus5-gsm_symbolic-b1-B2-m1"},
-                {"table": 7, "table_cell_id": "t7-opus5-gsm_symbolic-b1-B2-m1"},
-                {"table": 8, "table_cell_id": "t8-opus5-gsm_symbolic-b1-B2-m1"},
-            ]
         rows.append(
             _row(
                 cell,
@@ -444,28 +436,8 @@ def build_scope(repo: Path) -> list[dict[str, Any]]:
                     "imported_strategy" if profile == "opus5" else "fresh_synthesis"
                 ),
                 imported_evidence=(IMPORTED_OPUS_BASE if profile == "opus5" else None),
-                **({"paper_cells": paper_cells} if paper_cells is not None else {}),
             )
         )
-    for table, settings in (
-        (6, [(2, 2, True), (4, 2, True)]),
-        (7, [(1, 1, True), (1, 4, True)]),
-        (8, [(1, 2, False)]),
-    ):
-        for token_budget, beam_size, mask in settings:
-            cell = f"t{table}-opus5-gsm_symbolic-b{token_budget}-B{beam_size}-m{int(mask)}"
-            rows.append(
-                _row(
-                    cell,
-                    table,
-                    "gsm_symbolic",
-                    "opus5",
-                    table_cell_id=cell,
-                    token_budget=token_budget,
-                    beam_size=beam_size,
-                    adaptive_helper_mask=mask,
-                )
-            )
     return rows
 
 
@@ -1532,8 +1504,8 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
                 f"{profile} provider pilot Python runtime does not match the manifest"
             )
     rows = payload.get("jobs")
-    if not isinstance(rows, list) or len(rows) != 8:
-        raise ConfigError("manifest must contain exactly 8 Table 5--8 GSM jobs")
+    if not isinstance(rows, list) or len(rows) != 3:
+        raise ConfigError("manifest must contain exactly 3 Table 5 GSM jobs")
     expected = build_scope(repo)
     immutable_fields = {
         "cell_id", "table", "table_cell_id", "paper_cells", "benchmark", "dataset", "task",
@@ -3861,8 +3833,8 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     rows = build_scope(args.repo)
-    if len(rows) != 8:
-        raise SystemExit(f"scope error: expected 8 rows, got {len(rows)}")
+    if len(rows) != 3:
+        raise SystemExit(f"scope error: expected 3 rows, got {len(rows)}")
     if args.dry_run:
         for row in rows:
             print(row["cell_id"], shlex.join(planned_command(row, Path(sys.executable))))

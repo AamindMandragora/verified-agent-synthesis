@@ -53,14 +53,12 @@ cold queue's success/exhaustion selection, while a held-out child is waited
 for or restarted only from its hash-pinned compiled CSD. No author attempt is
 repeated merely because the controller restarted.
 
-## Tables 5--8 synthesis queue
+## Table 5 synthesizer queue
 
-The missing Table 5--8 synthesis cells are described by
-`run_table5_8_queue.py`. It manages exactly 8 GSM-Symbolic rows: 2 fresh Table 5
-author-model runs, 1 sealed historical Opus Table 5 row, 2 additional Table 6 token-budget runs, 2 additional Table 7
-beam-size runs, and 1 additional Table 8 mask-off run. The default Opus run is
-the shared budget-1, beam-2, and mask-on control, so those 8 runs populate 11
-paper cells without rerunning the same configuration. Every run uses one GPU,
+The Table 5 synthesizer cells are described by `run_table5_8_queue.py`. It
+manages exactly 3 GSM-Symbolic rows: fresh GPT-5.6 Sol and Gemini 3.7 Flash
+runs plus 1 sealed historical Opus row. The uncollected token-budget, beam-size,
+and mask ablations for Tables 6--8 are excluded. Every run uses one GPU,
 the exact `Qwen/Qwen2.5-1.5B-Instruct` evaluator, and fresh rows use at most 40
 cold synthesis attempts. The target is 20/49 accuracy and 47/49 syntax. The
 Opus control reuses historical cold attempt 38, seals its original Dafny,
