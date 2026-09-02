@@ -938,9 +938,16 @@ def validate_startup_provider_pilots(
     environment: dict[str, str],
     require_freshness: bool = True,
 ) -> None:
-    """Require one fresh, exact pilot for every profile before polling starts."""
+    """Require one fresh, exact pilot for every profile that will call an author."""
+    required_profiles = required_provider_profiles(rows)
+    if set(provider_pilots) != required_profiles:
+        raise ConfigError(
+            "provider pilot profiles must exactly match fresh synthesis profiles"
+        )
     checked: set[str] = set()
     for row in rows:
+        if row.get("execution_mode") != "fresh_synthesis":
+            continue
         profile = str(row["profile"])
         if profile in checked:
             continue
@@ -968,6 +975,8 @@ def profile_block_reason(
     require_fresh_pilot: bool = True,
 ) -> str | None:
     """Return a durable pending reason, or None when this row may be admitted."""
+    if row.get("execution_mode") != "fresh_synthesis":
+        return None
     if row["profile"] == "gpt5.6-sol":
         probe = (cached_probes or {}).get("gpt5.6-sol") or codex_auth_probe(environment)
         if probe.get("status") != "ready":
@@ -1165,6 +1174,15 @@ def choose_gpus(row: dict[str, Any], snapshot: dict[int, dict[str, int]], reserv
     return None
 
 
+def required_provider_profiles(rows: list[dict[str, Any]]) -> set[str]:
+    """Return the author profiles that will make live synthesis calls."""
+    return {
+        str(row["profile"])
+        for row in rows
+        if row.get("execution_mode") == "fresh_synthesis"
+    }
+
+
 def manifest_payload(repo: Path, rows: list[dict[str, Any]], provider_pilots: dict[str, Any] | None = None) -> dict[str, Any]:
     source_paths = execution_source_paths(repo)
     dirty = subprocess.run(
@@ -1193,6 +1211,10 @@ def manifest_payload(repo: Path, rows: list[dict[str, Any]], provider_pilots: di
         for row in rows
     ]
     pilots = provider_pilots or {}
+    if set(pilots) != required_provider_profiles(bound_rows):
+        raise ConfigError(
+            "provider pilot profiles must exactly match fresh synthesis profiles"
+        )
     for profile, pilot in pilots.items():
         if pilot.get("execution_source_sha256") != source_digest:
             raise ConfigError(
@@ -1506,6 +1528,10 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
     rows = payload.get("jobs")
     if not isinstance(rows, list) or len(rows) != 3:
         raise ConfigError("manifest must contain exactly 3 Table 5 GSM jobs")
+    if set(pilots) != required_provider_profiles(rows):
+        raise ConfigError(
+            "provider pilot profiles must exactly match fresh synthesis profiles"
+        )
     expected = build_scope(repo)
     immutable_fields = {
         "cell_id", "table", "table_cell_id", "paper_cells", "benchmark", "dataset", "task",

@@ -396,12 +396,39 @@ def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, 
         "spider": {"min_accuracy": 59 / 300, "min_syntax_rate": 0.9, "source_path": str(bar_path), "source_sha256": bar_sha},
         "smiles": {"acrylates": {"min_accuracy": 0.14, "min_syntax_rate": 0.9}, "chain_extenders": {"min_accuracy": 0.20, "min_syntax_rate": 0.9}, "isocyanates": {"min_accuracy": 0.30, "min_syntax_rate": 0.9}, "source_path": str(bar_path), "source_sha256": bar_sha},
     })
-    payload = queue.manifest_payload(tmp_path, queue.build_scope(tmp_path))
+    rows = queue.build_scope(tmp_path)
+    source_digest = queue.execution_source_sha256(tmp_path)
+    pilots = {
+        profile: {
+            "execution_source_sha256": source_digest,
+            "python_runtime": _test_python_runtime(),
+        }
+        for profile in ("gpt5.6-sol", "gemini3.7-flash")
+    }
+    with pytest.raises(queue.ConfigError, match="exactly match fresh synthesis"):
+        queue.manifest_payload(tmp_path, rows)
+    payload = queue.manifest_payload(tmp_path, rows, pilots)
     assert payload["crane_commit"] == queue.CANONICAL_CRANE_COMMIT
     assert payload["external_runtime"] == external_runtime
     assert payload["python_runtime"] == _test_python_runtime()
     assert set(payload["source_sha256"]) == set(paths)
     assert len(queue.validate_manifest(tmp_path, payload)) == 3
+    missing_pilot = json.loads(json.dumps(payload))
+    del missing_pilot["provider_pilots"]["gemini3.7-flash"]
+    missing_pilot["provider_pilot_sha256"] = queue.provider_pilots_sha256(
+        missing_pilot["provider_pilots"]
+    )
+    with pytest.raises(queue.ConfigError, match="exactly match fresh synthesis"):
+        queue.validate_manifest(tmp_path, missing_pilot)
+    extra_pilot = json.loads(json.dumps(payload))
+    extra_pilot["provider_pilots"]["opus5"] = json.loads(
+        json.dumps(pilots["gpt5.6-sol"])
+    )
+    extra_pilot["provider_pilot_sha256"] = queue.provider_pilots_sha256(
+        extra_pilot["provider_pilots"]
+    )
+    with pytest.raises(queue.ConfigError, match="exactly match fresh synthesis"):
+        queue.validate_manifest(tmp_path, extra_pilot)
     wrong_version = json.loads(json.dumps(payload))
     wrong_version["version"] = 2
     with pytest.raises(queue.ConfigError, match="version"):
@@ -464,7 +491,10 @@ def test_manifest_rejects_provider_pilot_from_different_source_snapshot(
         queue.manifest_payload(
             tmp_path,
             queue.build_scope(tmp_path),
-            provider_pilots={"opus5": pilot},
+            provider_pilots={
+                "gpt5.6-sol": pilot,
+                "gemini3.7-flash": pilot,
+            },
         )
 
 
@@ -1163,42 +1193,24 @@ def test_invalid_codex_auth_blocks_codex_without_blocking_ready_opus(monkeypatch
         next(r for r in queue.build_scope(Path("/repo")) if r["profile"] == "gpt5.6-sol"),
         next(r for r in queue.build_scope(Path("/repo")) if r["profile"] == "opus5"),
     ]
-    commit = "a" * 40
-    rows = [dict(row, git_commit=commit) for row in rows]
-    pilot_evidence = tmp_path / "outputs/generated/pilot/results/failure_report.json"
-    _write_real_pilot_report(pilot_evidence, "opus5", commit)
-    opus_pilot = queue.provider_pilot_from_report(
-        pilot_evidence, profile="opus5", git_commit=commit, environment={}
-    )
+    rows = [dict(row, git_commit="a" * 40) for row in rows]
     monkeypatch.setattr(
         queue,
         "codex_auth_probe",
         lambda environment: {"returncode": 0, "stdout": "", "stderr": "invalid_refresh_token"},
     )
-    monkeypatch.setattr(
-        queue,
-        "claude_auth_probe",
-        lambda environment: {
-            "status": "ready",
-            "account": "ssdear@gmail.com",
-            "config_dir": "/home/aadivyar/.claude-csd-synthesis",
-        },
-    )
     ready, blocked = queue.partition_profile_readiness(
         rows,
-        {
-            "CSD_CLAUDE_CONFIG_DIR": "/home/aadivyar/.claude-csd-synthesis",
-            "CSD_CLAUDE_EXPECTED_ACCOUNT": "ssdear@gmail.com",
-        },
+        {},
         repo=tmp_path,
-        provider_pilots={"opus5": opus_pilot},
+        provider_pilots={},
     )
     assert [r["profile"] for r in ready] == ["opus5"]
     assert blocked[0]["status"] == "pending"
     assert "ChatGPT/Codex OAuth" in blocked[0]["reason"]
 
 
-def test_profile_readiness_probes_each_provider_profile_once_and_requires_opus_pilot(monkeypatch):
+def test_profile_readiness_requires_pilots_only_for_fresh_synthesis(monkeypatch):
     rows = [
         row for row in queue.build_scope(Path("/repo"))
         if row["profile"] in {"gpt5.6-sol", "opus5"}
@@ -1220,9 +1232,33 @@ def test_profile_readiness_probes_each_provider_profile_once_and_requires_opus_p
         provider_pilots={},
     )
     assert len(calls) == 1
-    assert not ready
-    assert {row["profile"] for row in blocked} == {"gpt5.6-sol", "opus5"}
-    assert all("pilot" in row["reason"] for row in blocked if row["profile"] == "opus5")
+    assert [row["profile"] for row in ready] == ["opus5"]
+    assert [row["profile"] for row in blocked] == ["gpt5.6-sol"]
+    assert blocked[0]["reason"]
+
+
+def test_startup_provider_pilots_are_exactly_the_fresh_synthesis_profiles(monkeypatch):
+    rows = queue.build_scope(Path("/repo"))
+    calls = []
+
+    def validate(profile, pilot, git_commit, **kwargs):
+        calls.append(profile)
+        return None
+
+    monkeypatch.setattr(queue, "validate_provider_pilot", validate)
+    exact = {"gpt5.6-sol": {}, "gemini3.7-flash": {}}
+    queue.validate_startup_provider_pilots(
+        rows, exact, repo=Path("/repo"), environment={}
+    )
+    assert calls == ["gpt5.6-sol", "gemini3.7-flash"]
+    for invalid in (
+        {"gpt5.6-sol": {}},
+        {**exact, "opus5": {}},
+    ):
+        with pytest.raises(queue.ConfigError, match="exactly match fresh synthesis"):
+            queue.validate_startup_provider_pilots(
+                rows, invalid, repo=Path("/repo"), environment={}
+            )
 
 
 def test_controller_validates_export_separation_before_dispatch(tmp_path, monkeypatch):
@@ -1660,10 +1696,9 @@ def test_controller_startup_rejects_provider_pilot_that_is_already_stale(
     tmp_path, monkeypatch
 ):
     commit = "a" * 40
-    row = next(
-        dict(candidate, git_commit=commit)
-        for candidate in queue.build_scope(tmp_path)
-        if candidate["profile"] == "opus5"
+    row = dict(
+        queue._row("fixture-fresh-opus", 5, "gsm_symbolic", "opus5"),
+        git_commit=commit,
     )
     evidence = tmp_path / "outputs/generated/pilot/results/failure_report.json"
     _write_real_pilot_report(evidence, "opus5", commit)
@@ -1685,10 +1720,9 @@ def test_admission_guard_does_not_age_out_startup_validated_immutable_pilot(
     tmp_path, monkeypatch
 ):
     commit = "a" * 40
-    row = next(
-        dict(candidate, git_commit=commit)
-        for candidate in queue.build_scope(tmp_path)
-        if candidate["profile"] == "opus5"
+    row = dict(
+        queue._row("fixture-fresh-opus", 5, "gsm_symbolic", "opus5"),
+        git_commit=commit,
     )
     evidence = tmp_path / "outputs/generated/pilot/results/failure_report.json"
     _write_real_pilot_report(evidence, "opus5", commit)
