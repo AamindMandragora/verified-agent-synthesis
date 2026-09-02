@@ -1212,7 +1212,8 @@ def test_invalid_codex_auth_blocks_codex_without_blocking_ready_opus(monkeypatch
 
 def test_profile_readiness_requires_pilots_only_for_fresh_synthesis(monkeypatch):
     rows = [
-        row for row in queue.build_scope(Path("/repo"))
+        dict(row, git_commit="a" * 40)
+        for row in queue.build_scope(Path("/repo"))
         if row["profile"] in {"gpt5.6-sol", "opus5"}
     ]
     calls = []
@@ -1222,6 +1223,11 @@ def test_profile_readiness_requires_pilots_only_for_fresh_synthesis(monkeypatch)
         return {"returncode": 0, "status": "ready", "stdout": "", "stderr": ""}
 
     monkeypatch.setattr(queue, "codex_auth_probe", probe)
+    monkeypatch.setattr(
+        queue,
+        "claude_auth_probe",
+        lambda environment: pytest.fail("imported Opus must not probe Claude auth"),
+    )
     ready, blocked = queue.partition_profile_readiness(
         rows,
         {

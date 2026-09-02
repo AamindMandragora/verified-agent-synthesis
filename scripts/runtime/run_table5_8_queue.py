@@ -1031,6 +1031,9 @@ def partition_profile_readiness(
     cached_probes: dict[str, dict[str, Any]] = {}
     cached_auth: dict[str, dict[str, Any]] = {}
     for row in rows:
+        if row.get("execution_mode") != "fresh_synthesis":
+            ready.append(row)
+            continue
         profile = row["profile"]
         if profile == "gpt5.6-sol" and profile not in cached_probes:
             cached_probes[profile] = codex_auth_probe(environment)
