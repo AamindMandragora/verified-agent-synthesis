@@ -354,6 +354,7 @@ class EvalWorkerPool:
             flush=True,
         )
         self.workers: list[_Worker] = []
+        self._hard_timeout_requires_clean_respawn = False
         for i, gpu in enumerate(gpu_slots):
             worker = _Worker(i, gpu)
             worker.configure(config)
@@ -400,8 +401,14 @@ class EvalWorkerPool:
         self._respawn_dead_workers()
         alive = self._alive_workers()
         if not alive:
+            if getattr(self, "_hard_timeout_requires_clean_respawn", False):
+                raise WorkerRequestTimeout(
+                    f"{WORKER_HARD_TIMEOUT_PREFIX} no clean evaluation worker "
+                    "could respawn after the previous hard timeout"
+                )
             print(f"{LOG} no surviving workers; falling back to in-process eval", flush=True)
             return _evaluate_in_process(evaluator, compiled_module_path, dataset)
+        self._hard_timeout_requires_clean_respawn = False
 
         return self._dispatch(evaluator, compiled_module_path, list(enumerate(dataset)), alive)
 
@@ -481,6 +488,7 @@ class EvalWorkerPool:
                             results[position_of[idx]] = result
                     except WorkerRequestTimeout:
                         abandon_workers = True
+                        self._hard_timeout_requires_clean_respawn = True
                         for active_worker, _, _ in shard_calls:
                             active_worker.abort()
                         for pending in future_to_shard:

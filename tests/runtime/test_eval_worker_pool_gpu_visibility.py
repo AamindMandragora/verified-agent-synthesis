@@ -423,3 +423,45 @@ def test_dispatch_preserves_an_explicit_no_timeout_configuration():
     )
 
     assert results == [{"example": "ok"}]
+
+
+def test_failed_respawn_after_hard_timeout_never_falls_back_to_parent(monkeypatch):
+    class TimedOutWorker:
+        alive = True
+        worker_id = 0
+        gpu = 3
+
+        def evaluate(self, *_args, **_kwargs):
+            raise eval_worker_pool.WorkerRequestTimeout("hard timeout")
+
+        def abort(self):
+            self.alive = False
+
+    worker = TimedOutWorker()
+    pool = object.__new__(eval_worker_pool.EvalWorkerPool)
+    pool.config = {}
+    pool.workers = [worker]
+    evaluator = SimpleNamespace(max_seconds_per_example=2.0)
+
+    with pytest.raises(eval_worker_pool.WorkerRequestTimeout, match="hard timeout"):
+        pool.evaluate_examples(evaluator, "/tmp/compiled.py", ["first"])
+
+    monkeypatch.setattr(
+        eval_worker_pool,
+        "_Worker",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("respawn failed")),
+    )
+    parent_calls = []
+    monkeypatch.setattr(
+        eval_worker_pool,
+        "_evaluate_in_process",
+        lambda *_args, **_kwargs: parent_calls.append(True) or ["unsafe"],
+    )
+
+    with pytest.raises(
+        eval_worker_pool.WorkerRequestTimeout,
+        match="no clean evaluation worker could respawn",
+    ):
+        pool.evaluate_examples(evaluator, "/tmp/compiled.py", ["second"])
+
+    assert parent_calls == []
