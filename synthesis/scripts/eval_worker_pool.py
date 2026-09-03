@@ -74,10 +74,11 @@ _MIN_FREE_MB = 8000
 
 _HEADER = struct.Struct(">Q")
 
-# The evaluator already enforces a per-example soft limit. The parent process
-# waits a little longer so normal cleanup can finish, then terminates the whole
-# worker process group if native code never returns control to Python.
-WORKER_RESPONSE_GRACE_SECONDS = 30.0
+# The evaluator already enforces its per-example soft limit when Python can
+# regain control. This independent parent deadline also covers cold model
+# startup and native-code stalls, so it must be much larger than that soft
+# limit while still bounding a truly wedged worker.
+WORKER_HARD_TIMEOUT_SECONDS = 2 * 60 * 60
 WORKER_TERMINATION_GRACE_SECONDS = 5.0
 WORKER_HARD_TIMEOUT_PREFIX = "[worker-hard-timeout]"
 
@@ -441,7 +442,7 @@ class EvalWorkerPool:
         hard_timeout_seconds = (
             None
             if per_example_limit is None
-            else per_example_limit + WORKER_RESPONSE_GRACE_SECONDS
+            else WORKER_HARD_TIMEOUT_SECONDS
         )
 
         def evaluate_shard(worker: _Worker, shard: list[tuple[int, Any]]) -> list[tuple[int, dict]]:

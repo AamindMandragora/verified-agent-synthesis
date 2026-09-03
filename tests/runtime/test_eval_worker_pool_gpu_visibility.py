@@ -113,7 +113,7 @@ def test_dispatch_starts_all_worker_shards_before_waiting_for_results():
             *,
             timeout_seconds,
         ):
-            assert timeout_seconds == 30.0
+            assert timeout_seconds == 7200.0
             with entered_lock:
                 entered.append(self.worker_id)
                 if len(entered) == 2:
@@ -316,7 +316,7 @@ def test_dispatch_sends_one_example_per_worker_request():
             timeout_seconds,
         ):
             assert len(examples) == 1
-            assert timeout_seconds == 32.0
+            assert timeout_seconds == 7200.0
             return [{"example": examples[0], "index": start_index}]
 
     pool = object.__new__(eval_worker_pool.EvalWorkerPool)
