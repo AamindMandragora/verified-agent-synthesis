@@ -42,6 +42,16 @@ The evaluate stage executes compiled strategies on benchmark tasks and returns s
 - Spider prompt rendering is shared by evaluator and fixed IterGen paths; Qwen3.5
   disables thinking in its chat template, while Qwen2.5 receives the raw prompt.
 - Output artifacts from this stage are saved under per-run `results/` folders in `outputs/generated/`.
+- Post-generation logs mark the start and finish of answer extraction,
+  correctness scoring, and syntax scoring for every example. If a worker must
+  be stopped by its hard deadline, the last boundary identifies the stage that
+  failed to return.
+- Warm recovery can load the original progress report with
+  `--initial-attempt-history-file` and a sealed failure-mode ledger with
+  `--initial-failure-ledger-file`. The loop restores the best evaluated
+  incumbent and prior mode IDs before it evaluates the first new attempt;
+  timeout and harness-failure records are never eligible to become the
+  restored incumbent.
 - Evaluation refinement prompts include a compact attempt outcome ledger once
   multiple evaluated attempts exist. The ledger lists the best result, recent
   evaluated branches, rationale-claim summaries, measured deltas, and all

@@ -43,6 +43,8 @@ import atexit
 import concurrent.futures
 import os
 import pickle
+import select
+import signal
 import struct
 import subprocess
 import sys
@@ -71,6 +73,17 @@ _IDLE_UTIL_THRESHOLD = 30
 _MIN_FREE_MB = 8000
 
 _HEADER = struct.Struct(">Q")
+
+# The evaluator already enforces a per-example soft limit. The parent process
+# waits a little longer so normal cleanup can finish, then terminates the whole
+# worker process group if native code never returns control to Python.
+WORKER_RESPONSE_GRACE_SECONDS = 30.0
+WORKER_TERMINATION_GRACE_SECONDS = 5.0
+WORKER_HARD_TIMEOUT_PREFIX = "[worker-hard-timeout]"
+
+
+class WorkerRequestTimeout(RuntimeError):
+    """A worker exceeded the parent-enforced response deadline."""
 
 
 def _queue_gpu_slots() -> list[int] | None:
@@ -114,6 +127,12 @@ def recv_msg(stream) -> Optional[Any]:
     if data is None:
         return None
     return pickle.loads(data)
+
+
+def wait_for_response(stream, timeout_seconds: Optional[float]) -> bool:
+    """Return whether a worker response pipe became readable before timeout."""
+    readable, _, _ = select.select([stream], [], [], timeout_seconds)
+    return bool(readable)
 
 
 def _read_exact(stream, n: int) -> Optional[bytes]:
@@ -183,6 +202,7 @@ class _Worker:
             stderr=None,  # inherit -- same
             env=env,
             pass_fds=(resp_w,),
+            start_new_session=True,
         )
         os.close(resp_w)  # parent's copy; the child has its own after fork+exec
         self.resp_stream = os.fdopen(resp_r, "rb")
@@ -193,7 +213,15 @@ class _Worker:
         if reply is None or not reply.get("ok"):
             raise RuntimeError(f"worker {self.worker_id} failed to configure: {reply}")
 
-    def evaluate(self, compiled_module_path: str, examples: list, start_index: int, dataset_len: int) -> list:
+    def evaluate(
+        self,
+        compiled_module_path: str,
+        examples: list,
+        start_index: int,
+        dataset_len: int,
+        *,
+        timeout_seconds: Optional[float],
+    ) -> list:
         t0 = time.time()
         send_msg(
             self.proc.stdin,
@@ -205,6 +233,14 @@ class _Worker:
                 "dataset_len": dataset_len,
             },
         )
+        if not wait_for_response(self.resp_stream, timeout_seconds):
+            self.alive = False
+            self.abort()
+            raise WorkerRequestTimeout(
+                f"{WORKER_HARD_TIMEOUT_PREFIX} worker {self.worker_id} "
+                f"exceeded {timeout_seconds:.2f}s "
+                "hard response deadline"
+            )
         reply = recv_msg(self.resp_stream)
         if reply is None:
             self.alive = False
@@ -223,6 +259,47 @@ class _Worker:
             print(f"{LOG} worker {self.worker_id} (GPU {self.gpu}) request done in {elapsed:.1f}s", flush=True)
         return reply["results"]
 
+    def abort(self) -> None:
+        """Terminate only this worker's process group, including vLLM children."""
+        self.alive = False
+        process_group = self.proc.pid
+
+        def group_exists() -> bool:
+            try:
+                os.killpg(process_group, 0)
+                return True
+            except ProcessLookupError:
+                return False
+
+        if group_exists():
+            try:
+                os.killpg(process_group, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            deadline = time.monotonic() + WORKER_TERMINATION_GRACE_SECONDS
+            while group_exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            if group_exists():
+                try:
+                    os.killpg(process_group, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        try:
+            self.proc.wait(timeout=WORKER_TERMINATION_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process_group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                self.proc.wait(timeout=WORKER_TERMINATION_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+        try:
+            self.resp_stream.close()
+        except Exception:
+            pass
+
     def shutdown(self) -> None:
         if self.proc.poll() is not None:
             return
@@ -232,8 +309,8 @@ class _Worker:
             pass
         try:
             self.proc.wait(timeout=15)
-        except Exception:
-            self.proc.kill()
+        except subprocess.TimeoutExpired:
+            self.abort()
         try:
             self.resp_stream.close()
         except Exception:
@@ -351,21 +428,46 @@ class EvalWorkerPool:
             if not shard:
                 continue
             local_indices = [idx for idx, _ in shard]
-            examples = [ex for _, ex in shard]
-            shard_calls.append((worker, local_indices, examples, lo))
+            shard_calls.append((worker, local_indices, shard))
+
+        per_example_limit = evaluator.max_seconds_per_example
+        hard_timeout_seconds = (
+            None
+            if per_example_limit is None
+            else per_example_limit + WORKER_RESPONSE_GRACE_SECONDS
+        )
+
+        def evaluate_shard(worker: _Worker, shard: list[tuple[int, Any]]) -> list[tuple[int, dict]]:
+            shard_results: list[tuple[int, dict]] = []
+            for idx, example in shard:
+                response = worker.evaluate(
+                    str(compiled_module_path),
+                    [example],
+                    idx,
+                    dataset_len,
+                    timeout_seconds=hard_timeout_seconds,
+                )
+                if len(response) != 1:
+                    raise RuntimeError(
+                        f"worker {worker.worker_id} returned {len(response)} results "
+                        "for one example"
+                    )
+                shard_results.append((idx, response[0]))
+            return shard_results
+
         if shard_calls:
-            with concurrent.futures.ThreadPoolExecutor(
+            executor = concurrent.futures.ThreadPoolExecutor(
                 max_workers=len(shard_calls)
-            ) as executor:
+            )
+            abandon_workers = False
+            try:
                 future_to_shard = {
                     executor.submit(
-                        worker.evaluate,
-                        str(compiled_module_path),
-                        examples,
-                        lo,
-                        dataset_len,
+                        evaluate_shard,
+                        worker,
+                        shard,
                     ): (worker, local_indices)
-                    for worker, local_indices, examples, lo in shard_calls
+                    for worker, local_indices, shard in shard_calls
                 }
                 print(
                     f"{LOG} parallel dispatch: {len(future_to_shard)} worker shard(s) started",
@@ -375,15 +477,27 @@ class EvalWorkerPool:
                     worker, local_indices = future_to_shard[future]
                     try:
                         shard_results = future.result()
-                        for idx, result in zip(local_indices, shard_results):
+                        for idx, result in shard_results:
                             results[position_of[idx]] = result
+                    except WorkerRequestTimeout:
+                        abandon_workers = True
+                        for active_worker, _, _ in shard_calls:
+                            active_worker.abort()
+                        for pending in future_to_shard:
+                            pending.cancel()
+                        raise
                     except Exception as exc:
                         print(
                             f"{LOG} worker {worker.worker_id} FAILED mid-shard: {exc!r}",
                             flush=True,
                         )
-                        worker.alive = False
+                        worker.abort()
                         failed_indices.extend(local_indices)
+            finally:
+                executor.shutdown(
+                    wait=not abandon_workers,
+                    cancel_futures=abandon_workers,
+                )
 
         if failed_indices:
             survivors = self._alive_workers()

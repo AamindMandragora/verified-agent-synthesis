@@ -550,6 +550,22 @@ def test_accepted_evaluator_sample_fields_are_coherent(monkeypatch):
     assert sample["output_rejection_reason"] is None
 
 
+def test_evaluator_logs_each_post_generation_scoring_boundary(monkeypatch, capsys):
+    _evaluate_one_sample(monkeypatch, "SELECT name FROM singer;")
+
+    output = capsys.readouterr().out
+    boundaries = [
+        "[scoring] example=1/1 stage=answer_extraction start",
+        "[scoring] example=1/1 stage=answer_extraction done",
+        "[scoring] example=1/1 stage=correctness start",
+        "[scoring] example=1/1 stage=correctness done",
+        "[scoring] example=1/1 stage=syntax start",
+        "[scoring] example=1/1 stage=syntax done",
+    ]
+    positions = [output.index(boundary) for boundary in boundaries]
+    assert positions == sorted(positions)
+
+
 
 def test_evaluator_does_not_strip_raw_spider_prompt_echo(monkeypatch):
     from synthesis.evaluate.evaluator import Evaluator

@@ -30,7 +30,14 @@ from pathlib import Path
 import pytest
 
 from synthesis.evaluate.evaluator import EvaluationResult
-from synthesis.evaluate.feedback_loop import SynthesisExhaustionError, SynthesisPipeline
+from synthesis.evaluate.feedback_loop import (
+    FailureStage,
+    SynthesisAttempt,
+    SynthesisExhaustionError,
+    SynthesisPipeline,
+)
+from synthesis.failure_taxonomy import fingerprint
+from synthesis.run_synthesis import _load_initial_failure_ledger
 from synthesis.verify.compiler import CompilationResult
 from synthesis.verify.verifier import VerificationResult
 
@@ -300,6 +307,185 @@ def test_single_slice_bar_crossing_is_not_success(tmp_path):
     assert result.success is True
     assert result.strategy_code == "S2"
     assert len(result.attempts) == 2
+
+
+def test_warm_resume_restores_best_incumbent_before_scoring_seed(tmp_path):
+    restored = [
+        SynthesisAttempt(
+            attempt_number=12,
+            strategy_code="S12",
+            full_dafny_code="",
+            timestamp="restored",
+            eval_result=_result(8 / 49, 45 / 49, n=49),
+        ),
+        SynthesisAttempt(
+            attempt_number=15,
+            strategy_code="S15",
+            full_dafny_code="",
+            timestamp="restored",
+            eval_result=_result(3 / 49, 44 / 49, n=49),
+        ),
+    ]
+    evaluator = ScriptedEvaluator([_result(0.1, 0.9)])
+    generator = FakeGenerator(["S16", "S17"])
+    pipeline = make_pipeline(
+        tmp_path,
+        evaluator,
+        generator,
+        max_iterations=1,
+        min_accuracy=13 / 49,
+        min_syntax_rate=45 / 49,
+    )
+
+    with pytest.raises(SynthesisExhaustionError):
+        pipeline.synthesize(
+            task_description="dummy",
+            output_name="warm",
+            initial_strategy_code="S16",
+            initial_attempt_offset=15,
+            initial_attempts=restored,
+        )
+
+    assert [call["sample_offset"] for call in evaluator.calls] == [0]
+    assert pipeline._incumbent is not None
+    assert pipeline._incumbent.attempt_number == 12
+    assert generator.refine_calls[-1]["previous_strategy"] == "S12"
+
+
+def test_warm_resume_excludes_timed_out_score_from_incumbent(tmp_path):
+    restored = [
+        SynthesisAttempt(
+            attempt_number=1,
+            strategy_code="timed-out-tie",
+            full_dafny_code="",
+            timestamp="restored",
+            eval_result=_result(8 / 49, 45 / 49, n=49),
+            failed_at=FailureStage.TIMEOUT,
+        ),
+        SynthesisAttempt(
+            attempt_number=12,
+            strategy_code="accepted-incumbent",
+            full_dafny_code="",
+            timestamp="restored",
+            eval_result=_result(8 / 49, 45 / 49, n=49),
+            failed_at=FailureStage.EVALUATION,
+        ),
+    ]
+    pipeline = make_pipeline(
+        tmp_path,
+        ScriptedEvaluator([]),
+        FakeGenerator(["unused"]),
+        max_iterations=1,
+        min_accuracy=13 / 49,
+        min_syntax_rate=45 / 49,
+    )
+
+    pipeline._restore_incumbent_from_attempts(restored)
+
+    assert pipeline._incumbent is not None
+    assert pipeline._incumbent.attempt_number == 12
+    assert pipeline._incumbent.strategy_code == "accepted-incumbent"
+
+
+def test_warm_resume_restores_failure_mode_history_before_scoring_seed(tmp_path):
+    candidate_result = _result(0.0, 0.9, n=10)
+    wrong_sample = next(
+        sample for sample in candidate_result.sample_outputs if not sample["is_correct"]
+    )
+    restored_ledger = {
+        "next_id": 1,
+        "modes": [
+            {
+                "id": "mode_A",
+                "medoid": fingerprint(wrong_sample),
+                "attempts": [1, 15],
+            }
+        ],
+    }
+    evaluator = ScriptedEvaluator([candidate_result])
+    generator = FakeGenerator(["S16", "S17"])
+    pipeline = make_pipeline(
+        tmp_path,
+        evaluator,
+        generator,
+        max_iterations=1,
+        min_accuracy=13 / 49,
+        min_syntax_rate=45 / 49,
+    )
+
+    with pytest.raises(SynthesisExhaustionError):
+        pipeline.synthesize(
+            task_description="dummy",
+            output_name="warm-ledger",
+            initial_strategy_code="S16",
+            initial_attempt_offset=15,
+            initial_failure_ledger=restored_ledger,
+        )
+
+    assert pipeline._failure_ledger["next_id"] == 1
+    assert pipeline._failure_ledger["modes"][0]["id"] == "mode_A"
+    assert pipeline._failure_ledger["modes"][0]["attempts"] == [1, 15, 16]
+    assert "mode_A: appeared in attempt(s) 1,15,16" in (
+        generator.refine_calls[-1]["evaluation_feedback"]
+    )
+
+
+def test_worker_hard_timeout_is_recorded_and_search_continues(tmp_path):
+    worker_timeout = EvaluationResult(
+        success=False,
+        accuracy=0.0,
+        contains_delimiters=False,
+        syntax_rate=0.0,
+        num_examples=0,
+        num_correct=0,
+        total_time_seconds=32.0,
+        error="[worker-hard-timeout] worker 0 exceeded 32.00s hard response deadline",
+    )
+    evaluator = ScriptedEvaluator([worker_timeout, _result(0.7, 1.0)])
+    generator = FakeGenerator(["S1", "S2"])
+    pipeline = make_pipeline(
+        tmp_path,
+        evaluator,
+        generator,
+        max_iterations=2,
+        min_accuracy=0.6,
+        min_syntax_rate=0.9,
+    )
+
+    result = pipeline.synthesize(task_description="dummy", output_name="timeout")
+
+    assert result.success is True
+    assert len(result.attempts) == 2
+    assert result.attempts[0].failed_at.value == "timeout"
+    assert result.attempts[0].eval_result.sample_outputs == []
+
+
+def test_initial_failure_ledger_loader_restores_tuple_medoids(tmp_path):
+    ledger_path = tmp_path / "failure-ledger.json"
+    medoid = list(fingerprint(_result(0.0, 0.9, n=1).sample_outputs[0]))
+    ledger_path.write_text(
+        __import__("json").dumps(
+            {
+                "version": 1,
+                "source_report_sha256": "a" * 64,
+                "included_attempts": [1, 15],
+                "excluded_attempts": [6],
+                "ledger": {
+                    "next_id": 1,
+                    "modes": [
+                        {"id": "mode_A", "medoid": medoid, "attempts": [1, 15]}
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    restored = _load_initial_failure_ledger(ledger_path)
+
+    assert restored["next_id"] == 1
+    assert restored["modes"][0]["medoid"] == tuple(medoid)
+    assert restored["modes"][0]["attempts"] == [1, 15]
 
 
 # ---------------------------------------------------------------------------

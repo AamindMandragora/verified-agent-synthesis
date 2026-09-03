@@ -2,13 +2,23 @@
 
 Optional **maintenance and ablation** scripts that drive `python -m synthesis.run_synthesis` (or inspect `outputs/generated/`) from the repository root.
 
-They are not imported by the core package at runtime; run them explicitly with `PYTHONPATH` set to the repo root when documented in each script's docstring.
+Most are not imported by the core package at runtime; run those explicitly with
+`PYTHONPATH` set to the repo root when documented in each script's docstring.
+`eval_worker_pool.py` and `eval_worker_main.py` are the exceptions used by the
+core evaluation path.
 
 ## Contents
 
 - **`ablation_beam_bandit.py`** — Grid search over refinement beam size and helper-selection policy.
 - **`reevaluate_compiled_csd.py`** — Re-run evaluation on an already-compiled GeneratedCSD.py.
 - **`collect_paper_results.py`** — Collect baseline and synthesis results into paper-ready LaTeX table fragments. Reads `outputs/baselines/` and `outputs/generated/`, emits main results + ablation tables. Use **`--paper-main-table`** / **`--paper-bold-best`** to print Table~1 rows for `paper/experiments.tex`. Pass **`--git-tracked-only`** to include only metrics whose source `outputs/**/*.json` paths are tracked by git (cells without such JSON emit `\todo{--}`).
+- **`eval_worker_pool.py`** — Persistent GPU evaluation workers used by the
+  synthesis loop. Each request contains one example. The parent waits for the
+  evaluator's per-example limit plus 30 seconds; if no reply arrives, it stops
+  every active worker process group, including vLLM children, reports a hard
+  timeout, and lets the next synthesis attempt respawn clean workers. A hard
+  timeout is never silently retried in the parent process. An explicit
+  no-timeout evaluator setting remains uncapped.
 
 Scripts are self-contained CLIs. See each file's module docstring for arguments and examples.
 

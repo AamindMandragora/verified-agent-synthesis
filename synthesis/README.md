@@ -88,6 +88,11 @@ Compile is implemented under `verify` because compilation is only valid after ve
   `--generated-output-dir` / `CSD_OUTPUT_DIR` and `--baseline-output-dir` /
   `CSD_BASELINE_OUTPUT_DIR` flags.
 - `--dafny-path` or `DAFNY_PATH`
+- `--initial-attempt-history-file` accepts either the older compact attempt
+  list or a run's `progress_report.json`; the latter preserves attempt status,
+  evaluation samples, and the saved compile directory.
+- `--initial-failure-ledger-file` restores a sealed version-1 failure-mode
+  ledger so a warm continuation keeps stable mode IDs across attempts.
 - `DAFNY_EXTRA_PATH` (colon-separated PATH entries for Dafny subprocesses)
 - `VERIFIED_AGENT_SYNTHESIS_DFY` or `DAFNY_PROOFS_DIR` (override proof include source)
 - `CSD_SYNCODE_DIR` (vendored Syncode root)

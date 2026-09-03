@@ -5,6 +5,7 @@ Orchestrates the generate -> verify -> compile -> run loop with
 iterative refinement based on errors.
 """
 
+import copy
 import json
 import logging
 import math
@@ -313,6 +314,9 @@ class FailureStage(Enum):
     HARNESS = "harness"
 
 
+WORKER_HARD_TIMEOUT_PREFIX = "[worker-hard-timeout]"
+
+
 def classify_eval_failure(eval_result) -> FailureStage:
     """Tell a broken evaluator apart from a strategy that scored badly.
 
@@ -329,6 +333,9 @@ def classify_eval_failure(eval_result) -> FailureStage:
     measured, so this must be reported as a broken harness rather than a
     bad strategy.
     """
+    error = getattr(eval_result, "error", None) or ""
+    if error.startswith(WORKER_HARD_TIMEOUT_PREFIX):
+        return FailureStage.TIMEOUT
     num_examples = getattr(eval_result, "num_examples", None)
     if not num_examples:
         return FailureStage.HARNESS
@@ -1332,6 +1339,62 @@ class SynthesisPipeline:
         """Distance to both bars; 0.0 once both are met (no credit above a bar)."""
         return max(0.0, self.min_accuracy - accuracy) + max(0.0, self.min_syntax_rate - syntax_rate)
 
+    def _restore_incumbent_from_attempts(
+        self, attempts: list[SynthesisAttempt]
+    ) -> None:
+        """Rebuild the greedy incumbent from restored slice-A evaluations."""
+        self._incumbent = None
+        for attempt in attempts:
+            result = attempt.eval_result
+            if (
+                result is None
+                or not result.success
+                or attempt.failed_at not in {None, FailureStage.EVALUATION}
+            ):
+                continue
+            candidate_accuracy = result.accuracy or 0.0
+            candidate_syntax = result.syntax_rate or 0.0
+            candidate_shortfall = self._shortfall(
+                candidate_accuracy, candidate_syntax
+            )
+            if self._incumbent is not None:
+                incumbent_result = self._incumbent.a_result
+                incumbent_accuracy = incumbent_result.accuracy or 0.0
+                incumbent_syntax = incumbent_result.syntax_rate or 0.0
+                incumbent_shortfall = self._shortfall(
+                    incumbent_accuracy, incumbent_syntax
+                )
+                if not self._should_accept(
+                    candidate_shortfall,
+                    candidate_accuracy,
+                    candidate_syntax,
+                    incumbent_shortfall,
+                    incumbent_accuracy,
+                    incumbent_syntax,
+                ):
+                    continue
+            self._incumbent = _Incumbent(
+                strategy_code=attempt.strategy_code,
+                attempt_number=attempt.attempt_number,
+                a_result=result,
+                b_result=result,
+            )
+        if self._incumbent is not None:
+            result = self._incumbent.a_result
+            logger.warning(
+                "[warm-resume] restored incumbent attempt=%d accuracy=%.6f "
+                "syntax_rate=%.6f evaluated_history=%d",
+                self._incumbent.attempt_number,
+                result.accuracy or 0.0,
+                result.syntax_rate or 0.0,
+                sum(
+                    1
+                    for attempt in attempts
+                    if attempt.eval_result is not None
+                    and attempt.eval_result.success
+                ),
+            )
+
     def _should_accept(
         self,
         cand_shortfall: float,
@@ -1781,6 +1844,7 @@ class SynthesisPipeline:
         initial_strategy_code: str | None = None,
         initial_attempt_offset: int = 0,
         initial_attempts: list[SynthesisAttempt] | None = None,
+        initial_failure_ledger: dict | None = None,
     ) -> SynthesisResult:
         """
         Synthesize a CSD strategy for the given task.
@@ -1797,8 +1861,31 @@ class SynthesisPipeline:
         """
         import time
 
+        try:
+            from synthesis.failure_taxonomy import make_persistent_ledger
+        except ImportError:
+            from failure_taxonomy import make_persistent_ledger
+
         start_time = time.time()
         attempts: list[SynthesisAttempt] = list(initial_attempts or [])
+        self._restore_incumbent_from_attempts(attempts)
+        self._failure_ledger = (
+            copy.deepcopy(initial_failure_ledger)
+            if initial_failure_ledger is not None
+            else make_persistent_ledger()
+        )
+        if initial_failure_ledger is not None:
+            logger.warning(
+                "[warm-resume] restored failure ledger modes=%d prior_attempts=%d",
+                len(self._failure_ledger["modes"]),
+                len(
+                    {
+                        attempt_number
+                        for mode in self._failure_ledger["modes"]
+                        for attempt_number in mode["attempts"]
+                    }
+                ),
+            )
 
         # Create an isolated output directory for this run. The directory layout is:
         #   outputs/generated/<output_name>_<run_id>/
@@ -2210,6 +2297,19 @@ class SynthesisPipeline:
                         f"Underlying error: {eval_result.error}",
                         attempts,
                     )
+
+                if failure_stage is FailureStage.TIMEOUT:
+                    self._unload_evaluator_runtime_before_refinement()
+                    next_allowed_helpers, next_helper_status = self._compute_allowed_helpers(attempts)
+                    if next_helper_status:
+                        print(f"  Helper policy: {next_helper_status}")
+                    print("  Restarting with fresh generation after worker hard timeout...")
+                    strategy_code = self.generator.generate_initial(
+                        task_description,
+                        allowed_helpers=next_allowed_helpers,
+                        start_inside_constrained=self._start_inside_constrained(),
+                    )
+                    continue
 
                 self._unload_evaluator_runtime_before_refinement()
                 print("  Refining based on evaluation error...")

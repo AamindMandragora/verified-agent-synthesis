@@ -17,6 +17,7 @@ Usage:
 """
 
 import argparse
+import dataclasses
 import json
 import os
 import sys
@@ -66,30 +67,118 @@ def _seconds_or_no_cap(raw: str):
 def _load_initial_attempt_history(path: Path):
     """Restore evaluated attempts needed by refinement and helper selection."""
     from synthesis.evaluate.evaluator import EvaluationResult
-    from synthesis.evaluate.feedback_loop import SynthesisAttempt
+    from synthesis.evaluate.feedback_loop import FailureStage, SynthesisAttempt
+    from synthesis.verify.compiler import CompilationResult
+    from synthesis.verify.verifier import VerificationResult
 
-    records = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    records = payload.get("attempts") if isinstance(payload, dict) else payload
+    if not isinstance(records, list):
+        raise ValueError("initial attempt history must be a list or a progress report")
+    evaluation_fields = {field.name for field in dataclasses.fields(EvaluationResult)}
     attempts = []
     for record in records:
-        eval_result = EvaluationResult(
-            success=True,
-            accuracy=float(record["accuracy"]),
-            contains_delimiters=bool(record["contains_delimiters"]),
-            syntax_rate=float(record["syntax_rate"]),
-            num_examples=int(record["num_examples"]),
-            num_correct=int(record["num_correct"]),
-            total_time_seconds=float(record.get("total_time_seconds", 0.0)),
-        )
+        detailed = "evaluation" in record
+        if detailed:
+            raw_evaluation = record.get("evaluation")
+            eval_result = (
+                EvaluationResult(
+                    **{
+                        key: value
+                        for key, value in raw_evaluation.items()
+                        if key in evaluation_fields
+                    }
+                )
+                if isinstance(raw_evaluation, dict)
+                else None
+            )
+            raw_verification = record.get("verification")
+            verification_result = (
+                VerificationResult(success=bool(raw_verification["success"]))
+                if isinstance(raw_verification, dict)
+                else None
+            )
+            raw_compilation = record.get("compilation")
+            compilation_result = (
+                CompilationResult(
+                    success=bool(raw_compilation["success"]),
+                    output_dir=(
+                        Path(raw_compilation["output_dir"])
+                        if raw_compilation.get("output_dir")
+                        else None
+                    ),
+                )
+                if isinstance(raw_compilation, dict)
+                else None
+            )
+            raw_failed_at = record.get("failed_at")
+            failed_at = FailureStage(raw_failed_at) if raw_failed_at else None
+        else:
+            eval_result = EvaluationResult(
+                success=True,
+                accuracy=float(record["accuracy"]),
+                contains_delimiters=bool(record["contains_delimiters"]),
+                syntax_rate=float(record["syntax_rate"]),
+                num_examples=int(record["num_examples"]),
+                num_correct=int(record["num_correct"]),
+                total_time_seconds=float(record.get("total_time_seconds", 0.0)),
+            )
+            verification_result = None
+            compilation_result = None
+            failed_at = None
         attempts.append(
             SynthesisAttempt(
                 attempt_number=int(record["attempt_number"]),
                 strategy_code=str(record["strategy_code"]),
                 full_dafny_code="",
                 timestamp=str(record.get("timestamp", "restored")),
+                verification_result=verification_result,
+                compilation_result=compilation_result,
                 eval_result=eval_result,
+                failed_at=failed_at,
+                error_summary=str(record.get("error_summary", "")),
             )
         )
     return attempts
+
+
+def _load_initial_failure_ledger(path: Path) -> dict:
+    """Load and validate the sealed cross-attempt failure-mode ledger."""
+    from synthesis.failure_taxonomy import FINGERPRINT_AXES
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("version") != 1 or not isinstance(payload.get("ledger"), dict):
+        raise ValueError("initial failure ledger must use version 1 with a ledger object")
+    raw_ledger = payload["ledger"]
+    next_id = raw_ledger.get("next_id")
+    raw_modes = raw_ledger.get("modes")
+    if not isinstance(next_id, int) or next_id < 0 or not isinstance(raw_modes, list):
+        raise ValueError("initial failure ledger has an invalid next_id or modes list")
+
+    modes = []
+    seen_ids = set()
+    for raw_mode in raw_modes:
+        if not isinstance(raw_mode, dict):
+            raise ValueError("initial failure ledger mode must be an object")
+        mode_id = raw_mode.get("id")
+        medoid = raw_mode.get("medoid")
+        attempts = raw_mode.get("attempts")
+        if not isinstance(mode_id, str) or not mode_id or mode_id in seen_ids:
+            raise ValueError("initial failure ledger mode ids must be unique strings")
+        if not isinstance(medoid, list) or len(medoid) != len(FINGERPRINT_AXES):
+            raise ValueError("initial failure ledger medoid has the wrong shape")
+        if (
+            not isinstance(attempts, list)
+            or any(not isinstance(number, int) or number < 1 for number in attempts)
+            or len(set(attempts)) != len(attempts)
+        ):
+            raise ValueError("initial failure ledger attempts must be unique positive integers")
+        seen_ids.add(mode_id)
+        modes.append({"id": mode_id, "medoid": tuple(medoid), "attempts": attempts})
+
+    if next_id < len(modes):
+        raise ValueError("initial failure ledger next_id precedes its existing modes")
+    return {"next_id": next_id, "modes": modes}
 
 
 def _resolve_vllm_gpu_memory_utilization(eval_model: str | None = None) -> float:
@@ -331,6 +420,13 @@ Examples:
         type=Path,
         default=None,
         help="JSON evaluated-attempt history to restore for an approved recovery run.",
+    )
+
+    parser.add_argument(
+        "--initial-failure-ledger-file",
+        type=Path,
+        default=None,
+        help="JSON failure-mode ledger to restore for an approved recovery run.",
     )
 
     # --- environment-shaped knobs ----------------------------------------
@@ -592,6 +688,15 @@ Examples:
             f"Loaded {len(initial_attempts)} prior evaluated attempt(s) from: "
             f"{args.initial_attempt_history_file}"
         )
+    initial_failure_ledger = None
+    if args.initial_failure_ledger_file:
+        initial_failure_ledger = _load_initial_failure_ledger(
+            args.initial_failure_ledger_file
+        )
+        print(
+            f"Loaded {len(initial_failure_ledger['modes'])} prior failure mode(s) from: "
+            f"{args.initial_failure_ledger_file}"
+        )
 
     # Run synthesis
     try:
@@ -601,6 +706,7 @@ Examples:
             initial_strategy_code=initial_strategy_code,
             initial_attempt_offset=args.initial_attempt_offset,
             initial_attempts=initial_attempts,
+            initial_failure_ledger=initial_failure_ledger,
         )
 
         print("\n" + "=" * 60)

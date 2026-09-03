@@ -2554,13 +2554,33 @@ class Evaluator:
                 self._active_generation_token_evidence = generation_token_evidence
             try:
                 with _PerExampleTimer(self.max_seconds_per_example):
+                    print(
+                        f"  [scoring] example={i + 1}/{dataset_len} "
+                        "stage=answer_extraction start",
+                        flush=True,
+                    )
                     actual, answer_source, benchmark_aux = self._extract_actual_for_example(scored_output, example)
+                    print(
+                        f"  [scoring] example={i + 1}/{dataset_len} "
+                        "stage=answer_extraction done",
+                        flush=True,
+                    )
+                    print(
+                        f"  [scoring] example={i + 1}/{dataset_len} "
+                        "stage=correctness start",
+                        flush=True,
+                    )
                     is_correct = self._is_correct_for_example(
                         actual,
                         expected,
                         example,
                         benchmark_aux,
                         scored_output,
+                    )
+                    print(
+                        f"  [scoring] example={i + 1}/{dataset_len} "
+                        "stage=correctness done",
+                        flush=True,
                     )
             finally:
                 if self.dataset_name == "spider":
@@ -2573,7 +2593,17 @@ class Evaluator:
             )
             contains_delimiters = used_hidden_chunk if self._uses_hidden_chunks() else visible_delimiters
 
-            all_valid_syntax, segments = self._check_syntax_validity(scored_output, example=example)
+            print(
+                f"  [scoring] example={i + 1}/{dataset_len} stage=syntax start",
+                flush=True,
+            )
+            all_valid_syntax, segments = self._check_syntax_validity(
+                scored_output, example=example
+            )
+            print(
+                f"  [scoring] example={i + 1}/{dataset_len} stage=syntax done",
+                flush=True,
+            )
             # Per-example syntax pass:
             # - GSM: visible <<...>> chunks must exist and parse.
             # - SMILES: the full output is the generated molecule string.
