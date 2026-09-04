@@ -56,6 +56,7 @@ class FakeGenerator:
         self._vllm = None
         self.strategies = list(strategies)
         self.next_index = 1  # strategies[0] is the initial one
+        self.generate_initial_calls = []
         self.refine_calls = []
 
     def set_synthesis_context(self, *args, **kwargs):
@@ -70,6 +71,13 @@ class FakeGenerator:
     def generate_initial(
         self, task_description, allowed_helpers=None, start_inside_constrained=False
     ):
+        self.generate_initial_calls.append(
+            {
+                "task_description": task_description,
+                "allowed_helpers": allowed_helpers,
+                "start_inside_constrained": start_inside_constrained,
+            }
+        )
         return self.strategies[0]
 
     def inject_strategy(self, strategy_code):
@@ -197,6 +205,39 @@ def test_shortfall_is_distance_to_both_bars(tmp_path):
     assert p._shortfall(0.3, 0.5) == pytest.approx(0.3 + 0.4)
     assert p._shortfall(0.6, 0.9) == pytest.approx(0.0)
     assert p._shortfall(0.9, 0.5) == pytest.approx(0.4)  # no credit above a bar
+
+
+def test_paper_threshold_ignores_recorded_slowest_runtime_after_safe_evaluation(
+    tmp_path,
+):
+    """Runtime is a safety cutoff in the evaluator, not a paper win bar."""
+    result = _result(0.7, 1.0)
+    result.max_sample_time_seconds = 120.0
+    pipeline = make_pipeline(
+        tmp_path,
+        ScriptedEvaluator([]),
+        FakeGenerator(["S1"]),
+        1,
+        min_accuracy=0.6,
+        min_syntax_rate=0.9,
+    )
+    pipeline.eval_max_seconds_per_example = 90.0
+
+    assert pipeline._meets_threshold(result) is True
+
+
+def test_paper_threshold_uses_accuracy_and_syntax_not_delimiter_metadata():
+    """Delimiter metadata and recorded runtime are not paper-win bars."""
+    result = _result(0.7, 1.0)
+    result.contains_delimiters = False
+    result.max_sample_time_seconds = 120.0
+
+    assert result.meets_threshold(
+        min_accuracy=0.6,
+        min_syntax_rate=0.9,
+        require_delimiters=True,
+        max_seconds_per_example=90.0,
+    ) is True
 
 
 def test_acceptance_rule_strict_decrease_with_lex_tiebreak(tmp_path):
@@ -432,6 +473,139 @@ def test_warm_resume_restores_failure_mode_history_before_scoring_seed(tmp_path)
     assert "mode_A: appeared in attempt(s) 1,15,16" in (
         generator.refine_calls[-1]["evaluation_feedback"]
     )
+
+
+def _table5_opus_history_through_attempt_38():
+    """Return a contiguous restored prefix whose current-target best is attempt 38."""
+    attempts = []
+    for attempt_number in range(1, 38):
+        result = _result(0 / 49, 40 / 49, n=49)
+        result.planned_num_examples = 49
+        attempts.append(
+            SynthesisAttempt(
+                attempt_number=attempt_number,
+                strategy_code=f"S{attempt_number}",
+                full_dafny_code="",
+                timestamp="restored",
+                eval_result=result,
+                failed_at=FailureStage.EVALUATION,
+            )
+        )
+
+    incumbent = _result(11 / 49, 45 / 49, n=49)
+    incumbent.planned_num_examples = 49
+    attempts.append(
+        SynthesisAttempt(
+            attempt_number=38,
+            strategy_code="S38",
+            full_dafny_code="",
+            timestamp="restored",
+            eval_result=incumbent,
+        )
+    )
+    return attempts
+
+
+def _fixed_table5_opus_pipeline(tmp_path, results, generator):
+    pipeline = make_pipeline(
+        tmp_path,
+        ScriptedEvaluator(results),
+        generator,
+        max_iterations=2,
+        min_accuracy=20 / 49,
+        min_syntax_rate=47 / 49,
+    )
+    pipeline.eval_sample_size = 49
+    return pipeline
+
+
+def test_fixed_warm_continuation_refines_before_39_and_spends_both_new_iterations(
+    tmp_path,
+):
+    attempt_39 = _result(20 / 49, 47 / 49, n=49)
+    attempt_39.planned_num_examples = 49
+    attempt_40 = _result(4 / 49, 42 / 49, n=49)
+    attempt_40.planned_num_examples = 49
+    generator = FakeGenerator(["must-not-be-replayed", "S39", "S40"])
+    pipeline = _fixed_table5_opus_pipeline(
+        tmp_path, [attempt_39, attempt_40], generator
+    )
+
+    result = pipeline.synthesize(
+        task_description="dummy",
+        output_name="opus-fixed-warm",
+        initial_strategy_code="S38",
+        initial_attempt_offset=38,
+        initial_attempts=_table5_opus_history_through_attempt_38(),
+        fixed_warm_continuation=True,
+    )
+
+    assert generator.generate_initial_calls == []
+    assert len(generator.refine_calls) == 2
+    assert generator.refine_calls[0]["previous_strategy"] == "S38"
+    assert generator.refine_calls[0]["previous_accuracy"] == pytest.approx(11 / 49)
+    assert generator.refine_calls[0]["previous_syntax_rate"] == pytest.approx(45 / 49)
+    assert [attempt.attempt_number for attempt in result.attempts[-2:]] == [39, 40]
+    assert [attempt.strategy_code for attempt in result.attempts[-2:]] == ["S39", "S40"]
+    assert len(result.attempts) == 40
+    assert result.success is True
+    assert result.strategy_code == "S39"
+
+
+def test_fixed_warm_continuation_returns_restored_incumbent_when_new_attempts_regress(
+    tmp_path,
+):
+    attempt_39 = _result(5 / 49, 43 / 49, n=49)
+    attempt_39.planned_num_examples = 49
+    attempt_40 = _result(10 / 49, 44 / 49, n=49)
+    attempt_40.planned_num_examples = 49
+    generator = FakeGenerator(["must-not-be-replayed", "S39", "S40"])
+    pipeline = _fixed_table5_opus_pipeline(
+        tmp_path, [attempt_39, attempt_40], generator
+    )
+
+    result = pipeline.synthesize(
+        task_description="dummy",
+        output_name="opus-fixed-warm-regressions",
+        initial_strategy_code="S38",
+        initial_attempt_offset=38,
+        initial_attempts=_table5_opus_history_through_attempt_38(),
+        fixed_warm_continuation=True,
+    )
+
+    assert [attempt.attempt_number for attempt in result.attempts[-2:]] == [39, 40]
+    assert len(result.attempts) == 40
+    assert result.success is False
+    assert result.strategy_code == "S38"
+    assert result.full_dafny_code == "// dafny\nS38"
+    assert pipeline._incumbent is not None
+    assert pipeline._incumbent.attempt_number == 38
+
+
+@pytest.mark.parametrize(
+    ("history", "offset", "seed", "message"),
+    [
+        ([], 0, "S38", "history"),
+        (_table5_opus_history_through_attempt_38(), 37, "S38", "offset"),
+        (_table5_opus_history_through_attempt_38(), 38, "not-restored", "seed"),
+    ],
+)
+def test_fixed_warm_continuation_rejects_invalid_restored_state(
+    tmp_path, history, offset, seed, message
+):
+    pipeline = _fixed_table5_opus_pipeline(
+        tmp_path, [], FakeGenerator(["unused", "S39", "S40"])
+    )
+
+    with pytest.raises(ValueError, match=message):
+        pipeline.synthesize(
+            task_description="dummy",
+            output_name="invalid-fixed-warm",
+            initial_strategy_code=seed,
+            initial_attempt_offset=offset,
+            initial_attempts=history,
+            fixed_warm_continuation=True,
+        )
 
 
 def test_worker_hard_timeout_is_recorded_and_search_continues(tmp_path):

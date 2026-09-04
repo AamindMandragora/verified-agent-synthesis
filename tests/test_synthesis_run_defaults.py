@@ -107,6 +107,7 @@ def test_run_synthesis_help_advertises_ucb_budget_and_beam_defaults():
     # The single fair helper-selection contract is intentionally public again.
     assert "--helper-selection-policy {bandit}" in " ".join(help_text.split())
     assert "--eval-min-examples-before-threshold-stop" in help_text
+    assert "--fixed-warm-continuation" in help_text
     # 2026-07-17 simplification: these knobs are constants/env now, not flags.
     for gone in (
         "--claude-config-dir",

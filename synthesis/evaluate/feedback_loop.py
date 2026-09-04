@@ -1487,7 +1487,40 @@ class SynthesisPipeline:
             min_accuracy=self.min_accuracy,
             min_syntax_rate=self.min_syntax_rate,
             require_delimiters=self.require_delimiters,
-            max_seconds_per_example=self.eval_max_seconds_per_example,
+        )
+
+    def _validate_fixed_warm_continuation(
+        self,
+        *,
+        initial_strategy_code: str | None,
+        initial_attempt_offset: int,
+        attempts: list[SynthesisAttempt],
+    ) -> None:
+        """Fail closed before the fixed two-attempt Opus continuation starts."""
+        if not attempts:
+            raise ValueError("fixed warm continuation requires restored history")
+        if initial_attempt_offset != len(attempts):
+            raise ValueError("fixed warm continuation offset does not match history")
+        if [attempt.attempt_number for attempt in attempts] != list(
+            range(1, initial_attempt_offset + 1)
+        ):
+            raise ValueError("fixed warm continuation history is not contiguous")
+        if initial_attempt_offset != 38 or self.max_iterations != 2:
+            raise ValueError(
+                "fixed warm continuation requires offset 38 and exactly 2 new attempts"
+            )
+        if not initial_strategy_code or initial_strategy_code != attempts[-1].strategy_code:
+            raise ValueError("fixed warm continuation seed does not match restored S38")
+        if (
+            self._incumbent is None
+            or self._incumbent.attempt_number != initial_attempt_offset
+            or self._incumbent.strategy_code != initial_strategy_code
+        ):
+            raise ValueError("fixed warm continuation seed is not the restored incumbent")
+        logger.info(
+            "[fixed-warm] validated restored history attempts=%d seed_attempt=%d",
+            len(attempts),
+            self._incumbent.attempt_number,
         )
 
     def _render_flip_diff(
@@ -1896,6 +1929,7 @@ class SynthesisPipeline:
         initial_attempt_offset: int = 0,
         initial_attempts: list[SynthesisAttempt] | None = None,
         initial_failure_ledger: dict | None = None,
+        fixed_warm_continuation: bool = False,
     ) -> SynthesisResult:
         """
         Synthesize a CSD strategy for the given task.
@@ -2001,6 +2035,45 @@ class SynthesisPipeline:
                 task_description,
                 allowed_helpers=allowed_helpers,
                 start_inside_constrained=self._start_inside_constrained(),
+            )
+
+        if fixed_warm_continuation:
+            self._validate_fixed_warm_continuation(
+                initial_strategy_code=initial_strategy_code,
+                initial_attempt_offset=initial_attempt_offset,
+                attempts=attempts,
+            )
+            incumbent = self._incumbent
+            assert incumbent is not None  # validated immediately above
+            logger.info(
+                "[fixed-warm] authoring attempt=39 from restored attempt=%d",
+                incumbent.attempt_number,
+            )
+            strategy_code = self._refine_with_beam(
+                stage_label="fixed_warm_seed",
+                previous_strategy=incumbent.strategy_code,
+                allowed_helpers=allowed_helpers,
+                refine_once=lambda: self.generator.refine_after_evaluation_failure(
+                    previous_strategy=incumbent.strategy_code,
+                    previous_accuracy=incumbent.a_result.accuracy or 0.0,
+                    previous_syntax_rate=incumbent.a_result.syntax_rate or 0.0,
+                    num_examples=incumbent.a_result.num_examples or 0,
+                    goal_accuracy=self.min_accuracy,
+                    goal_syntax_rate=self.min_syntax_rate,
+                    evaluation_feedback=(
+                        "Fixed warm continuation: refine the restored incumbent "
+                        "for the first of two scheduled continuation attempts."
+                    ),
+                    best_strategy=None,
+                    best_accuracy=None,
+                    best_syntax_rate=None,
+                    allowed_helpers=allowed_helpers,
+                    eval_max_seconds_per_example=self.eval_max_seconds_per_example,
+                    mode_examples=incumbent.a_result._render_mode_examples(),
+                    attempt_outcome_ledger=self._build_attempt_outcome_ledger(
+                        attempts, incumbent.attempt_number
+                    ),
+                ),
             )
 
         # Index in `attempts` after which we last performed a fresh restart.
@@ -2661,6 +2734,51 @@ class SynthesisPipeline:
 
 
             if success:
+                if fixed_warm_continuation and iteration + 1 < self.max_iterations:
+                    attempts.append(attempt)
+                    self._save_progress_report(
+                        attempts, task_description, output_name, run_results_dir
+                    )
+                    incumbent = self._incumbent
+                    assert incumbent is not None
+                    logger.info(
+                        "[fixed-warm] paper bars met at attempt=%d; authoring "
+                        "the required final attempt=40 from incumbent=%d",
+                        attempt.attempt_number,
+                        incumbent.attempt_number,
+                    )
+                    next_allowed_helpers, next_helper_status = self._compute_allowed_helpers(
+                        attempts
+                    )
+                    if next_helper_status:
+                        print(f"  Helper policy: {next_helper_status}")
+                    strategy_code = self._refine_with_beam(
+                        stage_label="fixed_warm_final",
+                        previous_strategy=incumbent.strategy_code,
+                        allowed_helpers=next_allowed_helpers,
+                        refine_once=lambda: self.generator.refine_after_evaluation_failure(
+                            previous_strategy=incumbent.strategy_code,
+                            previous_accuracy=incumbent.a_result.accuracy or 0.0,
+                            previous_syntax_rate=incumbent.a_result.syntax_rate or 0.0,
+                            num_examples=incumbent.a_result.num_examples or 0,
+                            goal_accuracy=self.min_accuracy,
+                            goal_syntax_rate=self.min_syntax_rate,
+                            evaluation_feedback=(
+                                "Fixed warm continuation: the paper bars are met, "
+                                "but one scheduled final continuation attempt remains."
+                            ),
+                            best_strategy=None,
+                            best_accuracy=None,
+                            best_syntax_rate=None,
+                            allowed_helpers=next_allowed_helpers,
+                            eval_max_seconds_per_example=self.eval_max_seconds_per_example,
+                            mode_examples=incumbent.a_result._render_mode_examples(),
+                            attempt_outcome_ledger=self._build_attempt_outcome_ledger(
+                                attempts, incumbent.attempt_number
+                            ),
+                        ),
+                    )
+                    continue
                 print(f"  ✓ Evaluation passed (A-only; slice B confirmation disabled):")
                 print(f"    Accuracy: {cand_acc_a:.1%}")
                 print(f"    Contains << >>: {'yes' if eval_result.contains_delimiters else 'no'}")
@@ -2754,6 +2872,14 @@ class SynthesisPipeline:
             attempts.append(attempt)
             self._save_progress_report(attempts, task_description, output_name, run_results_dir)
 
+            if fixed_warm_continuation and iteration + 1 == self.max_iterations:
+                logger.info(
+                    "[fixed-warm] final scheduled attempt=%d recorded; skipping "
+                    "an unused follow-on refinement",
+                    attempt.attempt_number,
+                )
+                continue
+
             self._unload_evaluator_runtime_before_refinement()
             candidate_feedback = self._threshold_miss_candidate_feedback(eval_result)
             threshold_mode_examples = eval_result._render_mode_examples()
@@ -2828,6 +2954,53 @@ class SynthesisPipeline:
         # All attempts exhausted
         total_time = (time.time() - start_time) * 1000
 
+        if fixed_warm_continuation and self._incumbent is not None and self._meets_threshold(
+            self._incumbent.a_result
+        ):
+            incumbent = self._incumbent
+            winner_attempt = next(
+                attempt
+                for attempt in attempts
+                if attempt.attempt_number == incumbent.attempt_number
+            )
+            winner_full_code = (
+                winner_attempt.full_dafny_code
+                or self.generator.inject_strategy(incumbent.strategy_code)
+            )
+            winner_compilation = compiler.compile(winner_full_code, output_name)
+            if not winner_compilation.success or winner_compilation.main_module_path is None:
+                raise SynthesisExhaustionError(
+                    "fixed warm continuation could not compile its selected incumbent",
+                    attempts,
+                )
+            logger.info(
+                "[fixed-warm] selected paper winner attempt=%d after attempts=%d",
+                incumbent.attempt_number,
+                len(attempts),
+            )
+            self._save_success_report(
+                incumbent.strategy_code,
+                winner_full_code,
+                winner_compilation,
+                attempts,
+                task_description,
+                output_name,
+                run_dir,
+                run_dafny_dir,
+                run_results_dir,
+                incumbent.a_result,
+            )
+            return SynthesisResult(
+                success=True,
+                strategy_code=incumbent.strategy_code,
+                full_dafny_code=winner_full_code,
+                compiled_module_path=winner_compilation.main_module_path,
+                output_dir=winner_compilation.output_dir,
+                run_dir=run_dir,
+                attempts=attempts,
+                total_time_ms=total_time,
+            )
+
         print(f"\n{'='*60}")
         print(f"FAILED after {self.max_iterations} attempts")
         print(f"Total time: {total_time:.1f}ms")
@@ -2841,6 +3014,33 @@ class SynthesisPipeline:
             run_dir,
             run_results_dir,
         )
+
+        if fixed_warm_continuation and self._incumbent is not None:
+            incumbent = self._incumbent
+            winner_attempt = next(
+                attempt
+                for attempt in attempts
+                if attempt.attempt_number == incumbent.attempt_number
+            )
+            winner_full_code = (
+                winner_attempt.full_dafny_code
+                or self.generator.inject_strategy(incumbent.strategy_code)
+            )
+            logger.info(
+                "[fixed-warm] selected below-bar incumbent attempt=%d after attempts=%d",
+                incumbent.attempt_number,
+                len(attempts),
+            )
+            return SynthesisResult(
+                success=False,
+                strategy_code=incumbent.strategy_code,
+                full_dafny_code=winner_full_code,
+                compiled_module_path=None,
+                output_dir=None,
+                run_dir=run_dir,
+                attempts=attempts,
+                total_time_ms=total_time,
+            )
 
         # Best-accuracy fallback: if any attempt's accuracy beat min_accuracy
         # (even if syntax fell short of min_syntax_rate), save a side-channel

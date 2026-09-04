@@ -351,19 +351,18 @@ class EvaluationResult:
         require_delimiters: bool = True,
         max_seconds_per_example: Optional[float] = None,
     ) -> bool:
-        """Check if aggregate metrics meet the specified thresholds."""
+        """Check paper accuracy and syntax bars after evaluator safety checks.
+
+        ``require_delimiters`` and ``max_seconds_per_example`` remain accepted
+        for compatibility with callers, but neither is a paper-success bar.
+        The evaluator enforces its per-example safety limit while each example
+        runs and records the measured runtime.
+        """
         if not self.sample_outputs:
             return False
         if self.early_stopped:
             return False
-        runtime_ok = True
-        if max_seconds_per_example is not None:
-            runtime_ok = self.max_sample_time_seconds <= max_seconds_per_example
-        return (
-            runtime_ok
-            and self.accuracy >= min_accuracy
-            and self.syntax_rate >= min_syntax_rate
-        )
+        return self.accuracy >= min_accuracy and self.syntax_rate >= min_syntax_rate
 
     def get_feedback_summary(self, require_delimiters: bool = True) -> str:
         """Generate a summary for feedback to the generator.

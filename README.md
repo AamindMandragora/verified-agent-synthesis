@@ -49,6 +49,24 @@ control; that control is recompiled and reevaluated, and is kept explicitly
 separate from fresh accepted synthesis results. The uncollected Tables 6--8
 parameter ablations are outside this campaign.
 
+The approved Opus follow-up is a separate fixed warm continuation: seal the
+exact 38-attempt history, incumbent, and reconstructed failure ledger with
+`scripts/runtime/prepare_opus_continuation.py`, then author exactly attempts
+39 and 40. It selects the best of the restored incumbent and both new attempts.
+Paper success requires a complete evaluation with the accuracy and syntax bars.
+Delimiter metadata remains recorded for feedback, and the evaluator still stops
+unsafe examples at its per-example time limit, but neither is an additional
+paper-success bar.
+
+Tables 6--8 use five separate fresh Opus ablations: token budgets 2 and 4,
+beam sizes 1 and 4, and helper masking disabled. Each uses 40 cold attempts,
+one GPU, and the 7200-second attempt cap. The already validated default Opus
+control is exported once into the control cells for Tables 6--8; it is not
+launched as duplicate fresh trajectories. Build that separate manifest with
+`python scripts/runtime/run_table5_8_queue.py --scope tables6-to-8-ablations`;
+the selected scope is stored in the manifest, and a controller may require the
+same name with `--controller --scope tables6-to-8-ablations`.
+
 - `outputs/generated/`
 - `outputs/baselines/`
 

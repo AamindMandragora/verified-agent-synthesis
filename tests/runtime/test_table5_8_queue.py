@@ -87,6 +87,19 @@ def test_exact_table5_synthesizer_scope():
     }
 
 
+def test_opus_fixed_warm_manifest_separates_restored_new_and_total_attempt_counts():
+    [row] = queue.build_opus_fixed_warm_continuation_scope(Path("/repo"))
+
+    assert row["cell_id"] == "t5-opus5-gsm_symbolic-fixed-warm"
+    assert row["profile"] == "opus5"
+    assert row["execution_mode"] == "fixed_warm_continuation"
+    assert row["initial_attempt_offset"] == 38
+    assert row["new_iterations"] == 2
+    assert row["total_attempt_cap"] == 40
+    assert row["max_iterations"] == 2
+    assert row["max_attempt_seconds"] == 7200.0
+
+
 def test_direct_dry_run_prints_all_three_physical_runs():
     repo = Path(__file__).parents[2]
     result = subprocess.run(
@@ -102,6 +115,29 @@ def test_direct_dry_run_prints_all_three_physical_runs():
         if line.startswith("t5-")
     ]
     assert len(command_lines) == 3
+
+
+def test_direct_dry_run_selects_the_five_tables6_to_8_ablations():
+    repo = Path(__file__).parents[2]
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo / "scripts/runtime/run_table5_8_queue.py"),
+            "--dry-run",
+            "--scope",
+            "tables6-to-8-ablations",
+        ],
+        cwd=repo,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    command_lines = [
+        line
+        for line in result.stdout.splitlines()
+        if line.startswith(("t6-", "t7-", "t8-"))
+    ]
+    assert len(command_lines) == 5
 
 
 def test_main_installs_canonical_provider_routes_before_cli_handoff(
@@ -137,7 +173,7 @@ def test_table5_backend_profiles_are_exact():
     assert {row["benchmark"] for row in rows} == {"gsm_symbolic"}
 
 
-def test_dropped_parameter_ablations_are_not_in_scope():
+def test_default_opus_control_is_reused_for_tables6_to_8_export_cells():
     rows = queue.build_scope(Path("/repo"))
     assert all(
         (
@@ -149,10 +185,117 @@ def test_dropped_parameter_ablations_are_not_in_scope():
         == (1, 2, True, "bandit")
         for row in rows
     )
-    control = next(row for row in rows if row["cell_id"] == "t5-opus5-gsm_symbolic")
+    control = queue.build_tables6_to_8_export_control(Path("/repo"))
     assert control["paper_cells"] == [
         {"table": 5, "table_cell_id": "table5-opus5-gsm_symbolic"},
+        {"table": 6, "table_cell_id": "t6-opus5-gsm_symbolic-b1-B2-m1"},
+        {"table": 7, "table_cell_id": "t7-opus5-gsm_symbolic-b1-B2-m1"},
+        {"table": 8, "table_cell_id": "t8-opus5-gsm_symbolic-b1-B2-m1"},
     ]
+
+
+def test_tables6_to_8_scope_has_exactly_five_fresh_opus_ablations():
+    rows = queue.build_tables6_to_8_ablation_scope(Path("/repo"))
+
+    assert len(rows) == 5
+    assert {
+        (row["table"], row["token_budget"], row["beam_size"], row["adaptive_helper_mask"])
+        for row in rows
+    } == {
+        (6, 2, 2, True),
+        (6, 4, 2, True),
+        (7, 1, 1, True),
+        (7, 1, 4, True),
+        (8, 1, 2, False),
+    }
+    assert all(row["execution_mode"] == "fresh_synthesis" for row in rows)
+    assert all(row["profile"] == "opus5" for row in rows)
+    assert all(row["eval_model"] == "Qwen/Qwen2.5-1.5B-Instruct" for row in rows)
+    assert all(row["max_iterations"] == 40 for row in rows)
+    assert all(row["gpu_count"] == 1 for row in rows)
+    assert all(row["max_attempt_seconds"] == 7200.0 for row in rows)
+    assert len({row["cell_id"] for row in rows}) == 5
+    for row in rows:
+        command = queue.synthesis_command(row, Path("/env/python"))
+        assert command[command.index("--max-iterations") + 1] == "40"
+        assert command[command.index("--max-attempt-seconds") + 1] == "7200.0"
+
+
+def test_ablation_scope_is_selected_and_immutably_bound_in_the_manifest(
+    tmp_path, monkeypatch
+):
+    bar = tmp_path / "bars" / "gsm.json"
+    bar.parent.mkdir()
+    bar.write_text("{}\n", encoding="utf-8")
+    bar_sha = queue.hash_file(bar)
+    monkeypatch.setattr(
+        queue,
+        "BAR_BINDINGS",
+        {
+            "gsm_symbolic": {
+                "min_accuracy": 13 / 49,
+                "min_syntax_rate": 0.9,
+                "source_path": str(bar),
+                "source_sha256": bar_sha,
+            }
+        },
+    )
+    monkeypatch.setattr(
+        queue, "expected_author_route", lambda profile, environment: {"profile": profile}
+    )
+    monkeypatch.setattr(queue, "execution_source_paths", lambda repo: ())
+    monkeypatch.setattr(queue, "execution_source_hashes", lambda repo: {})
+    source_digest = queue.sha256_text("{}")
+    monkeypatch.setattr(queue, "execution_source_sha256", lambda repo: source_digest)
+    monkeypatch.setattr(queue, "validate_crane_checkout", lambda repo: None)
+    monkeypatch.setattr(queue, "crane_source_hashes", lambda repo: {})
+    monkeypatch.setattr(
+        queue,
+        "materialize_frozen_bar_sources",
+        lambda repo: {"gsm_symbolic": "bars/gsm.json"},
+    )
+    monkeypatch.setattr(
+        queue,
+        "external_runtime_binding",
+        lambda environment: {"binding": "test"},
+    )
+    monkeypatch.setattr(
+        queue,
+        "validate_external_runtime_binding",
+        lambda binding, environment: None,
+    )
+    monkeypatch.setattr(queue, "python_runtime_fingerprint", lambda python, repo: {"python": "test"})
+    monkeypatch.setattr(
+        queue.subprocess,
+        "run",
+        lambda argv, **kwargs: types.SimpleNamespace(
+            stdout="" if "status" in argv else "a" * 40 + "\n"
+        ),
+    )
+
+    scope = queue.TABLES6_TO_8_ABLATION_SCOPE
+    rows = queue.build_selected_scope(tmp_path, scope)
+    pilots = {
+        "opus5": {
+            "execution_source_sha256": source_digest,
+            "python_runtime": {"python": "test"},
+        }
+    }
+    payload = queue.manifest_payload(
+        tmp_path, rows, provider_pilots=pilots, scope=scope
+    )
+
+    assert payload["scope"] == scope
+    assert [row["cell_id"] for row in queue.validate_manifest(tmp_path, payload)] == [
+        row["cell_id"] for row in rows
+    ]
+    queue.validate_controller_scope(scope, payload["scope"])
+    with pytest.raises(queue.ConfigError, match="controller scope"):
+        queue.validate_controller_scope(queue.TABLE5_SCOPE, payload["scope"])
+    wrong_scope = json.loads(json.dumps(payload))
+    wrong_scope["scope"] = queue.TABLE5_SCOPE
+    with pytest.raises(queue.ConfigError, match="scope"):
+        queue.validate_manifest(tmp_path, wrong_scope)
 
 
 def test_commands_bind_canonical_splits_and_no_warm_start():
@@ -2467,6 +2610,7 @@ def test_controller_passes_running_and_blocked_rows_to_dispatch_without_overwrit
     manifest.write_text(
         json.dumps(
                     {
+                        "scope": queue.TABLE5_SCOPE,
                         "provider_pilots": {},
                         "provider_pilot_sha256": queue.provider_pilots_sha256({}),
                         "execution_source_sha256": "c" * 64,

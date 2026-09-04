@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Opus continuation and Tables 6–8 review</title>
+  <style>
+    body { font: 16px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: #172033; margin: 40px auto; max-width: 920px; padding: 0 24px; }
+    h1, h2 { color: #0d3b66; } code { background: #edf2f7; padding: 2px 5px; } .ok { color: #087443; font-weight: 650; } .risk { color: #9a3412; font-weight: 650; }
+    li { margin: 8px 0; } table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid #cbd5e1; padding: 9px; text-align: left; vertical-align: top; } th { background: #eaf2fb; }
+  </style>
+</head>
+<body>
+  <h1>Opus continuation and Tables 6–8 review</h1>
+  <p>Scope: fixed two-attempt Opus warm continuation, numeric paper-win rule, sealed provenance, and five cold Tables 6–8 ablation rows. No provider calls, GPU jobs, commits, pushes, or live-process changes were made.</p>
+  <h2>What changed</h2>
+  <ul>
+    <li>Paper success now uses completed accuracy and syntax only. Delimiter metadata and per-example runtime remain recorded; the evaluator still enforces the per-example safety cutoff, but neither is an extra paper bar.</li>
+    <li>Fixed warm continuation validates contiguous attempts 1–38, offset 38, seed S38, and the restored incumbent; it authors exactly 39 and 40, then selects the best of S38/S39/S40.</li>
+    <li><code>prepare_opus_continuation.py</code> seals the approved source report bytes, S38, the replayed 24-mode ledger, proof hashes, and an immutable offset-38/new-2/total-40 manifest.</li>
+    <li>Tables 6–8 have a dedicated five-row fresh scope: token budgets 2/4, beams 1/4, and helper mask off. Each row is Opus5 + Qwen2.5-1.5B-Instruct, one GPU, 40 attempts, and a 7200-second attempt cap. <code>--scope tables6-to-8-ablations</code> selects and immutably records that scope; controller <code>--scope</code> rejects a different manifest scope. The existing validated Opus control maps to the three control cells once.</li>
+  </ul>
+  <h2>Verification</h2>
+  <p class="ok">Root’s final combined focused run passed: <code>152 passed, 14 deselected, 3 warnings in 26.78s</code>. <code>git diff --check</code> passed.</p>
+  <p>Red tests recorded first: the slowest-runtime and false-delimiter paper-win regressions failed before the rule changes; the selected-scope manifest regression failed before its implementation.</p>
+  <h2>Manual review</h2>
+  <ol>
+    <li>Read <code>synthesis/evaluate/evaluator.py</code> and <code>synthesis/evaluate/feedback_loop.py</code> for the success-rule and fixed-schedule boundaries.</li>
+    <li>Check <code>scripts/runtime/prepare_opus_continuation.py</code> against the pinned source SHA-256 before preparing a launch.</li>
+    <li>Before any launch, build a current manifest and complete the provider, split, disk, and GPU admission checks. This change intentionally did not create a manifest or start work.</li>
+  </ol>
+  <h2>Known limits</h2>
+  <p class="risk">The full current greedy-hill-climb module has <code>17 passed, 4 failed</code>. An isolated run at base commit <code>49dc347c</code> had the same four failing names (<code>10 passed, 4 failed</code>), so this change did not add a regression. All four expect slice-B behavior while the unchanged production path is A-only:</p>
+  <ul>
+    <li><code>test_greedy_flow_rebases_on_incumbent_and_confirms_on_slice_b</code></li>
+    <li><code>test_eval_error_after_seeding_also_rebases_on_incumbent</code></li>
+    <li><code>test_single_slice_bar_crossing_is_not_success</code></li>
+    <li><code>test_reject_feedback_contains_flip_diff_but_never_slice_b</code></li>
+  </ul>
+</body>
+</html>

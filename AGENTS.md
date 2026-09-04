@@ -71,6 +71,25 @@ ablations are excluded. Terminal evidence must keep
 synthesis, held-out, and total wall times plus phase timestamps and any
 available per-attempt evaluation times.
 
+The approved Opus fixed warm continuation is a separate one-row run: restore
+the sealed, contiguous history through attempt 38 and its reconstructed failure
+ledger, author attempts 39 and 40 even when attempt 39 meets the bars, and
+select the best of all three candidates. The manifest must bind offset 38, two
+new iterations, total cap 40, and a 7200-second attempt limit. Runtime remains
+recorded and the evaluator's per-example limit remains a safety cutoff; paper
+success is complete accuracy and syntax, not delimiter metadata or the slowest
+recorded example time.
+
+For Tables 6--8, build only the five fresh Opus GSM-Symbolic ablation rows:
+token budgets 2 and 4, beam sizes 1 and 4, and helper mask off. Every fresh row
+has 40 cold attempts, one GPU, and the 7200-second cap. Reuse the validated
+default Opus result once for the Tables 6--8 control export; never launch a
+duplicate control trajectory. Preserve state-bound hashes, UTC phase times,
+attempt counts, and per-attempt evaluation times through recovery and export.
+Use `--scope tables6-to-8-ablations` to build that five-row manifest. The scope
+name is immutable in the manifest; pass the same controller `--scope` value
+when an operator wants an explicit match check.
+
 - Quick smoke run (fast sanity check, low sample count):
   `CUDA_VISIBLE_DEVICES=2,3 python -m synthesis.run_synthesis --task "Solve math word problems with constrained symbolic expressions." --dataset gsm_symbolic --min-accuracy 0.0 --min-syntax-rate 0.0 --max-iterations 1 --eval-sample-size 1 --eval-max-steps 256 --output-name smoke_gsm`
 - Standard GSM-Symbolic synthesis run:

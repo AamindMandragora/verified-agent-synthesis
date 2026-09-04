@@ -404,7 +404,11 @@ SOURCE_PATHS = (
     "synthesis/evaluate/baselines/crane_repo_runner.py",
 )
 
-MANIFEST_KEYS = frozenset({"version", "git_commit", "crane_commit", "crane_source_sha256", "source_sha256", "execution_source_sha256", "external_runtime", "python_runtime", "jobs", "provider_pilots", "provider_pilot_sha256"})
+TABLE5_SCOPE = "table5"
+TABLES6_TO_8_ABLATION_SCOPE = "tables6-to-8-ablations"
+SELECTABLE_SCOPES = (TABLE5_SCOPE, TABLES6_TO_8_ABLATION_SCOPE)
+
+MANIFEST_KEYS = frozenset({"version", "scope", "git_commit", "crane_commit", "crane_source_sha256", "source_sha256", "execution_source_sha256", "external_runtime", "python_runtime", "jobs", "provider_pilots", "provider_pilot_sha256"})
 JOB_KEYS = frozenset({
     "cell_id", "table", "table_cell_id", "paper_cells", "benchmark", "dataset", "task", "profile",
     "generation_backend", "generation_model", "eval_model", "synthesis_max_tokens",
@@ -418,6 +422,8 @@ JOB_KEYS = frozenset({
     "gpu_scope", "gpu_count", "heldout_split_name", "heldout_split_file", "sample_count",
     "output_name", "heldout_output_json", "log_file", "cold_start", "git_commit",
     "launch_commit", "expected_author_route", "execution_mode", "imported_evidence",
+    "initial_attempt_offset", "new_iterations", "total_attempt_cap",
+    "fixed_warm_continuation",
 })
 
 
@@ -426,11 +432,18 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
     author = TABLE5_PROFILES[profile]
     sample = settings["feedback"]
     table_cell_id = controls.pop("table_cell_id", cell_id)
-    paper_cells = controls.pop(
-        "paper_cells", [{"table": table, "table_cell_id": table_cell_id}]
-    )
+    paper_cells = controls.pop("paper_cells", None)
+    if paper_cells is None:
+        paper_cells = [{"table": table, "table_cell_id": table_cell_id}]
     execution_mode = controls.pop("execution_mode", "fresh_synthesis")
     imported_evidence = controls.pop("imported_evidence", None)
+    max_iterations = controls.pop("max_iterations", 40)
+    max_attempt_seconds = controls.pop(
+        "max_attempt_seconds",
+        TABLE5_MAX_ATTEMPT_SECONDS
+        if execution_mode == "fresh_synthesis"
+        else None,
+    )
     return {
         "cell_id": cell_id,
         "table": table,
@@ -452,12 +465,8 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
         "beam_size": controls.pop("beam_size", 2),
         "adaptive_helper_mask": controls.pop("adaptive_helper_mask", True),
         "helper_selection_policy": controls.pop("helper_selection_policy", "bandit"),
-        "max_iterations": 40,
-        "max_attempt_seconds": (
-            TABLE5_MAX_ATTEMPT_SECONDS
-            if table == 5 and execution_mode == "fresh_synthesis"
-            else None
-        ),
+        "max_iterations": max_iterations,
+        "max_attempt_seconds": max_attempt_seconds,
         "min_accuracy": (BAR_BINDINGS[benchmark][smiles_class]["min_accuracy"] if benchmark == "smiles" else BAR_BINDINGS[benchmark]["min_accuracy"]),
         "min_syntax_rate": (BAR_BINDINGS[benchmark][smiles_class]["min_syntax_rate"] if benchmark == "smiles" else BAR_BINDINGS[benchmark]["min_syntax_rate"]),
         "bar_source_path": BAR_BINDINGS[benchmark]["source_path"],
@@ -479,6 +488,10 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
         "cold_start": True,
         "execution_mode": execution_mode,
         "imported_evidence": imported_evidence,
+        "initial_attempt_offset": controls.pop("initial_attempt_offset", None),
+        "new_iterations": controls.pop("new_iterations", None),
+        "total_attempt_cap": controls.pop("total_attempt_cap", None),
+        "fixed_warm_continuation": controls.pop("fixed_warm_continuation", False),
     }
 
 
@@ -509,6 +522,80 @@ def build_scope(repo: Path) -> list[dict[str, Any]]:
             )
         )
     return rows
+
+
+def build_tables6_to_8_ablation_scope(repo: Path) -> list[dict[str, Any]]:
+    """Return only the five new one-GPU Opus GSM-Symbolic ablations."""
+    rows: list[dict[str, Any]] = []
+    for table, variants in (
+        (6, ((2, 2, True), (4, 2, True))),
+        (7, ((1, 1, True), (1, 4, True))),
+        (8, ((1, 2, False),)),
+    ):
+        for token_budget, beam_size, adaptive_helper_mask in variants:
+            cell_id = (
+                f"t{table}-opus5-gsm_symbolic-b{token_budget}-B{beam_size}"
+                f"-m{int(adaptive_helper_mask)}"
+            )
+            rows.append(
+                _row(
+                    cell_id,
+                    table,
+                    "gsm_symbolic",
+                    "opus5",
+                    table_cell_id=cell_id,
+                    token_budget=token_budget,
+                    beam_size=beam_size,
+                    adaptive_helper_mask=adaptive_helper_mask,
+                )
+            )
+    LOGGER.info("[tableq] built Tables 6-8 ablation scope rows=%d", len(rows))
+    return rows
+
+
+def build_tables6_to_8_export_control(repo: Path) -> dict[str, Any]:
+    """Bind the validated default Opus control to each Tables 6--8 control cell."""
+    control = next(
+        row for row in build_scope(repo) if row["cell_id"] == "t5-opus5-gsm_symbolic"
+    )
+    return dict(
+        control,
+        paper_cells=[
+            {"table": 5, "table_cell_id": "table5-opus5-gsm_symbolic"},
+            {"table": 6, "table_cell_id": "t6-opus5-gsm_symbolic-b1-B2-m1"},
+            {"table": 7, "table_cell_id": "t7-opus5-gsm_symbolic-b1-B2-m1"},
+            {"table": 8, "table_cell_id": "t8-opus5-gsm_symbolic-b1-B2-m1"},
+        ],
+    )
+
+
+def build_selected_scope(repo: Path, scope: str) -> list[dict[str, Any]]:
+    """Build one approved launch scope selected by its immutable name."""
+    if scope == TABLE5_SCOPE:
+        return build_scope(repo)
+    if scope == TABLES6_TO_8_ABLATION_SCOPE:
+        return build_tables6_to_8_ablation_scope(repo)
+    raise ConfigError(f"unknown launch scope: {scope}")
+
+
+def build_opus_fixed_warm_continuation_scope(repo: Path) -> list[dict[str, Any]]:
+    """Return the sealed one-row, two-attempt continuation for Opus."""
+    return [
+        _row(
+            "t5-opus5-gsm_symbolic-fixed-warm",
+            5,
+            "gsm_symbolic",
+            "opus5",
+            table_cell_id="table5-opus5-gsm_symbolic",
+            execution_mode="fixed_warm_continuation",
+            max_iterations=2,
+            max_attempt_seconds=TABLE5_MAX_ATTEMPT_SECONDS,
+            initial_attempt_offset=38,
+            new_iterations=2,
+            total_attempt_cap=40,
+            fixed_warm_continuation=True,
+        )
+    ]
 
 
 def synthesis_command(row: dict[str, Any], python: Path) -> list[str]:
@@ -1262,7 +1349,17 @@ def required_provider_profiles(rows: list[dict[str, Any]]) -> set[str]:
     }
 
 
-def manifest_payload(repo: Path, rows: list[dict[str, Any]], provider_pilots: dict[str, Any] | None = None) -> dict[str, Any]:
+def manifest_payload(
+    repo: Path,
+    rows: list[dict[str, Any]],
+    provider_pilots: dict[str, Any] | None = None,
+    *,
+    scope: str = TABLE5_SCOPE,
+) -> dict[str, Any]:
+    expected_rows = build_selected_scope(repo, scope)
+    if rows != expected_rows:
+        raise ConfigError("manifest jobs do not match the selected launch scope")
+    LOGGER.info("[tableq] manifest-build scope=%s rows=%d", scope, len(rows))
     source_paths = execution_source_paths(repo)
     dirty = subprocess.run(
         ["git", "status", "--porcelain", "--", *source_paths],
@@ -1309,6 +1406,7 @@ def manifest_payload(repo: Path, rows: list[dict[str, Any]], provider_pilots: di
             )
     return {
         "version": 1,
+        "scope": scope,
         "git_commit": commit,
         "crane_commit": CANONICAL_CRANE_COMMIT,
         "crane_source_sha256": crane_sources,
@@ -1637,14 +1735,17 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
             raise ConfigError(
                 f"{profile} provider pilot Python runtime does not match the manifest"
             )
+    scope = payload.get("scope")
+    if not isinstance(scope, str) or scope not in SELECTABLE_SCOPES:
+        raise ConfigError("manifest scope is missing or unsupported")
     rows = payload.get("jobs")
-    if not isinstance(rows, list) or len(rows) != 3:
-        raise ConfigError("manifest must contain exactly 3 Table 5 GSM jobs")
+    expected = build_selected_scope(repo, scope)
+    if not isinstance(rows, list) or len(rows) != len(expected):
+        raise ConfigError("manifest jobs do not match the selected launch scope")
     if set(pilots) != required_provider_profiles(rows):
         raise ConfigError(
             "provider pilot profiles must exactly match fresh synthesis profiles"
         )
-    expected = build_scope(repo)
     immutable_fields = {
         "cell_id", "table", "table_cell_id", "paper_cells", "benchmark", "dataset", "task",
         "profile", "generation_backend", "generation_model", "eval_model",
@@ -2324,6 +2425,12 @@ def validate_controller_artifact_paths(
 def controller_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Dispatch the validated Table 5--8 manifest")
     parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument(
+        "--scope",
+        choices=SELECTABLE_SCOPES,
+        default=None,
+        help="require this manifest to use the selected immutable launch scope",
+    )
     parser.add_argument("--gpus", type=lambda raw: tuple(int(x) for x in raw.split(",") if x.strip()), default=(0, 1, 2, 3))
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--log", type=Path, required=True)
@@ -2333,6 +2440,17 @@ def controller_parser() -> argparse.ArgumentParser:
     parser.add_argument("--export", type=Path, default=None)
     parser.add_argument("--dry-run", action="store_true")
     return parser
+
+
+def validate_controller_scope(requested_scope: str | None, manifest_scope: Any) -> None:
+    """Reject a controller request whose named scope differs from its manifest."""
+    if requested_scope is not None and requested_scope != manifest_scope:
+        LOGGER.error(
+            "[tableq] controller-scope-mismatch requested=%s manifest=%s",
+            requested_scope,
+            manifest_scope,
+        )
+        raise ConfigError("controller scope does not match the manifest scope")
 
 
 def validate_profile_gates(rows: list[dict[str, Any]], environment: dict[str, str]) -> None:
@@ -2480,6 +2598,7 @@ def _controller_main_locked(args: argparse.Namespace) -> int:
     repo = Path.cwd()
     manifest_bytes = args.manifest.read_bytes()
     payload = json.loads(manifest_bytes)
+    validate_controller_scope(args.scope, payload.get("scope"))
     rows = validate_manifest(repo, payload)
     manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
     if args.dry_run:
@@ -2518,11 +2637,17 @@ def _controller_main_locked(args: argparse.Namespace) -> int:
             "manifest_sha256": manifest_sha,
             "provider_pilot_sha256": pilot_sha,
             "status": "validated",
-            "scope": len(rows),
+            "scope": payload["scope"],
+            "row_count": len(rows),
         },
     )
     logging.basicConfig(filename=args.log, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    LOGGER.info("[tableq] input manifest sha256=%s scope=%d", manifest_sha, len(rows))
+    LOGGER.info(
+        "[tableq] input manifest sha256=%s scope=%s rows=%d",
+        manifest_sha,
+        payload["scope"],
+        len(rows),
+    )
     from scripts.runtime.run_cold_synthesis_queue import gpu_memory_snapshot
     rows = [
         dict(
@@ -2555,7 +2680,7 @@ def _controller_main_locked(args: argparse.Namespace) -> int:
     values = load_terminal_results(repo, rows, args.state_dir)
     controller_manifest_path(args.manifest, args.export)
     export_results(rows, values, args.export)
-    write_state(args.state_dir / "controller.json", {"manifest_sha256": manifest_sha, "provider_pilot_sha256": pilot_sha, "status": "complete", "scope": len(rows), "export": str(args.export)})
+    write_state(args.state_dir / "controller.json", {"manifest_sha256": manifest_sha, "provider_pilot_sha256": pilot_sha, "status": "complete", "scope": payload["scope"], "row_count": len(rows), "export": str(args.export)})
     return 0
 
 
@@ -4140,6 +4265,12 @@ def main() -> int:
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument(
+        "--scope",
+        choices=SELECTABLE_SCOPES,
+        default=TABLE5_SCOPE,
+        help="approved launch scope to bind into the immutable manifest",
+    )
+    parser.add_argument(
         "--provider-pilot-report",
         action="append",
         default=[],
@@ -4148,9 +4279,8 @@ def main() -> int:
     )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    rows = build_scope(args.repo)
-    if len(rows) != 3:
-        raise SystemExit(f"scope error: expected 3 rows, got {len(rows)}")
+    rows = build_selected_scope(args.repo, args.scope)
+    LOGGER.info("[tableq] selected-scope scope=%s rows=%d", args.scope, len(rows))
     if args.dry_run:
         for row in rows:
             print(row["cell_id"], shlex.join(planned_command(row, Path(sys.executable))))
@@ -4176,7 +4306,9 @@ def main() -> int:
             git_commit=commit,
             environment=dict(os.environ),
         )
-    payload = manifest_payload(args.repo, rows, provider_pilots=provider_pilots)
+    payload = manifest_payload(
+        args.repo, rows, provider_pilots=provider_pilots, scope=args.scope
+    )
     target = args.manifest or args.repo / "outputs/controlled_comparison/table5_8_manifest.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

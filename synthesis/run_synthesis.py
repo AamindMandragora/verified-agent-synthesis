@@ -443,6 +443,14 @@ Examples:
         default=None,
         help="JSON failure-mode ledger to restore for an approved recovery run.",
     )
+    parser.add_argument(
+        "--fixed-warm-continuation",
+        action="store_true",
+        help=(
+            "Run the sealed Opus continuation: restore attempt 38, author "
+            "exactly attempts 39 and 40, then select the best candidate."
+        ),
+    )
 
     # --- environment-shaped knobs ----------------------------------------
     parser.add_argument(
@@ -713,6 +721,10 @@ Examples:
             f"Loaded {len(initial_failure_ledger['modes'])} prior failure mode(s) from: "
             f"{args.initial_failure_ledger_file}"
         )
+    if args.fixed_warm_continuation and initial_failure_ledger is None:
+        raise ValueError(
+            "fixed warm continuation requires --initial-failure-ledger-file"
+        )
 
     # Run synthesis
     try:
@@ -723,6 +735,7 @@ Examples:
             initial_attempt_offset=args.initial_attempt_offset,
             initial_attempts=initial_attempts,
             initial_failure_ledger=initial_failure_ledger,
+            fixed_warm_continuation=args.fixed_warm_continuation,
         )
 
         print("\n" + "=" * 60)
