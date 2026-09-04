@@ -374,6 +374,23 @@ def test_restore_rejects_partial_timeout_as_incumbent(tmp_path):
     assert pipeline._incumbent.attempt_number == 1
 
 
+def test_restore_rejects_partial_evaluation_as_incumbent(tmp_path):
+    pipeline = make_pipeline(
+        tmp_path,
+        FakeEvaluator(seconds_per_example=0.0),
+        max_attempt_seconds=10.0,
+        max_iterations=1,
+    )
+    attempts = [
+        _restored_attempt(1, 0.4, 1.0, FailureStage.EVALUATION, completed=True),
+        _restored_attempt(2, 0.8, 1.0, FailureStage.EVALUATION, completed=False),
+    ]
+
+    pipeline._restore_incumbent_from_attempts(attempts)
+
+    assert pipeline._incumbent.attempt_number == 1
+
+
 def test_restore_rejects_timeout_missing_per_example_evidence(tmp_path):
     pipeline = make_pipeline(
         tmp_path,

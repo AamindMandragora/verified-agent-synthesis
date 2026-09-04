@@ -92,6 +92,28 @@ def test_plan_rejects_partial_timeout_as_incumbent():
     assert plan.incumbent_attempt_number == 1
 
 
+def test_plan_rejects_partial_evaluation_as_incumbent():
+    attempts = [
+        _attempt(1, accuracy=0.4, syntax_rate=0.95),
+        _attempt(
+            2,
+            accuracy=0.9,
+            syntax_rate=1.0,
+            failed_at="evaluation",
+            complete=False,
+        ),
+    ]
+
+    plan = build_continuation_plan(
+        {"attempts": attempts, "total_attempts": 2},
+        min_accuracy=0.66,
+        min_syntax_rate=0.95,
+        final_attempt_limit=43,
+    )
+
+    assert plan.incumbent_attempt_number == 1
+
+
 def test_plan_rejects_unsuccessful_evaluation_with_stale_high_scores():
     attempts = [
         _attempt(1, accuracy=0.4, syntax_rate=0.95),

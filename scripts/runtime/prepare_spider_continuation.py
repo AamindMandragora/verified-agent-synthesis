@@ -119,9 +119,9 @@ def build_continuation_plan(
         if not all(field in evaluation for field in ("accuracy", "syntax_rate")):
             continue
         failed_at = record.get("failed_at")
-        score_bearing = evaluation.get("success") is True and (
+        score_bearing = _is_complete_evaluation(evaluation) and (
             failed_at in (None, "evaluation")
-            or (failed_at == "timeout" and _is_complete_evaluation(evaluation))
+            or failed_at == "timeout"
         )
         if score_bearing:
             eligible.append((record, evaluation))

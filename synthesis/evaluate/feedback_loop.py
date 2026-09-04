@@ -1368,14 +1368,15 @@ class SynthesisPipeline:
         self._incumbent = None
         for attempt in attempts:
             result = attempt.eval_result
+            complete_evaluation = bool(
+                result is not None and self._is_complete_evaluation(result)
+            )
             complete_timeout = bool(
-                result is not None
+                complete_evaluation
                 and attempt.failed_at is FailureStage.TIMEOUT
-                and self._is_complete_evaluation(result)
             )
             if (
-                result is None
-                or not result.success
+                not complete_evaluation
                 or (
                     attempt.failed_at not in {None, FailureStage.EVALUATION}
                     and not complete_timeout
