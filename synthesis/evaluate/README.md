@@ -50,8 +50,10 @@ The evaluate stage executes compiled strategies on benchmark tasks and returns s
   `--initial-attempt-history-file` and a sealed failure-mode ledger with
   `--initial-failure-ledger-file`. The loop restores the best evaluated
   incumbent and prior mode IDs before it evaluates the first new attempt;
-  timeout and harness-failure records are never eligible to become the
-  restored incumbent.
+  a timeout record is eligible only when it contains the full planned sample,
+  every per-example record, and no early-stop marker. A complete over-budget
+  result may guide later search, but cannot end a run as a successful result.
+  Partial timeouts and harness failures remain ineligible.
 - Evaluation refinement prompts include a compact attempt outcome ledger once
   multiple evaluated attempts exist. The ledger lists the best result, recent
   evaluated branches, rationale-claim summaries, measured deltas, and all

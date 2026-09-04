@@ -20,11 +20,21 @@ second.
 
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from synthesis.evaluate.evaluator import ATTEMPT_DEADLINE_EARLY_STOP_REASON, EvaluationResult
-from synthesis.evaluate.feedback_loop import FailureStage, SynthesisExhaustionError, SynthesisPipeline
+from synthesis.evaluate.evaluator import (
+    ATTEMPT_DEADLINE_EARLY_STOP_REASON,
+    EvaluationResult,
+    Evaluator,
+)
+from synthesis.evaluate.feedback_loop import (
+    FailureStage,
+    SynthesisAttempt,
+    SynthesisExhaustionError,
+    SynthesisPipeline,
+)
 from synthesis.verify.compiler import CompilationResult
 from synthesis.verify.verifier import VerificationResult
 
@@ -180,6 +190,45 @@ class FakeEvaluator:
         return result
 
 
+class FullResultAfterBudgetEvaluator(FakeEvaluator):
+    """Returns every requested example after the attempt budget has elapsed.
+
+    This mirrors the pooled evaluator: the pool call cannot currently be
+    interrupted by the outer attempt deadline, so it may return a complete
+    result after that deadline.
+    """
+
+    def evaluate_sample(
+        self,
+        compiled_module_path,
+        sample_size=None,
+        early_stop_min_accuracy=None,
+        early_stop_min_syntax_rate=None,
+        early_stop_runtime_failures=None,
+        min_examples_before_threshold_stop=None,
+        deadline=None,
+    ):
+        time.sleep(self.seconds_per_example)
+        planned = sample_size or self.num_examples
+        sample_outputs = [
+            {"index": i, "is_correct": True} for i in range(planned)
+        ]
+        result = EvaluationResult(
+            success=True,
+            accuracy=1.0,
+            contains_delimiters=True,
+            syntax_rate=1.0,
+            num_examples=planned,
+            num_correct=planned,
+            total_time_seconds=self.seconds_per_example,
+            planned_num_examples=planned,
+            sample_outputs=sample_outputs,
+            early_stopped=False,
+        )
+        self.runs.append({"deadline": deadline, "result": result})
+        return result
+
+
 def make_pipeline(tmp_path, evaluator, max_attempt_seconds, max_iterations=3):
     return SynthesisPipeline(
         evaluator=evaluator,
@@ -226,6 +275,148 @@ def test_attempt_exceeding_cap_is_marked_timed_out_and_loop_continues(tmp_path):
     for attempt in attempts:
         assert attempt.failed_at == FailureStage.TIMEOUT
         assert "timed out" in attempt.error_summary.lower() or "budget" in attempt.error_summary.lower()
+
+
+def test_complete_evaluation_after_cap_remains_score_bearing(tmp_path):
+    evaluator = FullResultAfterBudgetEvaluator(
+        seconds_per_example=0.05,
+        num_examples=5,
+    )
+    pipeline = make_pipeline(
+        tmp_path,
+        evaluator,
+        max_attempt_seconds=0.01,
+        max_iterations=1,
+    )
+
+    with pytest.raises(SynthesisExhaustionError) as exc_info:
+        pipeline.synthesize(
+            task_description="dummy task",
+            output_name="complete-after-budget",
+        )
+
+    attempt = exc_info.value.attempts[0]
+    assert attempt.failed_at is FailureStage.EVALUATION
+    assert attempt.eval_result.num_examples == 5
+    assert attempt.eval_result.planned_num_examples == 5
+    assert pipeline._incumbent.attempt_number == 1
+    assert attempt.eval_result.aux_metrics["attempt_runtime_budget"]["over_budget"] is True
+    assert (
+        attempt.eval_result.aux_metrics["attempt_runtime_budget"][
+            "complete_evaluation_preserved"
+        ]
+        is True
+    )
+    assert not list(
+        Path(pipeline.output_dir).glob("*/results/fallback_winner.json")
+    )
+
+
+def _restored_attempt(number, accuracy, syntax_rate, failed_at, completed):
+    planned = 5
+    observed = planned if completed else 2
+    return SynthesisAttempt(
+        attempt_number=number,
+        strategy_code=f"STRATEGY_{number}",
+        full_dafny_code=f"// dafny {number}",
+        timestamp="now",
+        eval_result=EvaluationResult(
+            success=True,
+            accuracy=accuracy,
+            contains_delimiters=True,
+            syntax_rate=syntax_rate,
+            num_examples=observed,
+            num_correct=round(accuracy * planned),
+            total_time_seconds=1.0,
+            planned_num_examples=planned,
+            sample_outputs=[
+                {"index": i, "is_correct": i < round(accuracy * planned)}
+                for i in range(observed)
+            ],
+            early_stopped=not completed,
+        ),
+        failed_at=failed_at,
+    )
+
+
+def test_restore_uses_complete_over_budget_attempt_as_incumbent(tmp_path):
+    pipeline = make_pipeline(
+        tmp_path,
+        FakeEvaluator(seconds_per_example=0.0),
+        max_attempt_seconds=10.0,
+        max_iterations=1,
+    )
+    attempts = [
+        _restored_attempt(1, 0.4, 1.0, FailureStage.EVALUATION, completed=True),
+        _restored_attempt(2, 0.8, 1.0, FailureStage.TIMEOUT, completed=True),
+    ]
+
+    pipeline._restore_incumbent_from_attempts(attempts)
+
+    assert pipeline._incumbent.attempt_number == 2
+    assert pipeline._incumbent.strategy_code == "STRATEGY_2"
+
+
+def test_restore_rejects_partial_timeout_as_incumbent(tmp_path):
+    pipeline = make_pipeline(
+        tmp_path,
+        FakeEvaluator(seconds_per_example=0.0),
+        max_attempt_seconds=10.0,
+        max_iterations=1,
+    )
+    attempts = [
+        _restored_attempt(1, 0.4, 1.0, FailureStage.EVALUATION, completed=True),
+        _restored_attempt(2, 0.8, 1.0, FailureStage.TIMEOUT, completed=False),
+    ]
+
+    pipeline._restore_incumbent_from_attempts(attempts)
+
+    assert pipeline._incumbent.attempt_number == 1
+
+
+def test_restore_rejects_timeout_missing_per_example_evidence(tmp_path):
+    pipeline = make_pipeline(
+        tmp_path,
+        FakeEvaluator(seconds_per_example=0.0),
+        max_attempt_seconds=10.0,
+        max_iterations=1,
+    )
+    baseline = _restored_attempt(
+        1, 0.4, 1.0, FailureStage.EVALUATION, completed=True
+    )
+    incomplete_evidence = _restored_attempt(
+        2, 0.8, 1.0, FailureStage.TIMEOUT, completed=True
+    )
+    incomplete_evidence.eval_result.sample_outputs.pop()
+
+    pipeline._restore_incumbent_from_attempts([baseline, incomplete_evidence])
+
+    assert pipeline._incumbent.attempt_number == 1
+
+
+def test_deadline_crossed_after_final_example_keeps_complete_result(monkeypatch):
+    evaluator = object.__new__(Evaluator)
+    monkeypatch.setattr(
+        evaluator,
+        "_evaluate_one_example",
+        lambda *args, **kwargs: {"is_correct": True, "timed_out": False},
+    )
+    logic = SimpleNamespace(get_generation_runner=lambda: object())
+
+    samples, early_stop_reason = (
+        evaluator._evaluate_examples_sequential_with_early_stop(
+            dataset=[{"id": "only-example"}],
+            env={},
+            logic=logic,
+            target_min_accuracy=None,
+            early_stop_min_syntax_rate=None,
+            early_stop_runtime_failures=None,
+            deadline=time.time() - 1.0,
+        )
+    )
+
+    assert len(samples) == 1
+    assert early_stop_reason is None
 
 
 # ---------------------------------------------------------------------------

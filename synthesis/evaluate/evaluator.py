@@ -2890,7 +2890,11 @@ class Evaluator:
             if sample.get("timed_out"):
                 n_timeouts += 1
 
-            if deadline is not None and time.time() >= deadline:
+            if (
+                deadline is not None
+                and len(sample_outputs) < len(dataset)
+                and time.time() >= deadline
+            ):
                 reason = (
                     f"{ATTEMPT_DEADLINE_EARLY_STOP_REASON}; "
                     f"N={len(sample_outputs)} of {len(dataset)} examples completed"

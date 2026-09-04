@@ -352,7 +352,7 @@ def test_warm_resume_restores_best_incumbent_before_scoring_seed(tmp_path):
     assert generator.refine_calls[-1]["previous_strategy"] == "S12"
 
 
-def test_warm_resume_excludes_timed_out_score_from_incumbent(tmp_path):
+def test_warm_resume_keeps_complete_timed_out_score_as_incumbent(tmp_path):
     restored = [
         SynthesisAttempt(
             attempt_number=1,
@@ -371,6 +371,8 @@ def test_warm_resume_excludes_timed_out_score_from_incumbent(tmp_path):
             failed_at=FailureStage.EVALUATION,
         ),
     ]
+    for attempt in restored:
+        attempt.eval_result.planned_num_examples = 49
     pipeline = make_pipeline(
         tmp_path,
         ScriptedEvaluator([]),
@@ -383,8 +385,8 @@ def test_warm_resume_excludes_timed_out_score_from_incumbent(tmp_path):
     pipeline._restore_incumbent_from_attempts(restored)
 
     assert pipeline._incumbent is not None
-    assert pipeline._incumbent.attempt_number == 12
-    assert pipeline._incumbent.strategy_code == "accepted-incumbent"
+    assert pipeline._incumbent.attempt_number == 1
+    assert pipeline._incumbent.strategy_code == "timed-out-tie"
 
 
 def test_warm_resume_restores_failure_mode_history_before_scoring_seed(tmp_path):

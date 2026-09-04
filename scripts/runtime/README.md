@@ -1,5 +1,24 @@
 # Runtime queues
 
+`prepare_spider_continuation.py` seals a warm Spider continuation without
+reusing attempt numbers. It copies the complete progress report, selects the
+best complete score-bearing attempt (including a complete over-budget timeout),
+rebuilds the saved failure ledger from its recorded persistence summaries, and
+writes the matching strategy seed plus a hash manifest. Timeouts with no saved
+persistence summary stay in history and are listed as skipped ledger entries;
+the preparer never invents their missing feedback state.
+
+```bash
+python -m scripts.runtime.prepare_spider_continuation \
+  --progress-report /path/to/progress_report.json \
+  --seed-failure-ledger /path/to/seed.failure-ledger.json \
+  --seed-through-attempt 3 \
+  --min-accuracy 0.66 \
+  --min-syntax-rate 0.95 \
+  --final-attempt-limit 43 \
+  --output-dir /path/to/sealed-continuation
+```
+
 `run_paper_baseline_queue.py` runs the held-out fixed-strategy cells for the
 2026-08-28 paper update. It is deliberately separate from the synthesis
 provider launchers.

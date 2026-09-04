@@ -780,11 +780,11 @@ class SynthesisPipeline:
             max_attempt_seconds: Wall-clock cap, in seconds, on a single
                 attempt's evaluation stage (the part that can spin -- a bad
                 strategy looping to its max steps on every example). Checked
-                between examples; once crossed, evaluation stops early, the
-                attempt is recorded as FailureStage.TIMEOUT (not a crash, not
-                a legitimate score), and the loop moves on to the next
-                attempt with a fresh generation. Defaults to 3600s (1 hour);
-                pass None to disable (no cap -- not recommended).
+                between sequential examples and again after evaluation. A
+                partial result is recorded as FailureStage.TIMEOUT. A complete
+                result remains eligible to guide search but cannot end the run
+                or become an accuracy-only fallback. Defaults to 3600s (1
+                hour); pass None to disable (no cap -- not recommended).
             adaptive_helper_mask: Enable empirical helper pruning contract
             helper_selection_policy: Helper selection policy (`bandit` only; UCB-style)
             helper_mask_min_evals: Evaluated attempts before pruning can start
@@ -1339,6 +1339,23 @@ class SynthesisPipeline:
         """Distance to both bars; 0.0 once both are met (no credit above a bar)."""
         return max(0.0, self.min_accuracy - accuracy) + max(0.0, self.min_syntax_rate - syntax_rate)
 
+    def _is_complete_evaluation(self, result: EvaluationResult) -> bool:
+        """Return whether ``result`` contains the whole planned sample.
+
+        A pooled evaluator can return every example after the outer attempt
+        budget has elapsed. That is still a complete measurement and must stay
+        eligible for the search. Partial and early-stopped results remain
+        ineligible.
+        """
+        if not result.success:
+            return False
+        planned = result.planned_num_examples or self.eval_sample_size
+        observed = result.num_examples or 0
+        samples = result.sample_outputs or []
+        if result.early_stopped:
+            return False
+        return planned > 0 and observed == planned and len(samples) == planned
+
     def _restore_incumbent_from_attempts(
         self, attempts: list[SynthesisAttempt]
     ) -> None:
@@ -1346,12 +1363,28 @@ class SynthesisPipeline:
         self._incumbent = None
         for attempt in attempts:
             result = attempt.eval_result
+            complete_timeout = bool(
+                result is not None
+                and attempt.failed_at is FailureStage.TIMEOUT
+                and self._is_complete_evaluation(result)
+            )
             if (
                 result is None
                 or not result.success
-                or attempt.failed_at not in {None, FailureStage.EVALUATION}
+                or (
+                    attempt.failed_at not in {None, FailureStage.EVALUATION}
+                    and not complete_timeout
+                )
             ):
                 continue
+            if complete_timeout:
+                logger.warning(
+                    "[warm-resume] preserving complete over-budget evaluation "
+                    "attempt=%d examples=%d planned=%d",
+                    attempt.attempt_number,
+                    result.num_examples or 0,
+                    result.planned_num_examples or self.eval_sample_size,
+                )
             candidate_accuracy = result.accuracy or 0.0
             candidate_syntax = result.syntax_rate or 0.0
             candidate_shortfall = self._shortfall(
@@ -1431,7 +1464,19 @@ class SynthesisPipeline:
         pooled_syn = ((a.syntax_rate or 0.0) * a_n + (b.syntax_rate or 0.0) * b_n) / total_n
         return pooled_acc, pooled_syn
 
+    @staticmethod
+    def _exceeded_attempt_budget(result: EvaluationResult) -> bool:
+        attempt_budget = (result.aux_metrics or {}).get(
+            "attempt_runtime_budget", {}
+        )
+        return bool(
+            isinstance(attempt_budget, dict)
+            and attempt_budget.get("over_budget")
+        )
+
     def _meets_threshold(self, result: EvaluationResult) -> bool:
+        if self._exceeded_attempt_budget(result):
+            return False
         return result.meets_threshold(
             min_accuracy=self.min_accuracy,
             min_syntax_rate=self.min_syntax_rate,
@@ -2230,16 +2275,48 @@ class SynthesisPipeline:
             # itself stopped early because `deadline` was crossed (the reason
             # string carries the marker), or -- as a defense-in-depth backstop
             # -- when the attempt overran its budget for any other reason
-            # (e.g. a slow verification/compilation stage). Either way this is
-            # a timeout, not a crash and not a legitimate score, so it must be
-            # classified before the normal success/threshold branches below
-            # ever see it.
+            # (e.g. a slow verification/compilation stage). A complete result
+            # remains search evidence but cannot end the run as a success; an
+            # incomplete result remains a timeout. Classify both before the
+            # normal success/threshold branches below see them.
             attempt_elapsed = time.time() - attempt_start_time
-            attempt_hit_deadline = bool(
+            deadline_early_stop = bool(
                 eval_result.early_stop_reason
                 and eval_result.early_stop_reason.startswith(ATTEMPT_DEADLINE_EARLY_STOP_REASON)
-            ) or (self.max_attempt_seconds is not None and attempt_elapsed > self.max_attempt_seconds)
-            if attempt_hit_deadline:
+            )
+            wall_clock_over_budget = bool(
+                self.max_attempt_seconds is not None
+                and attempt_elapsed > self.max_attempt_seconds
+            )
+            attempt_hit_deadline = deadline_early_stop or wall_clock_over_budget
+            complete_over_budget = bool(
+                attempt_hit_deadline
+                and self._is_complete_evaluation(eval_result)
+            )
+            if complete_over_budget:
+                original_early_stop_reason = eval_result.early_stop_reason
+                eval_result.aux_metrics["attempt_runtime_budget"] = {
+                    "limit_seconds": self.max_attempt_seconds,
+                    "elapsed_seconds": attempt_elapsed,
+                    "over_budget": True,
+                    "complete_evaluation_preserved": True,
+                    "original_early_stop_reason": original_early_stop_reason,
+                }
+                logger.warning(
+                    "[attempt-budget] preserving complete evaluation "
+                    "attempt=%d examples=%d planned=%d elapsed=%.1fs limit=%.1fs",
+                    attempt.attempt_number,
+                    eval_result.num_examples or 0,
+                    eval_result.planned_num_examples or self.eval_sample_size,
+                    attempt_elapsed,
+                    self.max_attempt_seconds,
+                )
+                print(
+                    f"  ! Attempt {attempt.attempt_number} exceeded the "
+                    f"{self.max_attempt_seconds:.0f}s attempt time cap, but "
+                    "the full evaluation completed; preserving its score for search."
+                )
+            elif attempt_hit_deadline:
                 strategy_code = self._handle_attempt_timeout(
                     attempt,
                     attempts,
@@ -2769,6 +2846,7 @@ class SynthesisPipeline:
             if (
                 att.eval_result is not None
                 and not att.eval_result.early_stopped
+                and not self._exceeded_attempt_budget(att.eval_result)
                 and att.eval_result.accuracy >= self.min_accuracy
                 and (
                     fallback_winner is None

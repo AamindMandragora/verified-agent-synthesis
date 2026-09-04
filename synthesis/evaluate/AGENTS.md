@@ -22,6 +22,11 @@
 - Aggregate failure-mode summaries in **`evaluator.py`** should list all
   detected mode buckets. Keep any cap on verbatim rollout examples separate
   from the aggregate counts.
+- Preserve a fully completed evaluation when the outer attempt timer is crossed
+  after all planned examples finish. It may become the search incumbent, but
+  it must remain ineligible for terminal success until a later attempt finishes
+  within its configured time limit. Partial and early-stopped results remain
+  timeouts.
 - **`run_legacy_fixed_strategy.main`** calls **`_ensure_repo_cache_env`** so subprocess CRANE runs inherit **`HF_HOME`**, **`HF_CACHE`**, **`TRANSFORMERS_CACHE`**, **`SYNCODE_CACHE`**, and **`ITER_SYNCODE_CACHE`** under the repository **`cache/`** unless **`CSD_CACHE_ROOT`** (or those variables) are already set; vendored **`syncode/syncode/common.py`** and legacy forks walk up to the same root when imports happen outside that entrypoint.
 - Edits inside gitignored **`legacy/{CRANE,itergen,cars}`** require tracked patches under **`environment/legacy_patches/`** per **`environment/legacy/AGENTS.md`** (prefer fixing **`run_legacy_fixed_strategy.py`** when that suffices).
 - Keep the tracked IterGen compatibility adapter faithful to Transformers:

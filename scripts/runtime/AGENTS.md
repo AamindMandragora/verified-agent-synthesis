@@ -4,6 +4,17 @@
 
 Cold-queue and babysitter runtime scripts. Repo-wide rules live in `../../AGENTS.md`.
 
+## Spider continuation state
+
+- Build warm Spider inputs with `prepare_spider_continuation.py`. Keep every
+  finalized attempt in the copied history and use the latest attempt number as
+  the next offset, even when an older attempt supplies the incumbent strategy.
+- A timed-out evaluation may supply the incumbent only when the full planned
+  sample and every per-example record are present and it was not early-stopped.
+- Rebuild the failure ledger only from byte-verifiable saved persistence
+  summaries. Keep a timeout with no summary in history, record its hash in the
+  skipped-ledger metadata, and never invent the missing ledger update.
+
 ## Cold synthesis queue (`run_cold_synthesis_queue.py`)
 
 - SMILES cells must export `CSD_CONSTRAINED_TEMPERATURE=0.7` in synthesis and
