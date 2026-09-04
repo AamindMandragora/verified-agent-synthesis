@@ -326,6 +326,8 @@ def test_warm_resume_restores_best_incumbent_before_scoring_seed(tmp_path):
             eval_result=_result(3 / 49, 44 / 49, n=49),
         ),
     ]
+    for attempt in restored:
+        attempt.eval_result.planned_num_examples = 49
     evaluator = ScriptedEvaluator([_result(0.1, 0.9)])
     generator = FakeGenerator(["S16", "S17"])
     pipeline = make_pipeline(
