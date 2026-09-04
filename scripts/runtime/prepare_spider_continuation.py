@@ -171,11 +171,17 @@ def reconstruct_failure_ledger(
         raise ValueError("seed failure ledger is not a version-1 payload")
     payload = copy.deepcopy(dict(seed_payload))
     included = list(payload.get("included_attempts", []))
-    if any(
-        not isinstance(number, int) or number > seed_through_attempt
-        for number in included
+    excluded = list(payload.get("excluded_attempts", []))
+    covered = included + excluded
+    if (
+        any(not isinstance(number, int) or number <= 0 for number in covered)
+        or len(set(covered)) != len(covered)
+        or sorted(covered) != list(range(1, seed_through_attempt + 1))
     ):
-        raise ValueError("seed failure ledger includes an attempt past its boundary")
+        raise ValueError(
+            "seed failure ledger must cover each attempt through its boundary "
+            "exactly once across included_attempts and excluded_attempts"
+        )
     known_attempts = set(included)
 
     if render_cluster_block is None:
@@ -204,6 +210,7 @@ def reconstruct_failure_ledger(
                     ),
                 }
             )
+            excluded.append(number)
             continue
         evaluation = record.get("evaluation")
         if not isinstance(evaluation, Mapping) or not isinstance(
@@ -227,6 +234,7 @@ def reconstruct_failure_ledger(
         known_attempts.add(number)
         replayed.append(number)
     payload["included_attempts"] = sorted(included)
+    payload["excluded_attempts"] = sorted(excluded)
     LOGGER.info(
         "%s rebuilt ledger replayed=%s skipped_timeouts=%s",
         LOG_PREFIX,

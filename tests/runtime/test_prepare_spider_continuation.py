@@ -170,6 +170,7 @@ def test_ledger_replay_verifies_saved_summary_and_records_skipped_timeout():
 
     assert replayed == [4]
     assert rebuilt["included_attempts"] == [1, 2, 3, 4]
+    assert rebuilt["excluded_attempts"] == [5]
     assert rebuilt["ledger"]["modes"] == [
         {"id": "mode_A", "attempts": [4]}
     ]
@@ -207,4 +208,37 @@ def test_ledger_replay_fails_closed_on_mismatched_saved_summary():
                 "Cross-attempt mode persistence:\n"
                 "  - mode_B: appeared in attempt(s) 4"
             ),
+        )
+
+
+@pytest.mark.parametrize(
+    "seed",
+    [
+        {
+            "version": 1,
+            "ledger": {"next_id": 0, "modes": []},
+            "included_attempts": [1, 1, 2],
+            "excluded_attempts": [3],
+        },
+        {
+            "version": 1,
+            "ledger": {"next_id": 0, "modes": []},
+            "included_attempts": [1],
+            "excluded_attempts": [3],
+        },
+        {
+            "version": 1,
+            "ledger": {"next_id": 0, "modes": []},
+            "included_attempts": [0, 1, 2],
+            "excluded_attempts": [3],
+        },
+    ],
+)
+def test_ledger_seed_must_cover_boundary_once(seed):
+    with pytest.raises(ValueError, match="cover each attempt"):
+        reconstruct_failure_ledger(
+            seed,
+            [],
+            seed_through_attempt=3,
+            render_cluster_block=lambda *args, **kwargs: "",
         )
