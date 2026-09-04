@@ -60,14 +60,27 @@ def test_exact_table5_synthesizer_scope():
     imported = [row for row in rows if row["execution_mode"] == "imported_strategy"]
     fresh = [row for row in rows if row["execution_mode"] == "fresh_synthesis"]
     assert all(row["max_attempt_seconds"] == 7200.0 for row in fresh)
-    assert imported[0]["max_attempt_seconds"] is None
-    assert [row["cell_id"] for row in imported] == ["t5-opus5-gsm_symbolic"]
-    assert {row["profile"] for row in fresh} == {
-        "gpt5.6-sol",
-        "gemini3.7-flash",
+    assert all(row["max_attempt_seconds"] is None for row in imported)
+    assert [row["cell_id"] for row in imported] == [
+        "t5-gpt5.6-sol-gsm_symbolic",
+        "t5-opus5-gsm_symbolic",
+    ]
+    assert {row["profile"] for row in fresh} == {"gemini3.7-flash"}
+    gpt = next(row for row in imported if row["profile"] == "gpt5.6-sol")
+    assert gpt["imported_evidence"]["evidence_type"] == "exhausted_synthesis"
+    assert gpt["imported_evidence"]["historical_total_attempts"] == 40
+    assert gpt["imported_evidence"]["historical_selected_attempt"] == 31
+    assert gpt["imported_evidence"]["historical_train"] == {
+        "correct": 9,
+        "syntax_valid": 45,
+        "sample_count": 49,
     }
-    assert imported[0]["imported_evidence"]["historical_attempt"] == 38
-    assert imported[0]["imported_evidence"]["historical_train"] == {
+    assert gpt["imported_evidence"]["historical_heldout"] is None
+    opus = next(row for row in imported if row["profile"] == "opus5")
+    assert opus["imported_evidence"]["evidence_type"] == "accepted_synthesis"
+    assert opus["imported_evidence"]["historical_total_attempts"] == 38
+    assert opus["imported_evidence"]["historical_selected_attempt"] == 38
+    assert opus["imported_evidence"]["historical_train"] == {
         "correct": 11,
         "syntax_valid": 45,
         "sample_count": 49,
@@ -171,7 +184,7 @@ def test_imported_opus_evidence_is_copied_into_the_sealed_campaign(tmp_path):
     for name, contents in {
         "strategy_dafny": b"method Main() {}\n",
         "run_log": b"SUCCESS after 38 attempt(s)\n",
-        "success_report": b'{"total_attempts": 38}\n',
+        "synthesis_report": b'{"total_attempts": 38}\n',
         "heldout_result": b'{"accuracy": 0.2857142857142857}\n',
     }.items():
         path = source / name
@@ -183,7 +196,7 @@ def test_imported_opus_evidence_is_copied_into_the_sealed_campaign(tmp_path):
     row = next(
         candidate
         for candidate in queue.build_scope(tmp_path)
-        if candidate["execution_mode"] == "imported_strategy"
+        if candidate["profile"] == "opus5"
     )
     row["imported_evidence"] = dict(
         row["imported_evidence"], artifacts=artifacts
@@ -235,14 +248,29 @@ def test_imported_opus_strategy_is_recompiled_and_reported_without_author_call(
 ):
     source = tmp_path / "source"
     source.mkdir()
+    sample_outputs = [
+        {"is_correct": index < 11, "is_syntax_valid": index < 45}
+        for index in range(49)
+    ]
+    synthesis_report = {
+        "total_attempts": 38,
+        "evaluation_result": {
+            "success": True,
+            "early_stopped": False,
+            "num_examples": 49,
+            "total_time_seconds": 210.19532680511475,
+            "num_correct": 11,
+            "accuracy": 11 / 49,
+            "syntax_rate": 45 / 49,
+            "sample_outputs": sample_outputs,
+        },
+        "strategy_code": "method Main() {}",
+    }
     artifacts = {}
     for name, contents in {
         "strategy_dafny": b"method Main() {}\n",
         "run_log": b"SUCCESS after 38 attempt(s)\n",
-        "success_report": (
-            b'{"total_attempts": 38, "evaluation_result": '
-            b'{"total_time_seconds": 210.19532680511475}}\n'
-        ),
+        "synthesis_report": (json.dumps(synthesis_report) + "\n").encode(),
         "heldout_result": b'{"accuracy": 0.2857142857142857}\n',
     }.items():
         path = source / name
@@ -254,9 +282,16 @@ def test_imported_opus_strategy_is_recompiled_and_reported_without_author_call(
     row = next(
         candidate
         for candidate in queue.build_scope(tmp_path)
-        if candidate["execution_mode"] == "imported_strategy"
+        if candidate["profile"] == "opus5"
     )
-    row["imported_evidence"] = dict(row["imported_evidence"], artifacts=artifacts)
+    row["imported_evidence"] = dict(
+        row["imported_evidence"],
+        historical_compiled_sha256=queue.sha256_text("compiled\n"),
+        artifacts=artifacts,
+    )
+    template = tmp_path / "synthesis/verify/library/GeneratedCSD.dfy"
+    template.parent.mkdir(parents=True)
+    template.write_text("// QWEN_INSERT_STRATEGY_HERE\n", encoding="utf-8")
     [row] = queue.materialize_imported_evidence(tmp_path, [row])
     row.update(git_commit="a" * 40, execution_source_sha256="b" * 64)
     compile_calls = []
@@ -294,6 +329,98 @@ def test_imported_opus_strategy_is_recompiled_and_reported_without_author_call(
 
     run_source.unlink()
     assert queue._imported_selection(tmp_path, row) is None
+
+
+def test_exhausted_gpt_import_keeps_total_and_selected_attempts_distinct(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    strategy_body = "method Main() {}"
+    full_source = strategy_body + "\n"
+    sample_outputs = [
+        {"is_correct": index < 9, "is_syntax_valid": index < 45}
+        for index in range(49)
+    ]
+    report = {
+        "total_attempts": 40,
+        "attempts": [
+            {
+                "attempt_number": number,
+                "strategy_code": strategy_body if number == 31 else "",
+                "compilation": {"success": number == 31},
+                "verification": {"success": number == 31},
+                "evaluation": (
+                    {
+                        "success": True,
+                        "early_stopped": False,
+                        "num_examples": 49,
+                        "total_time_seconds": 311.6755106449127,
+                        "num_correct": 9,
+                        "accuracy": 9 / 49,
+                        "syntax_rate": 45 / 49,
+                        "sample_outputs": sample_outputs,
+                    }
+                    if number == 31
+                    else {}
+                ),
+            }
+            for number in range(1, 41)
+        ],
+    }
+    artifacts = {}
+    for name, contents in {
+        "strategy_dafny": full_source.encode(),
+        "run_log": b"40 attempts exhausted\n",
+        "synthesis_report": (json.dumps(report) + "\n").encode(),
+    }.items():
+        path = source / name
+        path.write_bytes(contents)
+        artifacts[name] = {
+            "source_path": str(path),
+            "sha256": queue.hash_file(path),
+        }
+    template = tmp_path / "synthesis/verify/library/GeneratedCSD.dfy"
+    template.parent.mkdir(parents=True)
+    template.write_text("// QWEN_INSERT_STRATEGY_HERE\n", encoding="utf-8")
+    row = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["profile"] == "gpt5.6-sol"
+    )
+    row["imported_evidence"] = dict(
+        row["imported_evidence"],
+        historical_compiled_sha256=queue.sha256_text("compiled\n"),
+        artifacts=artifacts,
+    )
+    [row] = queue.materialize_imported_evidence(tmp_path, [row])
+    row.update(git_commit="a" * 40, execution_source_sha256="b" * 64)
+
+    class FakeCompiler:
+        def __init__(self, *, output_dir, **kwargs):
+            self.output_dir = output_dir
+
+        def compile(self, source_text, output_name):
+            assert source_text == full_source
+            output = self.output_dir / output_name
+            output.mkdir(parents=True)
+            (output / "GeneratedCSD.py").write_text("compiled\n", encoding="utf-8")
+            return types.SimpleNamespace(success=True, output_dir=output)
+
+    monkeypatch.setattr(queue, "DafnyCompiler", FakeCompiler)
+
+    selection = queue._prepare_imported_selection(tmp_path, row)
+
+    assert selection["winning_attempt"] == 31
+    imported_report = json.loads(selection["report_path"].read_text())
+    assert imported_report["total_attempts"] == 40
+    assert imported_report["terminal_status"] == "exhausted"
+    assert imported_report["evaluation_result"] == {
+        "num_examples": 49,
+        "accuracy": 9 / 49,
+        "syntax_rate": 45 / 49,
+        "total_time_seconds": 311.6755106449127,
+    }
 
     selection["compiled_csd_path"].write_text("changed\n", encoding="utf-8")
     assert queue._imported_selection(tmp_path, row) is None
@@ -406,7 +533,7 @@ def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, 
             "execution_source_sha256": source_digest,
             "python_runtime": _test_python_runtime(),
         }
-        for profile in ("gpt5.6-sol", "gemini3.7-flash")
+        for profile in ("gemini3.7-flash",)
     }
     with pytest.raises(queue.ConfigError, match="exactly match fresh synthesis"):
         queue.manifest_payload(tmp_path, rows)
@@ -425,7 +552,7 @@ def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, 
         queue.validate_manifest(tmp_path, missing_pilot)
     extra_pilot = json.loads(json.dumps(payload))
     extra_pilot["provider_pilots"]["opus5"] = json.loads(
-        json.dumps(pilots["gpt5.6-sol"])
+        json.dumps(pilots["gemini3.7-flash"])
     )
     extra_pilot["provider_pilot_sha256"] = queue.provider_pilots_sha256(
         extra_pilot["provider_pilots"]
@@ -499,7 +626,6 @@ def test_manifest_rejects_provider_pilot_from_different_source_snapshot(
             tmp_path,
             queue.build_scope(tmp_path),
             provider_pilots={
-                "gpt5.6-sol": pilot,
                 "gemini3.7-flash": pilot,
             },
         )
@@ -921,6 +1047,7 @@ def _bind_export_case(row, payload, tmp_path):
             "phase_timing_coverage": "all_phases",
             "attempt_evaluation_times_seconds": [11.5],
             "attempt_timing_coverage": "winning_attempt_only",
+            "historical_synthesis_wall_time_seconds": None,
             "heldout_evaluator_total_time_seconds": 90.0,
             "heldout_recorded_run_wall_time_seconds": 120.0,
         },
@@ -1024,6 +1151,7 @@ def test_export_records_phase_and_attempt_runtimes(tmp_path):
         "phase_timing_coverage": "all_phases",
         "attempt_evaluation_times_seconds": [31.25, 28.5],
         "attempt_timing_coverage": "all_attempts",
+        "historical_synthesis_wall_time_seconds": None,
         "heldout_evaluator_total_time_seconds": 90.0,
         "heldout_recorded_run_wall_time_seconds": 119.5,
     }
@@ -1082,6 +1210,7 @@ def test_export_is_bound_to_manifest_commit_and_terminal_artifact(tmp_path):
             "phase_timing_coverage": "all_phases",
             "attempt_evaluation_times_seconds": [11.5],
             "attempt_timing_coverage": "winning_attempt_only",
+            "historical_synthesis_wall_time_seconds": None,
             "heldout_evaluator_total_time_seconds": 90.0,
             "heldout_recorded_run_wall_time_seconds": 120.0,
         },
@@ -1163,7 +1292,11 @@ def test_export_accepts_production_spider_and_smiles_artifact_shapes(tmp_path):
 
 
 def test_pending_row_never_reuses_preexisting_deterministic_synthesis_output(tmp_path, monkeypatch):
-    row = queue.build_scope(tmp_path)[0]
+    row = next(
+        candidate
+        for candidate in queue.build_scope(tmp_path)
+        if candidate["execution_mode"] == "fresh_synthesis"
+    )
     old_compiled = tmp_path / "old" / "GeneratedCSD.py"
     old_compiled.parent.mkdir(parents=True)
     old_compiled.write_text("old", encoding="utf-8")
@@ -1194,7 +1327,7 @@ def test_pending_row_never_reuses_preexisting_deterministic_synthesis_output(tmp
     assert result["status"] == "failed"
 
 
-def test_invalid_codex_auth_blocks_codex_without_blocking_ready_opus(monkeypatch, tmp_path):
+def test_imported_codex_and_opus_rows_do_not_require_live_author_auth(monkeypatch, tmp_path):
     monkeypatch.setattr(queue.time, "time", lambda: 1787949000.0)
     rows = [
         next(r for r in queue.build_scope(Path("/repo")) if r["profile"] == "gpt5.6-sol"),
@@ -1212,9 +1345,8 @@ def test_invalid_codex_auth_blocks_codex_without_blocking_ready_opus(monkeypatch
         repo=tmp_path,
         provider_pilots={},
     )
-    assert [r["profile"] for r in ready] == ["opus5"]
-    assert blocked[0]["status"] == "pending"
-    assert "ChatGPT/Codex OAuth" in blocked[0]["reason"]
+    assert [r["profile"] for r in ready] == ["gpt5.6-sol", "opus5"]
+    assert blocked == []
 
 
 def test_profile_readiness_requires_pilots_only_for_fresh_synthesis(monkeypatch):
@@ -1244,10 +1376,9 @@ def test_profile_readiness_requires_pilots_only_for_fresh_synthesis(monkeypatch)
         repo=Path("/repo"),
         provider_pilots={},
     )
-    assert len(calls) == 1
-    assert [row["profile"] for row in ready] == ["opus5"]
-    assert [row["profile"] for row in blocked] == ["gpt5.6-sol"]
-    assert blocked[0]["reason"]
+    assert calls == []
+    assert [row["profile"] for row in ready] == ["gpt5.6-sol", "opus5"]
+    assert blocked == []
 
 
 def test_startup_provider_pilots_are_exactly_the_fresh_synthesis_profiles(monkeypatch):
@@ -1259,11 +1390,11 @@ def test_startup_provider_pilots_are_exactly_the_fresh_synthesis_profiles(monkey
         return None
 
     monkeypatch.setattr(queue, "validate_provider_pilot", validate)
-    exact = {"gpt5.6-sol": {}, "gemini3.7-flash": {}}
+    exact = {"gemini3.7-flash": {}}
     queue.validate_startup_provider_pilots(
         rows, exact, repo=Path("/repo"), environment={}
     )
-    assert calls == ["gpt5.6-sol", "gemini3.7-flash"]
+    assert calls == ["gemini3.7-flash"]
     for invalid in (
         {"gpt5.6-sol": {}},
         {**exact, "opus5": {}},
@@ -1777,7 +1908,7 @@ def test_admission_guard_does_not_age_out_startup_validated_immutable_pilot(
     guard(row)
 
 
-@pytest.mark.parametrize("profile", ["gpt5.6-sol", "gemini3.7-flash"])
+@pytest.mark.parametrize("profile", ["gemini3.7-flash"])
 def test_compiled_output_uses_strict_cold_report_validation_for_each_fresh_profile(
     tmp_path, monkeypatch, profile
 ):
@@ -1876,6 +2007,7 @@ def test_terminal_loader_records_synthesis_attempts_and_status(
         "phase_timing_coverage": "all_phases",
         "attempt_evaluation_times_seconds": [31.25],
         "attempt_timing_coverage": "winning_attempt_only",
+        "historical_synthesis_wall_time_seconds": None,
         "heldout_evaluator_total_time_seconds": 90.0,
         "heldout_recorded_run_wall_time_seconds": 119.5,
     }
@@ -2911,6 +3043,12 @@ def test_codex_probe_must_complete_the_sentinel_not_only_report_login(tmp_path, 
         row
         for row in queue.build_scope(tmp_path)
         if row["profile"] == "gpt5.6-sol"
+    )
+    row = dict(
+        row,
+        execution_mode="fresh_synthesis",
+        imported_evidence=None,
+        max_attempt_seconds=7200.0,
     )
     row["git_commit"] = "a" * 40
     monkeypatch.setattr(queue, "validate_provider_pilot", lambda *args, **kwargs: None)

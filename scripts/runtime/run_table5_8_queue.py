@@ -142,9 +142,27 @@ def _runtime_evidence(
 
     total_attempts = report.get("total_attempts")
     attempts = report.get("attempts")
+    compact_attempt_times = report.get("attempt_evaluation_times_seconds")
     attempt_times: list[float | None] = []
     coverage = "not_recorded"
-    if isinstance(attempts, list) and type(total_attempts) is int:
+    if (
+        isinstance(compact_attempt_times, list)
+        and type(total_attempts) is int
+        and len(compact_attempt_times) == total_attempts
+    ):
+        for raw in compact_attempt_times:
+            if raw is None:
+                attempt_times.append(None)
+            elif isinstance(raw, (int, float)) and math.isfinite(float(raw)) and raw >= 0:
+                attempt_times.append(round(float(raw), 4))
+            else:
+                raise ConfigError("imported attempt timing evidence is invalid")
+        coverage = (
+            "all_attempts"
+            if all(value is not None for value in attempt_times)
+            else "partial_attempts"
+        )
+    elif isinstance(attempts, list) and type(total_attempts) is int:
         for attempt in attempts:
             evaluation = attempt.get("evaluation") if isinstance(attempt, dict) else None
             raw = evaluation.get("total_time_seconds") if isinstance(evaluation, dict) else None
@@ -165,6 +183,14 @@ def _runtime_evidence(
             coverage = "winning_attempt_only"
     runtime["attempt_evaluation_times_seconds"] = attempt_times
     runtime["attempt_timing_coverage"] = coverage
+    historical_wall = report.get("historical_synthesis_wall_time_seconds")
+    runtime["historical_synthesis_wall_time_seconds"] = (
+        None
+        if historical_wall is None
+        else _nonnegative_seconds(
+            historical_wall, field="historical_synthesis_wall_time_seconds"
+        )
+    )
 
     metrics = heldout.get("metrics")
     metrics = metrics if isinstance(metrics, dict) else {}
@@ -258,9 +284,37 @@ BAR_BINDINGS = {
         "source_sha256": "06c285b2c948c16d9d09b3473ed34ed08ff12ac7efd81bbaaf767d53a0a4d05c",
     },
 }
+IMPORTED_GPT_BASE = {
+    "evidence_type": "exhausted_synthesis",
+    "source_git_commit": "122572ff9c9b03edf8dedcfb1902d51911661a14",
+    "historical_total_attempts": 40,
+    "historical_selected_attempt": 31,
+    "historical_wall_time_seconds": 22070.0,
+    "historical_compiled_sha256": "65c2378a3cc38a9116243dd6cbebafe452d1e04aeec69657391507f1e2af40a8",
+    "historical_train": {"correct": 9, "syntax_valid": 45, "sample_count": 49},
+    "historical_heldout": None,
+    "artifacts": {
+        "strategy_dafny": {
+            "source_path": "/home/aadivyar/csd-generation-worktrees/table58-two-hour-attempt-cap-20260904/synthesis/verify/imported/table5_gpt56sol/GeneratedCSD.dfy",
+            "sha256": "058316be3d85057303e2446f23eee263107bc7d648fa79cde34bf8182d4649fd",
+        },
+        "run_log": {
+            "source_path": "/home/aadivyar/csd-generation-worktrees/h131-hard-timeout-repair-20260903/.context/h131-spider-reclimb-20260903/h131.parallel.log",
+            "sha256": "8896d47c51f6ce2ca1e03e43088cb7b69cd6629613e4cbf623d9a39bfd5679e6",
+        },
+        "synthesis_report": {
+            "source_path": "/home/aadivyar/csd-generation-worktrees/h131-hard-timeout-repair-20260903/outputs/generated/h131_recovery_gpt56sol_gsm_qwen25_1p5b_20260903/h131_recovery_gpt56sol_gsm_qwen25_1p5b_20260903_20260904_004257_9092c2/results/failure_report.json",
+            "sha256": "f48a7300d2bd044d4e6be83495b1f18388ec570be8b68a8d9faa6129111ab704",
+        },
+    },
+}
 IMPORTED_OPUS_BASE = {
+    "evidence_type": "accepted_synthesis",
     "source_git_commit": "9d009711635064cc8f8d8d752b3163972034771b",
-    "historical_attempt": 38,
+    "historical_total_attempts": 38,
+    "historical_selected_attempt": 38,
+    "historical_wall_time_seconds": None,
+    "historical_compiled_sha256": "f749d7c047a0c76a7800d86ae4e922e88128b80ee7a2840f5e4d3f1f062f4b94",
     "historical_train": {"correct": 11, "syntax_valid": 45, "sample_count": 49},
     "historical_heldout": {"correct": 14, "syntax_valid": 45, "sample_count": 49},
     "artifacts": {
@@ -272,7 +326,7 @@ IMPORTED_OPUS_BASE = {
             "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/outputs/generated/coldq_fullbaseline_20260803_gsm-qwen25-1p5b/run.log",
             "sha256": "f08750c3eb2367472b227a054db8d6d0ce890d3fe0fc728e54b7ade0e6a04792",
         },
-        "success_report": {
+        "synthesis_report": {
             "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/outputs/generated/coldq_fullbaseline_20260803_gsm-qwen25-1p5b/coldq_fullbaseline_20260803_gsm-qwen25-1p5b_20260804_060028_e0a771/results/success_report.json",
             "sha256": "ff71e5bbb8409ba8394ed68493c0e6fe4cef061fea666196a7a0a8c338ba998b",
         },
@@ -345,6 +399,7 @@ SOURCE_PATHS = (
     "environment/benchmark_splits/spider_dev_proportional_300x300_seed334.json",
     "synthesis/evaluate/benchmarks/common/parser_utils.py",
     "synthesis/verify/tooling.py",
+    "synthesis/verify/imported/table5_gpt56sol/GeneratedCSD.dfy",
     ".context/run_post14b_rebar_queue.py",
     "synthesis/evaluate/baselines/crane_repo_runner.py",
 )
@@ -440,9 +495,17 @@ def build_scope(repo: Path) -> list[dict[str, Any]]:
                 profile,
                 table_cell_id=f"table5-{profile}-gsm_symbolic",
                 execution_mode=(
-                    "imported_strategy" if profile == "opus5" else "fresh_synthesis"
+                    "fresh_synthesis"
+                    if profile == "gemini3.7-flash"
+                    else "imported_strategy"
                 ),
-                imported_evidence=(IMPORTED_OPUS_BASE if profile == "opus5" else None),
+                imported_evidence=(
+                    IMPORTED_GPT_BASE
+                    if profile == "gpt5.6-sol"
+                    else IMPORTED_OPUS_BASE
+                    if profile == "opus5"
+                    else None
+                ),
             )
         )
     return rows
@@ -502,6 +565,7 @@ RUNTIME_EXPORT_KEYS = frozenset(
         "phase_timing_coverage",
         "attempt_evaluation_times_seconds",
         "attempt_timing_coverage",
+        "historical_synthesis_wall_time_seconds",
         "heldout_evaluator_total_time_seconds",
         "heldout_recorded_run_wall_time_seconds",
     }
@@ -563,6 +627,11 @@ def validated_runtime(value: dict[str, Any], *, cell_id: str) -> dict[str, Any]:
     ):
         if runtime.get(field) is not None:
             _nonnegative_seconds(runtime[field], field=field)
+    historical_wall = runtime.get("historical_synthesis_wall_time_seconds")
+    if historical_wall is not None:
+        _nonnegative_seconds(
+            historical_wall, field="historical_synthesis_wall_time_seconds"
+        )
     return dict(runtime)
 
 
@@ -1277,6 +1346,13 @@ def materialize_frozen_bar_sources(repo: Path) -> dict[str, str]:
     return paths
 
 
+def _imported_artifact_names(evidence: dict[str, Any]) -> set[str]:
+    names = {"strategy_dafny", "run_log", "synthesis_report"}
+    if evidence.get("historical_heldout") is not None:
+        names.add("heldout_result")
+    return names
+
+
 def materialize_imported_evidence(
     repo: Path, rows: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
@@ -1288,12 +1364,11 @@ def materialize_imported_evidence(
             continue
         evidence = row.get("imported_evidence")
         artifacts = evidence.get("artifacts") if isinstance(evidence, dict) else None
-        if not isinstance(artifacts, dict) or set(artifacts) != {
-            "strategy_dafny",
-            "run_log",
-            "success_report",
-            "heldout_result",
-        }:
+        if (
+            not isinstance(evidence, dict)
+            or not isinstance(artifacts, dict)
+            or set(artifacts) != _imported_artifact_names(evidence)
+        ):
             raise ConfigError("imported strategy evidence is incomplete")
         target_dir = repo / ".context" / "table5_8" / "imports" / row["cell_id"]
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -1342,15 +1417,14 @@ def validate_imported_evidence(
     artifacts = evidence.get("artifacts") if isinstance(evidence, dict) else None
     if not isinstance(artifacts, dict):
         raise ConfigError("imported strategy evidence is incomplete")
-    artifact_names = {
-        "strategy_dafny",
-        "run_log",
-        "success_report",
-        "heldout_result",
-    }
+    artifact_names = _imported_artifact_names(evidence)
     if set(evidence) != {
+        "evidence_type",
         "source_git_commit",
-        "historical_attempt",
+        "historical_total_attempts",
+        "historical_selected_attempt",
+        "historical_wall_time_seconds",
+        "historical_compiled_sha256",
         "historical_train",
         "historical_heldout",
         "artifacts",
@@ -1358,12 +1432,36 @@ def validate_imported_evidence(
         raise ConfigError("imported evidence schema is invalid")
     if (
         re.fullmatch(r"[0-9a-f]{40}", str(evidence["source_git_commit"])) is None
-        or type(evidence["historical_attempt"]) is not int
-        or evidence["historical_attempt"] < 1
+        or evidence["evidence_type"]
+        not in {"accepted_synthesis", "exhausted_synthesis"}
+        or type(evidence["historical_total_attempts"]) is not int
+        or type(evidence["historical_selected_attempt"]) is not int
+        or re.fullmatch(
+            r"[0-9a-f]{64}", str(evidence["historical_compiled_sha256"])
+        )
+        is None
+        or not 1
+        <= evidence["historical_selected_attempt"]
+        <= evidence["historical_total_attempts"]
+        or (
+            evidence["historical_wall_time_seconds"] is not None
+            and (
+                not isinstance(evidence["historical_wall_time_seconds"], (int, float))
+                or not math.isfinite(float(evidence["historical_wall_time_seconds"]))
+                or evidence["historical_wall_time_seconds"] < 0
+            )
+        )
+    ):
+        raise ConfigError("imported evidence schema is invalid")
+    if (
+        evidence["evidence_type"] == "exhausted_synthesis"
+        and evidence["historical_heldout"] is not None
     ):
         raise ConfigError("imported evidence schema is invalid")
     for metrics_name in ("historical_train", "historical_heldout"):
         metrics = evidence.get(metrics_name)
+        if metrics_name == "historical_heldout" and metrics is None:
+            continue
         if (
             not isinstance(metrics, dict)
             or set(metrics) != {"correct", "syntax_valid", "sample_count"}
@@ -1382,8 +1480,12 @@ def validate_imported_evidence(
             raise ConfigError("imported evidence schema is invalid")
     if expected_evidence is not None:
         for key in (
+            "evidence_type",
             "source_git_commit",
-            "historical_attempt",
+            "historical_total_attempts",
+            "historical_selected_attempt",
+            "historical_wall_time_seconds",
+            "historical_compiled_sha256",
             "historical_train",
             "historical_heldout",
         ):
@@ -1571,8 +1673,12 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
                 repo, actual, expected_evidence=frozen["imported_evidence"]
             )
             for key in (
+                "evidence_type",
                 "source_git_commit",
-                "historical_attempt",
+                "historical_total_attempts",
+                "historical_selected_attempt",
+                "historical_wall_time_seconds",
+                "historical_compiled_sha256",
                 "historical_train",
                 "historical_heldout",
             ):
@@ -2333,8 +2439,9 @@ def load_terminal_results(
         terminal_status = {
             "success_report.json": "accepted",
             "failure_report.json": "exhausted",
-            "import_report.json": "imported_below_target",
         }.get(report_path.name)
+        if report_path.name == "import_report.json":
+            terminal_status = report.get("terminal_status")
         if (
             type(attempts) is not int
             or not 1 <= attempts <= int(row["max_iterations"])
@@ -2800,21 +2907,163 @@ def _imported_report_path(repo: Path, row: dict[str, Any]) -> Path:
     )
 
 
-def _historical_import_total_time(repo: Path, row: dict[str, Any]) -> float:
-    """Read the sealed winning-attempt evaluation time from the old report."""
-    binding = row["imported_evidence"]["artifacts"]["success_report"]
+def _historical_import_record(repo: Path, row: dict[str, Any]) -> dict[str, Any]:
+    """Validate one sealed historical run and return its selected evaluation."""
+    evidence = row["imported_evidence"]
+    binding = evidence["artifacts"]["synthesis_report"]
     report_path = (repo / binding["sealed_path"]).resolve(strict=True)
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    evaluation = report.get("evaluation_result")
-    raw = evaluation.get("total_time_seconds") if isinstance(evaluation, dict) else None
+    total_attempts = evidence["historical_total_attempts"]
+    selected_attempt = evidence["historical_selected_attempt"]
+    sample_count = evidence["historical_train"]["sample_count"]
+    if report.get("total_attempts") != total_attempts:
+        raise ConfigError("sealed historical report has invalid attempt count")
+
+    def validated_metrics(evaluation: Any) -> tuple[int, int]:
+        if not isinstance(evaluation, dict):
+            raise ConfigError("sealed historical report has invalid evaluation")
+        outputs = evaluation.get("sample_outputs")
+        if not isinstance(outputs, list) or len(outputs) != sample_count:
+            raise ConfigError("sealed historical report has incomplete sample evidence")
+        if any(
+            not isinstance(item, dict)
+            or type(item.get("is_correct")) is not bool
+            or type(item.get("is_syntax_valid")) is not bool
+            for item in outputs
+        ):
+            raise ConfigError("sealed historical report has invalid sample evidence")
+        correct = sum(item["is_correct"] for item in outputs)
+        syntax_valid = sum(item["is_syntax_valid"] for item in outputs)
+        if (
+            evaluation.get("success") is not True
+            or evaluation.get("early_stopped") is not False
+            or evaluation.get("num_examples") != sample_count
+            or evaluation.get("num_correct") != correct
+            or not math.isclose(
+                float(evaluation.get("accuracy", -1)),
+                correct / sample_count,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            or not math.isclose(
+                float(evaluation.get("syntax_rate", -1)),
+                syntax_valid / sample_count,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        ):
+            raise ConfigError("sealed historical report metrics disagree with samples")
+        return correct, syntax_valid
+
+    attempt_times: list[float | None]
+    if evidence["evidence_type"] == "accepted_synthesis":
+        if selected_attempt != total_attempts:
+            raise ConfigError("accepted historical report has invalid selected attempt")
+        evaluation = report.get("evaluation_result")
+        strategy_code = report.get("strategy_code")
+        correct, syntax_valid = validated_metrics(evaluation)
+        attempt_times = [None] * (total_attempts - 1)
+        raw_time = evaluation.get("total_time_seconds")
+        attempt_times.append(
+            float(raw_time)
+            if isinstance(raw_time, (int, float))
+            and math.isfinite(float(raw_time))
+            and raw_time >= 0
+            else None
+        )
+    else:
+        attempts = report.get("attempts")
+        if (
+            not isinstance(attempts, list)
+            or len(attempts) != total_attempts
+            or [attempt.get("attempt_number") for attempt in attempts]
+            != list(range(1, total_attempts + 1))
+        ):
+            raise ConfigError("exhausted historical report has invalid attempts")
+        candidates: list[tuple[float, float, float, int, dict[str, Any]]] = []
+        attempt_times = []
+        for attempt in attempts:
+            evaluation = attempt.get("evaluation")
+            raw_time = (
+                evaluation.get("total_time_seconds")
+                if isinstance(evaluation, dict)
+                else None
+            )
+            attempt_times.append(
+                float(raw_time)
+                if isinstance(raw_time, (int, float))
+                and math.isfinite(float(raw_time))
+                and raw_time >= 0
+                else None
+            )
+            if (
+                (attempt.get("compilation") or {}).get("success") is not True
+                or (attempt.get("verification") or {}).get("success") is not True
+            ):
+                continue
+            try:
+                attempt_correct, attempt_syntax = validated_metrics(evaluation)
+            except ConfigError:
+                continue
+            accuracy = attempt_correct / sample_count
+            syntax_rate = attempt_syntax / sample_count
+            if (
+                accuracy >= float(row["min_accuracy"])
+                and syntax_rate >= float(row["min_syntax_rate"])
+            ):
+                raise ConfigError("exhausted historical report contains a target-reaching attempt")
+            shortfall = max(0.0, float(row["min_accuracy"]) - accuracy) + max(
+                0.0, float(row["min_syntax_rate"]) - syntax_rate
+            )
+            candidates.append(
+                (
+                    shortfall,
+                    -accuracy,
+                    -syntax_rate,
+                    int(attempt["attempt_number"]),
+                    attempt,
+                )
+            )
+        if not candidates:
+            raise ConfigError("exhausted historical report has no valid strategy")
+        selected = min(candidates, key=lambda item: item[:4])
+        if selected[3] != selected_attempt:
+            raise ConfigError("exhausted historical report selects a different attempt")
+        selected_record = selected[-1]
+        evaluation = selected_record["evaluation"]
+        strategy_code = selected_record.get("strategy_code")
+        correct, syntax_valid = validated_metrics(evaluation)
+
+    historical = evidence["historical_train"]
     if (
-        report.get("total_attempts") != row["imported_evidence"]["historical_attempt"]
-        or not isinstance(raw, (int, float))
+        correct != historical["correct"]
+        or syntax_valid != historical["syntax_valid"]
+        or not isinstance(strategy_code, str)
+    ):
+        raise ConfigError("sealed historical report disagrees with imported metrics")
+    raw = evaluation.get("total_time_seconds")
+    if (
+        not isinstance(raw, (int, float))
         or not math.isfinite(float(raw))
         or raw < 0
     ):
         raise ConfigError("sealed historical report has invalid attempt timing")
-    return float(raw)
+    template = (repo / "synthesis/verify/library/GeneratedCSD.dfy").read_text(
+        encoding="utf-8"
+    )
+    reconstructed = template.replace("// QWEN_INSERT_STRATEGY_HERE", strategy_code)
+    source_sha = evidence["artifacts"]["strategy_dafny"]["sha256"]
+    if sha256_text(reconstructed) != source_sha:
+        raise ConfigError("sealed strategy source disagrees with historical report")
+    return {
+        "evaluation": evaluation,
+        "attempt_times": attempt_times,
+        "selected_total_time_seconds": float(raw),
+    }
+
+
+def _historical_import_total_time(repo: Path, row: dict[str, Any]) -> float:
+    return _historical_import_record(repo, row)["selected_total_time_seconds"]
 
 
 def _imported_selection(repo: Path, row: dict[str, Any]) -> dict[str, Any] | None:
@@ -2824,7 +3073,13 @@ def _imported_selection(repo: Path, row: dict[str, Any]) -> dict[str, Any] | Non
         report = json.loads(report_path.read_text(encoding="utf-8"))
         expected = row["imported_evidence"]
         historical = expected["historical_train"]
-        expected_total_time = _historical_import_total_time(repo, row)
+        historical_record = _historical_import_record(repo, row)
+        expected_total_time = historical_record["selected_total_time_seconds"]
+        expected_terminal_status = (
+            "exhausted"
+            if expected["evidence_type"] == "exhausted_synthesis"
+            else "imported_below_target"
+        )
         run_dir = report_path.parent.parent
         source_copy = (run_dir / "dafny" / "GeneratedCSD.dfy").resolve(strict=True)
         source_sha = expected["artifacts"]["strategy_dafny"]["sha256"]
@@ -2844,9 +3099,12 @@ def _imported_selection(repo: Path, row: dict[str, Any]) -> dict[str, Any] | Non
                 "git_commit",
                 "execution_source_sha256",
                 "total_attempts",
+                "winning_attempt",
                 "terminal_status",
                 "target_reached",
                 "evaluation_result",
+                "attempt_evaluation_times_seconds",
+                "historical_synthesis_wall_time_seconds",
                 "source_evidence",
                 "compiled_from_dafny_path",
                 "compiled_from_dafny_sha256",
@@ -2859,10 +3117,17 @@ def _imported_selection(repo: Path, row: dict[str, Any]) -> dict[str, Any] | Non
             or report.get("execution_source_sha256")
             != row.get("execution_source_sha256")
             or report.get("source_evidence") != expected
-            or report.get("total_attempts") != expected["historical_attempt"]
-            or report.get("terminal_status") != "imported_below_target"
+            or report.get("total_attempts")
+            != expected["historical_total_attempts"]
+            or report.get("winning_attempt")
+            != expected["historical_selected_attempt"]
+            or report.get("terminal_status") != expected_terminal_status
             or report.get("target_reached") is not False
             or report.get("evaluation_result") != expected_evaluation
+            or report.get("attempt_evaluation_times_seconds")
+            != historical_record["attempt_times"]
+            or report.get("historical_synthesis_wall_time_seconds")
+            != expected["historical_wall_time_seconds"]
             or report.get("compiled_from_dafny_path") != str(source_copy)
             or report.get("compiled_from_dafny_sha256") != source_sha
             or hash_file(source_copy) != source_sha
@@ -2878,7 +3143,7 @@ def _imported_selection(repo: Path, row: dict[str, Any]) -> dict[str, Any] | Non
             "compiled_csd_path": compiled,
             "report_path": report_path,
             "report_sha256": hash_file(report_path),
-            "winning_attempt": int(expected["historical_attempt"]),
+            "winning_attempt": int(expected["historical_selected_attempt"]),
         }
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
         return None
@@ -2908,15 +3173,24 @@ def _prepare_imported_selection(repo: Path, row: dict[str, Any]) -> dict[str, An
     compiled = Path(result.output_dir) / "GeneratedCSD.py"
     if not compiled.is_file():
         raise ConfigError("imported strategy compilation produced no GeneratedCSD.py")
+    if hash_file(compiled) != row["imported_evidence"]["historical_compiled_sha256"]:
+        raise ConfigError("imported strategy compilation differs from historical executable")
     historical = row["imported_evidence"]["historical_train"]
-    historical_total_time = _historical_import_total_time(repo, row)
+    historical_record = _historical_import_record(repo, row)
+    historical_total_time = historical_record["selected_total_time_seconds"]
+    terminal_status = (
+        "exhausted"
+        if row["imported_evidence"]["evidence_type"] == "exhausted_synthesis"
+        else "imported_below_target"
+    )
     report = {
         "report_type": "imported_strategy",
         "cell_id": row["cell_id"],
         "git_commit": row.get("git_commit"),
         "execution_source_sha256": row.get("execution_source_sha256"),
-        "total_attempts": row["imported_evidence"]["historical_attempt"],
-        "terminal_status": "imported_below_target",
+        "total_attempts": row["imported_evidence"]["historical_total_attempts"],
+        "winning_attempt": row["imported_evidence"]["historical_selected_attempt"],
+        "terminal_status": terminal_status,
         "target_reached": (
             historical["correct"] / historical["sample_count"]
             >= float(row["min_accuracy"])
@@ -2929,6 +3203,10 @@ def _prepare_imported_selection(repo: Path, row: dict[str, Any]) -> dict[str, An
             "syntax_rate": historical["syntax_valid"] / historical["sample_count"],
             "total_time_seconds": historical_total_time,
         },
+        "attempt_evaluation_times_seconds": historical_record["attempt_times"],
+        "historical_synthesis_wall_time_seconds": row["imported_evidence"][
+            "historical_wall_time_seconds"
+        ],
         "source_evidence": row["imported_evidence"],
         "compiled_from_dafny_path": str(source_copy.resolve()),
         "compiled_from_dafny_sha256": hash_file(source_copy),
@@ -3177,9 +3455,10 @@ def run_row(
         )
         save(running)
         LOGGER.info(
-            "[tableq] import-compile cell=%s historical_attempt=%s",
+            "[tableq] import-compile cell=%s historical_attempts=%s selected_attempt=%s",
             row["cell_id"],
-            row["imported_evidence"]["historical_attempt"],
+            row["imported_evidence"]["historical_total_attempts"],
+            row["imported_evidence"]["historical_selected_attempt"],
         )
         try:
             selection = _prepare_imported_selection(repo, row)
