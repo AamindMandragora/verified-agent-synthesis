@@ -59,6 +59,8 @@ def test_exact_table5_synthesizer_scope():
     assert all(row["min_syntax_rate"] == 47 / 49 for row in rows)
     imported = [row for row in rows if row["execution_mode"] == "imported_strategy"]
     fresh = [row for row in rows if row["execution_mode"] == "fresh_synthesis"]
+    assert all(row["max_attempt_seconds"] == 7200.0 for row in fresh)
+    assert imported[0]["max_attempt_seconds"] is None
     assert [row["cell_id"] for row in imported] == ["t5-opus5-gsm_symbolic"]
     assert {row["profile"] for row in fresh} == {
         "gpt5.6-sol",
@@ -152,6 +154,7 @@ def test_commands_bind_canonical_splits_and_no_warm_start():
             == "Qwen/Qwen2.5-1.5B-Instruct"
         )
         assert command[command.index("--max-iterations") + 1] == "40"
+        assert command[command.index("--max-attempt-seconds") + 1] == "7200.0"
         assert "--initial-strategy-file" not in command
         assert command[command.index("--generation-backend") + 1] == row["generation_backend"]
         assert command[command.index("--generation-model") + 1] == row["generation_model"]
@@ -445,6 +448,10 @@ def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, 
     changed_limits["jobs"][0]["effective_output_tokens"] = 1
     with pytest.raises(queue.ConfigError, match="effective_output_tokens"):
         queue.validate_manifest(tmp_path, changed_limits)
+    changed_attempt_limit = json.loads(json.dumps(payload))
+    changed_attempt_limit["jobs"][0]["max_attempt_seconds"] = 3600.0
+    with pytest.raises(queue.ConfigError, match="max_attempt_seconds"):
+        queue.validate_manifest(tmp_path, changed_attempt_limit)
     (tmp_path / paths[0]).write_text("changed", encoding="utf-8")
     with pytest.raises(queue.ConfigError):
         queue.manifest_payload(tmp_path, queue.build_scope(tmp_path))

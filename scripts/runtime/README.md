@@ -80,6 +80,9 @@ runs plus 1 sealed historical Opus row. The uncollected token-budget, beam-size,
 and mask ablations for Tables 6--8 are excluded. Every run uses one GPU,
 the exact `Qwen/Qwen2.5-1.5B-Instruct` evaluator, and fresh rows use at most 40
 cold synthesis attempts. The target is 20/49 accuracy and 47/49 syntax. The
+fresh rows pass an explicit 7,200-second limit for each attempt. A full
+49-example evaluation remains search evidence if it finishes after that limit;
+an incomplete evaluation remains a timeout.
 Opus control reuses historical cold attempt 38, seals its original Dafny,
 report, log, and held-out bytes, recompiles that Dafny with current code, and
 runs a fresh held-out evaluation. It is labeled `imported_below_target`, not a

@@ -144,6 +144,9 @@ Table 5 backend cells. It uses exact profiles
 `opus5`/Claude Code, and always evaluates GSM-Symbolic with
 `Qwen/Qwen2.5-1.5B-Instruct` against the exact 20/49 accuracy and 47/49 syntax
 target. Table 5 has 2 fresh author-model runs plus 1 sealed historical Opus row.
+Fresh synthesis rows must record and pass `max_attempt_seconds=7200.0` to the
+synthesis command. Preserve a complete 49-example over-budget evaluation as
+search evidence; keep an incomplete over-budget evaluation as a timeout.
 The uncollected token-budget, beam-size, and helper-mask settings for Tables
 6--8 are excluded. Every row uses exactly one GPU
 and records accuracy, syntax rate, synthesis attempts used, accepted/exhausted

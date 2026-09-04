@@ -236,6 +236,7 @@ GPU_SAFETY_MIB = 2_000
 CANONICAL_CRANE_COMMIT = "616379ce33ac6245933c16e6264b41f7d5800183"
 AUTHOR_TOKEN_BUDGET = 32768
 AUTHOR_REASONING_BUDGET = 4096
+TABLE5_MAX_ATTEMPT_SECONDS = 7200.0
 BAR_BINDINGS = {
     "gsm_symbolic": {
         "min_accuracy": 20 / 49,
@@ -356,6 +357,7 @@ JOB_KEYS = frozenset({
     "effective_output_tokens", "effective_thinking_tokens",
     "smiles_class", "token_budget", "beam_size", "adaptive_helper_mask",
     "helper_selection_policy", "max_iterations", "min_accuracy", "min_syntax_rate",
+    "max_attempt_seconds",
     "bar_source_path", "bar_source_sha256", "eval_sample_size", "heldout_sample_size",
     "eval_max_steps", "eval_max_seconds", "gpu_mem_util", "memory_reservation_mib",
     "gpu_scope", "gpu_count", "heldout_split_name", "heldout_split_file", "sample_count",
@@ -396,6 +398,11 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
         "adaptive_helper_mask": controls.pop("adaptive_helper_mask", True),
         "helper_selection_policy": controls.pop("helper_selection_policy", "bandit"),
         "max_iterations": 40,
+        "max_attempt_seconds": (
+            TABLE5_MAX_ATTEMPT_SECONDS
+            if table == 5 and execution_mode == "fresh_synthesis"
+            else None
+        ),
         "min_accuracy": (BAR_BINDINGS[benchmark][smiles_class]["min_accuracy"] if benchmark == "smiles" else BAR_BINDINGS[benchmark]["min_accuracy"]),
         "min_syntax_rate": (BAR_BINDINGS[benchmark][smiles_class]["min_syntax_rate"] if benchmark == "smiles" else BAR_BINDINGS[benchmark]["min_syntax_rate"]),
         "bar_source_path": BAR_BINDINGS[benchmark]["source_path"],
@@ -446,7 +453,7 @@ def synthesis_command(row: dict[str, Any], python: Path) -> list[str]:
         raise ConfigError(
             f"{row['cell_id']} is imported evidence and does not launch synthesis"
         )
-    cmd = [str(python), "-m", "synthesis.run_synthesis", "--task", row["task"], "--dataset", row["dataset"], "--min-accuracy", str(row["min_accuracy"]), "--min-syntax-rate", str(row["min_syntax_rate"]), "--max-iterations", "40", "--eval-model", EVAL_MODEL, "--eval-sample-size", str(row["eval_sample_size"]), "--eval-max-steps", str(row["eval_max_steps"]), "--eval-step-token-budget", str(row["token_budget"]), "--eval-max-seconds-per-example", "600", "--eval-min-examples-before-threshold-stop", str(row["eval_sample_size"]), "--generation-model", row["generation_model"], "--generation-backend", row["generation_backend"], "--synthesis-max-tokens", str(row["synthesis_max_tokens"]), "--synthesizer-reasoning-budget", str(row["synthesis_reasoning_budget"]), "--device", "auto", "--vllm-gpu-memory-utilization", str(row["gpu_mem_util"]), "--refinement-beam-size", str(row["beam_size"]), "--helper-selection-policy", row["helper_selection_policy"]]
+    cmd = [str(python), "-m", "synthesis.run_synthesis", "--task", row["task"], "--dataset", row["dataset"], "--min-accuracy", str(row["min_accuracy"]), "--min-syntax-rate", str(row["min_syntax_rate"]), "--max-iterations", "40", "--max-attempt-seconds", str(row["max_attempt_seconds"]), "--eval-model", EVAL_MODEL, "--eval-sample-size", str(row["eval_sample_size"]), "--eval-max-steps", str(row["eval_max_steps"]), "--eval-step-token-budget", str(row["token_budget"]), "--eval-max-seconds-per-example", "600", "--eval-min-examples-before-threshold-stop", str(row["eval_sample_size"]), "--generation-model", row["generation_model"], "--generation-backend", row["generation_backend"], "--synthesis-max-tokens", str(row["synthesis_max_tokens"]), "--synthesizer-reasoning-budget", str(row["synthesis_reasoning_budget"]), "--device", "auto", "--vllm-gpu-memory-utilization", str(row["gpu_mem_util"]), "--refinement-beam-size", str(row["beam_size"]), "--helper-selection-policy", row["helper_selection_policy"]]
     cmd.append("--adaptive-helper-mask" if row["adaptive_helper_mask"] else "--no-adaptive-helper-mask")
     if row["dataset"] == "smiles":
         cmd += ["--smiles-classes", row["smiles_class"], "--smiles-samples-per-class", str(row["eval_sample_size"]), "--smiles-final-samples-per-class", str(row["heldout_sample_size"])]
@@ -1541,7 +1548,8 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
         "profile", "generation_backend", "generation_model", "eval_model",
         "smiles_class", "token_budget", "beam_size", "adaptive_helper_mask",
         "helper_selection_policy", "max_iterations", "min_accuracy",
-        "min_syntax_rate", "synthesis_max_tokens", "synthesis_reasoning_budget",
+        "min_syntax_rate", "max_attempt_seconds", "synthesis_max_tokens",
+        "synthesis_reasoning_budget",
         "effective_output_tokens", "effective_thinking_tokens",
         "eval_sample_size",
         "heldout_sample_size", "eval_max_steps", "eval_max_seconds", "gpu_mem_util",
