@@ -142,6 +142,21 @@ def _load_initial_attempt_history(path: Path):
     return attempts
 
 
+def _validate_resume_attempt_offset(initial_attempts, initial_attempt_offset: int) -> None:
+    """Fail before launch when restored history would reuse attempt numbers."""
+    if not initial_attempts:
+        return
+    attempt_numbers = [attempt.attempt_number for attempt in initial_attempts]
+    expected_numbers = list(range(1, len(initial_attempts) + 1))
+    if attempt_numbers != expected_numbers:
+        raise ValueError("initial attempt history must be contiguous from attempt 1")
+    if initial_attempt_offset != len(initial_attempts):
+        raise ValueError(
+            "initial attempt offset must equal the finalized history length "
+            f"({len(initial_attempts)}), got {initial_attempt_offset}"
+        )
+
+
 def _load_initial_failure_ledger(path: Path) -> dict:
     """Load and validate the sealed cross-attempt failure-mode ledger."""
     from synthesis.failure_taxonomy import FINGERPRINT_AXES
@@ -688,6 +703,7 @@ Examples:
             f"Loaded {len(initial_attempts)} prior evaluated attempt(s) from: "
             f"{args.initial_attempt_history_file}"
         )
+    _validate_resume_attempt_offset(initial_attempts, args.initial_attempt_offset)
     initial_failure_ledger = None
     if args.initial_failure_ledger_file:
         initial_failure_ledger = _load_initial_failure_ledger(

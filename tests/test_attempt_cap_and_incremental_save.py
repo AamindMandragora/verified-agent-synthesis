@@ -394,6 +394,85 @@ def test_restore_rejects_timeout_missing_per_example_evidence(tmp_path):
     assert pipeline._incumbent.attempt_number == 1
 
 
+def test_restore_rejects_timeout_with_corrupt_per_example_evidence(tmp_path):
+    pipeline = make_pipeline(
+        tmp_path,
+        FakeEvaluator(seconds_per_example=0.0),
+        max_attempt_seconds=10.0,
+        max_iterations=1,
+    )
+    baseline = _restored_attempt(
+        1, 0.4, 1.0, FailureStage.EVALUATION, completed=True
+    )
+    corrupt = _restored_attempt(
+        2, 0.8, 1.0, FailureStage.TIMEOUT, completed=True
+    )
+    corrupt.eval_result.sample_outputs = [None] * 5
+
+    pipeline._restore_incumbent_from_attempts([baseline, corrupt])
+
+    assert pipeline._incumbent.attempt_number == 1
+
+
+def test_restored_complete_timeout_never_becomes_accuracy_fallback(tmp_path):
+    pipeline = make_pipeline(
+        tmp_path,
+        FakeEvaluator(seconds_per_example=0.0),
+        max_attempt_seconds=10.0,
+        max_iterations=0,
+    )
+    pipeline.min_accuracy = 0.5
+    pipeline.min_syntax_rate = 1.1
+    restored_timeout = _restored_attempt(
+        1, 0.8, 1.0, FailureStage.TIMEOUT, completed=True
+    )
+
+    with pytest.raises(SynthesisExhaustionError):
+        pipeline.synthesize(
+            task_description="dummy task",
+            output_name="historical-timeout-no-fallback",
+            initial_strategy_code=restored_timeout.strategy_code,
+            initial_attempt_offset=1,
+            initial_attempts=[restored_timeout],
+        )
+
+    assert not list(
+        Path(pipeline.output_dir).glob("*/results/fallback_winner.json")
+    )
+
+
+def test_resume_offset_must_match_contiguous_history():
+    from synthesis.run_synthesis import _validate_resume_attempt_offset
+
+    restored = [
+        _restored_attempt(
+            number,
+            0.4,
+            1.0,
+            FailureStage.EVALUATION,
+            completed=True,
+        )
+        for number in range(1, 4)
+    ]
+
+    _validate_resume_attempt_offset(restored, 3)
+
+    with pytest.raises(ValueError, match="must equal the finalized history length"):
+        _validate_resume_attempt_offset(restored, 2)
+
+
+def test_resume_history_must_be_contiguous_from_attempt_one():
+    from synthesis.run_synthesis import _validate_resume_attempt_offset
+
+    restored = [
+        _restored_attempt(1, 0.4, 1.0, FailureStage.EVALUATION, completed=True),
+        _restored_attempt(3, 0.4, 1.0, FailureStage.EVALUATION, completed=True),
+    ]
+
+    with pytest.raises(ValueError, match="contiguous from attempt 1"):
+        _validate_resume_attempt_offset(restored, 2)
+
+
 def test_deadline_crossed_after_final_example_keeps_complete_result(monkeypatch):
     evaluator = object.__new__(Evaluator)
     monkeypatch.setattr(

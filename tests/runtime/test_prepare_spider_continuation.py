@@ -15,6 +15,7 @@ def _attempt(
     syntax_rate,
     failed_at="evaluation",
     complete=True,
+    success=True,
     error_summary="",
 ):
     planned = 4
@@ -26,7 +27,7 @@ def _attempt(
         "succeeded": False,
         "error_summary": error_summary,
         "evaluation": {
-            "success": True,
+            "success": success,
             "accuracy": accuracy,
             "syntax_rate": syntax_rate,
             "planned_num_examples": planned,
@@ -80,6 +81,45 @@ def test_plan_rejects_partial_timeout_as_incumbent():
             complete=False,
         ),
     ]
+
+    plan = build_continuation_plan(
+        {"attempts": attempts, "total_attempts": 2},
+        min_accuracy=0.66,
+        min_syntax_rate=0.95,
+        final_attempt_limit=43,
+    )
+
+    assert plan.incumbent_attempt_number == 1
+
+
+def test_plan_rejects_unsuccessful_evaluation_with_stale_high_scores():
+    attempts = [
+        _attempt(1, accuracy=0.4, syntax_rate=0.95),
+        _attempt(2, accuracy=0.99, syntax_rate=1.0, success=False),
+    ]
+
+    plan = build_continuation_plan(
+        {"attempts": attempts, "total_attempts": 2},
+        min_accuracy=0.66,
+        min_syntax_rate=0.95,
+        final_attempt_limit=43,
+    )
+
+    assert plan.incumbent_attempt_number == 1
+
+
+def test_plan_rejects_timeout_with_corrupt_sample_records():
+    attempts = [
+        _attempt(1, accuracy=0.4, syntax_rate=0.95),
+        _attempt(
+            2,
+            accuracy=0.9,
+            syntax_rate=1.0,
+            failed_at="timeout",
+            complete=True,
+        ),
+    ]
+    attempts[1]["evaluation"]["sample_outputs"] = [None] * 4
 
     plan = build_continuation_plan(
         {"attempts": attempts, "total_attempts": 2},

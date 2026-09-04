@@ -1354,7 +1354,12 @@ class SynthesisPipeline:
         samples = result.sample_outputs or []
         if result.early_stopped:
             return False
-        return planned > 0 and observed == planned and len(samples) == planned
+        return (
+            planned > 0
+            and observed == planned
+            and len(samples) == planned
+            and all(isinstance(sample, dict) for sample in samples)
+        )
 
     def _restore_incumbent_from_attempts(
         self, attempts: list[SynthesisAttempt]
@@ -2846,6 +2851,7 @@ class SynthesisPipeline:
             if (
                 att.eval_result is not None
                 and not att.eval_result.early_stopped
+                and att.failed_at is not FailureStage.TIMEOUT
                 and not self._exceeded_attempt_budget(att.eval_result)
                 and att.eval_result.accuracy >= self.min_accuracy
                 and (

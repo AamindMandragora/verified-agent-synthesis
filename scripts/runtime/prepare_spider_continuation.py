@@ -72,6 +72,7 @@ def _is_complete_evaluation(evaluation: Mapping[str, object]) -> bool:
         and observed == planned
         and isinstance(samples, list)
         and len(samples) == planned
+        and all(isinstance(sample, Mapping) for sample in samples)
         and evaluation.get("early_stopped") is not True
     )
 
@@ -118,8 +119,9 @@ def build_continuation_plan(
         if not all(field in evaluation for field in ("accuracy", "syntax_rate")):
             continue
         failed_at = record.get("failed_at")
-        score_bearing = failed_at in (None, "evaluation") or (
-            failed_at == "timeout" and _is_complete_evaluation(evaluation)
+        score_bearing = evaluation.get("success") is True and (
+            failed_at in (None, "evaluation")
+            or (failed_at == "timeout" and _is_complete_evaluation(evaluation))
         )
         if score_bearing:
             eligible.append((record, evaluation))
