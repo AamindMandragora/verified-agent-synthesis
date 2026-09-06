@@ -1954,6 +1954,11 @@ class SynthesisPipeline:
         start_time = time.time()
         attempts: list[SynthesisAttempt] = list(initial_attempts or [])
         self._restore_incumbent_from_attempts(attempts)
+        history_only_continuation = bool(attempts) and initial_strategy_code is None
+        if history_only_continuation and initial_failure_ledger is None:
+            raise ValueError(
+                "history-only continuation requires a restored failure ledger"
+            )
         self._failure_ledger = (
             copy.deepcopy(initial_failure_ledger)
             if initial_failure_ledger is not None
@@ -2019,8 +2024,46 @@ class SynthesisPipeline:
         if helper_status:
             print(f"Helper policy: {helper_status}")
 
-        # Initial generation, or a caller-provided recovery seed.
-        if initial_strategy_code is not None:
+        # Initial generation, a caller-provided recovery seed, or a continuation
+        # that authors the next candidate from the restored incumbent.
+        if history_only_continuation:
+            incumbent = self._incumbent
+            if incumbent is None:
+                raise ValueError(
+                    "history-only continuation requires a score-bearing incumbent"
+                )
+            logger.warning(
+                "[warm-resume] authoring first new attempt from restored incumbent=%d",
+                incumbent.attempt_number,
+            )
+            incumbent.a_result._failure_ledger = self._failure_ledger
+            incumbent.a_result._attempt_index = incumbent.attempt_number
+            strategy_code = self._refine_with_beam(
+                stage_label="warm_resume_seed",
+                previous_strategy=incumbent.strategy_code,
+                allowed_helpers=allowed_helpers,
+                refine_once=lambda: self.generator.refine_after_evaluation_failure(
+                    previous_strategy=incumbent.strategy_code,
+                    previous_accuracy=incumbent.a_result.accuracy or 0.0,
+                    previous_syntax_rate=incumbent.a_result.syntax_rate or 0.0,
+                    num_examples=incumbent.a_result.num_examples or 0,
+                    goal_accuracy=self.min_accuracy,
+                    goal_syntax_rate=self.min_syntax_rate,
+                    evaluation_feedback=self._threshold_miss_candidate_feedback(
+                        incumbent.a_result
+                    ),
+                    best_strategy=None,
+                    best_accuracy=None,
+                    best_syntax_rate=None,
+                    allowed_helpers=allowed_helpers,
+                    eval_max_seconds_per_example=self.eval_max_seconds_per_example,
+                    mode_examples=incumbent.a_result._render_mode_examples(),
+                    attempt_outcome_ledger=self._build_attempt_outcome_ledger(
+                        attempts, incumbent.attempt_number
+                    ),
+                ),
+            )
+        elif initial_strategy_code is not None:
             logger.warning(
                 "[warm-resume] task context initialized before strategy replay; "
                 "task_chars=%d initial_attempt_offset=%d",
@@ -2872,9 +2915,12 @@ class SynthesisPipeline:
             attempts.append(attempt)
             self._save_progress_report(attempts, task_description, output_name, run_results_dir)
 
-            if fixed_warm_continuation and iteration + 1 == self.max_iterations:
+            if (
+                (fixed_warm_continuation or history_only_continuation)
+                and iteration + 1 == self.max_iterations
+            ):
                 logger.info(
-                    "[fixed-warm] final scheduled attempt=%d recorded; skipping "
+                    "[warm-resume] final scheduled attempt=%d recorded; skipping "
                     "an unused follow-on refinement",
                     attempt.attempt_number,
                 )

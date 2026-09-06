@@ -419,11 +419,13 @@ JOB_KEYS = frozenset({
     "max_attempt_seconds",
     "bar_source_path", "bar_source_sha256", "eval_sample_size", "heldout_sample_size",
     "eval_max_steps", "eval_max_seconds", "gpu_mem_util", "memory_reservation_mib",
+    "synthesis_workers_per_gpu", "synthesis_worker_overhead_mib",
     "gpu_scope", "gpu_count", "heldout_split_name", "heldout_split_file", "sample_count",
     "output_name", "heldout_output_json", "log_file", "cold_start", "git_commit",
     "launch_commit", "expected_author_route", "execution_mode", "imported_evidence",
     "initial_attempt_offset", "new_iterations", "total_attempt_cap",
     "fixed_warm_continuation",
+    "continuation_evidence",
 })
 
 
@@ -477,6 +479,8 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
         "eval_max_seconds": 600.0,
         "gpu_mem_util": float(VLLM_GPU_MEMORY_UTILIZATION_BY_MODEL[EVAL_MODEL]),
         "memory_reservation_mib": 20_480,
+        "synthesis_workers_per_gpu": 2,
+        "synthesis_worker_overhead_mib": 2_048,
         "gpu_scope": [0, 1, 2, 3],
         "gpu_count": 1,
         "heldout_split_name": "test",
@@ -492,6 +496,7 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
         "new_iterations": controls.pop("new_iterations", None),
         "total_attempt_cap": controls.pop("total_attempt_cap", None),
         "fixed_warm_continuation": controls.pop("fixed_warm_continuation", False),
+        "continuation_evidence": controls.pop("continuation_evidence", None),
     }
 
 
@@ -603,7 +608,15 @@ def synthesis_command(row: dict[str, Any], python: Path) -> list[str]:
         raise ConfigError(
             f"{row['cell_id']} is imported evidence and does not launch synthesis"
         )
-    cmd = [str(python), "-m", "synthesis.run_synthesis", "--task", row["task"], "--dataset", row["dataset"], "--min-accuracy", str(row["min_accuracy"]), "--min-syntax-rate", str(row["min_syntax_rate"]), "--max-iterations", "40", "--max-attempt-seconds", str(row["max_attempt_seconds"]), "--eval-model", EVAL_MODEL, "--eval-sample-size", str(row["eval_sample_size"]), "--eval-max-steps", str(row["eval_max_steps"]), "--eval-step-token-budget", str(row["token_budget"]), "--eval-max-seconds-per-example", "600", "--eval-min-examples-before-threshold-stop", str(row["eval_sample_size"]), "--generation-model", row["generation_model"], "--generation-backend", row["generation_backend"], "--synthesis-max-tokens", str(row["synthesis_max_tokens"]), "--synthesizer-reasoning-budget", str(row["synthesis_reasoning_budget"]), "--device", "auto", "--vllm-gpu-memory-utilization", str(row["gpu_mem_util"]), "--refinement-beam-size", str(row["beam_size"]), "--helper-selection-policy", row["helper_selection_policy"]]
+    continuation = row.get("continuation_evidence")
+    remaining = 40 - int(continuation["initial_attempt_offset"]) if continuation else 40
+    cmd = [str(python), "-m", "synthesis.run_synthesis", "--task", row["task"], "--dataset", row["dataset"], "--min-accuracy", str(row["min_accuracy"]), "--min-syntax-rate", str(row["min_syntax_rate"]), "--max-iterations", str(remaining), "--max-attempt-seconds", str(row["max_attempt_seconds"]), "--eval-model", EVAL_MODEL, "--eval-sample-size", str(row["eval_sample_size"]), "--eval-max-steps", str(row["eval_max_steps"]), "--eval-step-token-budget", str(row["token_budget"]), "--eval-max-seconds-per-example", "600", "--eval-min-examples-before-threshold-stop", str(row["eval_sample_size"]), "--generation-model", row["generation_model"], "--generation-backend", row["generation_backend"], "--synthesis-max-tokens", str(row["synthesis_max_tokens"]), "--synthesizer-reasoning-budget", str(row["synthesis_reasoning_budget"]), "--device", "auto", "--vllm-gpu-memory-utilization", str(row["gpu_mem_util"]), "--refinement-beam-size", str(row["beam_size"]), "--helper-selection-policy", row["helper_selection_policy"]]
+    if continuation:
+        cmd += [
+            "--initial-attempt-history-file", continuation["history_path"],
+            "--initial-failure-ledger-file", continuation["failure_ledger_path"],
+            "--initial-attempt-offset", str(continuation["initial_attempt_offset"]),
+        ]
     cmd.append("--adaptive-helper-mask" if row["adaptive_helper_mask"] else "--no-adaptive-helper-mask")
     if row["dataset"] == "smiles":
         cmd += ["--smiles-classes", row["smiles_class"], "--smiles-samples-per-class", str(row["eval_sample_size"]), "--smiles-final-samples-per-class", str(row["heldout_sample_size"])]
@@ -1311,7 +1324,14 @@ def provider_preflight() -> list[dict[str, str]]:
 
 
 def _demand(row: dict[str, Any], total_mib: int) -> int:
-    return max(int(row["memory_reservation_mib"]), math.ceil(float(row["gpu_mem_util"]) * total_mib))
+    workers = int(row["synthesis_workers_per_gpu"])
+    if workers < 1:
+        raise ConfigError("synthesis_workers_per_gpu must be positive")
+    overhead = int(row["synthesis_worker_overhead_mib"])
+    if overhead < 0:
+        raise ConfigError("synthesis_worker_overhead_mib must be nonnegative")
+    per_worker = math.ceil(float(row["gpu_mem_util"]) * total_mib)
+    return max(int(row["memory_reservation_mib"]), workers * (per_worker + overhead))
 
 
 def choose_gpu(row: dict[str, Any], snapshot: dict[int, dict[str, int]], reservations: dict[int, int], baseline: dict[int, dict[str, int]], allowed: tuple[int, ...]) -> int | None:
@@ -1349,16 +1369,146 @@ def required_provider_profiles(rows: list[dict[str, Any]]) -> set[str]:
     }
 
 
+CONTINUATION_EVIDENCE_KEYS = frozenset(
+    {
+        "history_path",
+        "history_sha256",
+        "failure_ledger_path",
+        "failure_ledger_sha256",
+        "source_state_path",
+        "source_state_sha256",
+        "historical_synthesis_wall_time_seconds",
+        "initial_attempt_offset",
+    }
+)
+
+
+def _continuation_path(repo: Path, raw_path: object) -> Path:
+    path = Path(str(raw_path))
+    return path if path.is_absolute() else repo / path
+
+
+def validate_continuation_evidence(
+    repo: Path, row: dict[str, Any], evidence: object
+) -> dict[str, Any]:
+    """Validate sealed finalized history and its matching failure ledger."""
+    if not isinstance(evidence, dict) or set(evidence) != CONTINUATION_EVIDENCE_KEYS:
+        raise ConfigError(f"continuation evidence is incomplete: {row['cell_id']}")
+    history_path = _continuation_path(repo, evidence["history_path"])
+    ledger_path = _continuation_path(repo, evidence["failure_ledger_path"])
+    state_path = _continuation_path(repo, evidence["source_state_path"])
+    for path, field in (
+        (history_path, "history_sha256"),
+        (ledger_path, "failure_ledger_sha256"),
+        (state_path, "source_state_sha256"),
+    ):
+        expected = evidence.get(field)
+        if (
+            not path.is_file()
+            or not isinstance(expected, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected) is None
+            or hash_file(path) != expected
+        ):
+            raise ConfigError(f"continuation evidence changed: {row['cell_id']}")
+    try:
+        report = json.loads(history_path.read_text(encoding="utf-8"))
+        json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConfigError(f"continuation evidence is not JSON: {row['cell_id']}") from exc
+    offset = evidence.get("initial_attempt_offset")
+    historical_seconds = evidence.get("historical_synthesis_wall_time_seconds")
+    attempts = report.get("attempts") if isinstance(report, dict) else None
+    if (
+        not isinstance(offset, int)
+        or not 0 < offset < 40
+        or not isinstance(historical_seconds, (int, float))
+        or isinstance(historical_seconds, bool)
+        or not math.isfinite(float(historical_seconds))
+        or historical_seconds < 0
+        or not isinstance(attempts, list)
+        or report.get("total_attempts") != offset
+        or len(attempts) != offset
+        or [attempt.get("attempt_number") for attempt in attempts if isinstance(attempt, dict)]
+        != list(range(1, offset + 1))
+    ):
+        raise ConfigError(f"continuation history is not contiguous below cap: {row['cell_id']}")
+    try:
+        from synthesis.run_synthesis import _load_initial_failure_ledger
+
+        sealed_ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        if sealed_ledger.get("source_report_sha256") != hash_file(history_path):
+            raise ValueError("ledger is not bound to the history report")
+        _load_initial_failure_ledger(ledger_path)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise ConfigError(f"continuation failure ledger is invalid: {row['cell_id']}") from exc
+    configuration = report.get("run_configuration")
+    author = configuration.get("author_model") if isinstance(configuration, dict) else None
+    evaluation = configuration.get("evaluation") if isinstance(configuration, dict) else None
+    controls = configuration.get("synthesis_controls") if isinstance(configuration, dict) else None
+    thresholds = configuration.get("thresholds") if isinstance(configuration, dict) else None
+    matches = (
+        isinstance(configuration, dict)
+        and configuration.get("task_description") == row["task"]
+        and configuration.get("max_iterations") == 40
+        and isinstance(author, dict)
+        and author.get("backend") == row["generation_backend"]
+        and author.get("model") == row["generation_model"]
+        and author.get("max_new_tokens") == row["synthesis_max_tokens"]
+        and author.get("reasoning_budget_tokens") == row["synthesis_reasoning_budget"]
+        and isinstance(evaluation, dict)
+        and evaluation.get("dataset") == row["dataset"]
+        and evaluation.get("eval_model") == row["eval_model"]
+        and evaluation.get("eval_sample_size") == row["eval_sample_size"]
+        and evaluation.get("eval_max_steps") == row["eval_max_steps"]
+        and evaluation.get("eval_step_token_budget") == row["token_budget"]
+        and evaluation.get("eval_max_seconds_per_example") == row["eval_max_seconds"]
+        and isinstance(controls, dict)
+        and controls.get("adaptive_helper_mask") == row["adaptive_helper_mask"]
+        and controls.get("helper_selection_policy") == row["helper_selection_policy"]
+        and controls.get("refinement_beam_size") == row["beam_size"]
+        and isinstance(thresholds, dict)
+        and thresholds.get("min_accuracy") == row["min_accuracy"]
+        and thresholds.get("min_syntax_rate") == row["min_syntax_rate"]
+    )
+    if not matches:
+        raise ConfigError(f"continuation configuration differs for {row['cell_id']}")
+    return dict(evidence)
+
+
+def bind_continuation_evidence(
+    repo: Path, rows: list[dict[str, Any]], evidence_by_cell: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    if evidence_by_cell is None:
+        return rows
+    if not isinstance(evidence_by_cell, dict):
+        raise ConfigError("continuation evidence mapping must be a JSON object")
+    known = {str(row["cell_id"]) for row in rows}
+    unknown = set(evidence_by_cell) - known
+    if unknown:
+        raise ConfigError(f"continuation evidence names unknown cells: {sorted(unknown)}")
+    bound = []
+    for row in rows:
+        evidence = evidence_by_cell.get(row["cell_id"])
+        if evidence is not None:
+            if row.get("execution_mode") != "fresh_synthesis":
+                raise ConfigError(f"continuation requires fresh synthesis: {row['cell_id']}")
+            evidence = validate_continuation_evidence(repo, row, evidence)
+        bound.append(dict(row, continuation_evidence=evidence))
+    return bound
+
+
 def manifest_payload(
     repo: Path,
     rows: list[dict[str, Any]],
     provider_pilots: dict[str, Any] | None = None,
     *,
     scope: str = TABLE5_SCOPE,
+    continuation_evidence_by_cell: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     expected_rows = build_selected_scope(repo, scope)
     if rows != expected_rows:
         raise ConfigError("manifest jobs do not match the selected launch scope")
+    rows = bind_continuation_evidence(repo, rows, continuation_evidence_by_cell)
     LOGGER.info("[tableq] manifest-build scope=%s rows=%d", scope, len(rows))
     source_paths = execution_source_paths(repo)
     dirty = subprocess.run(
@@ -1756,7 +1906,7 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
         "effective_output_tokens", "effective_thinking_tokens",
         "eval_sample_size",
         "heldout_sample_size", "eval_max_steps", "eval_max_seconds", "gpu_mem_util",
-        "memory_reservation_mib", "gpu_scope", "gpu_count", "heldout_split_name",
+        "memory_reservation_mib", "synthesis_workers_per_gpu", "synthesis_worker_overhead_mib", "gpu_scope", "gpu_count", "heldout_split_name",
         "heldout_split_file", "sample_count", "output_name", "heldout_output_json",
         "log_file", "cold_start", "bar_source_sha256", "execution_mode",
     }
@@ -1789,6 +1939,10 @@ def validate_manifest(repo: Path, payload: dict[str, Any]) -> list[dict[str, Any
                     )
         elif actual.get("imported_evidence") is not None:
             raise ConfigError(f"fresh row has imported evidence: {actual['cell_id']}")
+        if actual.get("continuation_evidence") is not None:
+            if actual.get("execution_mode") != "fresh_synthesis":
+                raise ConfigError(f"continuation requires fresh synthesis: {actual['cell_id']}")
+            validate_continuation_evidence(repo, actual, actual["continuation_evidence"])
         if actual.get("git_commit") != payload.get("git_commit"):
             raise ConfigError(f"row commit is not bound to manifest commit: {actual['cell_id']}")
         if actual.get("launch_commit") != payload.get("git_commit"):
@@ -2118,6 +2272,11 @@ def synthesis_environment(row: dict[str, Any], gpus: tuple[int, ...], inherited:
     env["CUDA_VISIBLE_DEVICES"] = ",".join(str(gpu) for gpu in gpus)
     env["CSD_VLLM_GPU_MEMORY_UTILIZATION"] = str(row["gpu_mem_util"])
     env["CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX"] = str(row["gpu_mem_util"])
+    env["CSD_EVAL_GPU_SLOTS"] = ",".join(
+        str(gpu)
+        for gpu in gpus
+        for _ in range(int(row["synthesis_workers_per_gpu"]))
+    )
     env["CSD_OUTPUT_DIR"] = str(
         repo / "outputs" / "generated" / str(row["output_name"])
     )
@@ -2438,6 +2597,13 @@ def controller_parser() -> argparse.ArgumentParser:
     parser.add_argument("--python", type=Path, default=CANONICAL_PYTHON)
     parser.add_argument("--nvidia-smi", default="nvidia-smi")
     parser.add_argument("--export", type=Path, default=None)
+    parser.add_argument(
+        "--only-cells",
+        action="append",
+        default=None,
+        metavar="CELL_ID",
+        help="run only these validated manifest cells; may be repeated",
+    )
     parser.add_argument("--dry-run", action="store_true")
     return parser
 
@@ -2451,6 +2617,20 @@ def validate_controller_scope(requested_scope: str | None, manifest_scope: Any) 
             manifest_scope,
         )
         raise ConfigError("controller scope does not match the manifest scope")
+
+
+def select_manifest_rows(rows: list[dict[str, Any]], only_cells: list[str] | None) -> list[dict[str, Any]]:
+    """Select explicit cells only after validating the complete manifest."""
+    if not only_cells:
+        return rows
+    if len(set(only_cells)) != len(only_cells):
+        raise ConfigError("--only-cells must not repeat a cell id")
+    known = {str(row["cell_id"]) for row in rows}
+    unknown = set(only_cells) - known
+    if unknown:
+        raise ConfigError(f"--only-cells contains unknown cells: {sorted(unknown)}")
+    requested = set(only_cells)
+    return [row for row in rows if row["cell_id"] in requested]
 
 
 def validate_profile_gates(rows: list[dict[str, Any]], environment: dict[str, str]) -> None:
@@ -2599,7 +2779,9 @@ def _controller_main_locked(args: argparse.Namespace) -> int:
     manifest_bytes = args.manifest.read_bytes()
     payload = json.loads(manifest_bytes)
     validate_controller_scope(args.scope, payload.get("scope"))
-    rows = validate_manifest(repo, payload)
+    rows = select_manifest_rows(
+        validate_manifest(repo, payload), args.only_cells
+    )
     manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
     if args.dry_run:
         for row in rows:
@@ -4265,6 +4447,13 @@ def main() -> int:
     parser.add_argument("--repo", type=Path, default=Path.cwd())
     parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument(
+        "--continuation-evidence",
+        type=Path,
+        default=None,
+        metavar="JSON",
+        help="JSON object mapping fresh cell ids to sealed continuation evidence",
+    )
+    parser.add_argument(
         "--scope",
         choices=SELECTABLE_SCOPES,
         default=TABLE5_SCOPE,
@@ -4306,8 +4495,18 @@ def main() -> int:
             git_commit=commit,
             environment=dict(os.environ),
         )
+    continuation_evidence = None
+    if args.continuation_evidence is not None:
+        try:
+            continuation_evidence = json.loads(args.continuation_evidence.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise SystemExit("--continuation-evidence must name a JSON object") from exc
     payload = manifest_payload(
-        args.repo, rows, provider_pilots=provider_pilots, scope=args.scope
+        args.repo,
+        rows,
+        provider_pilots=provider_pilots,
+        scope=args.scope,
+        continuation_evidence_by_cell=continuation_evidence,
     )
     target = args.manifest or args.repo / "outputs/controlled_comparison/table5_8_manifest.json"
     target.parent.mkdir(parents=True, exist_ok=True)

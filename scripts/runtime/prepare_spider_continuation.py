@@ -197,14 +197,22 @@ def reconstruct_failure_ledger(
             continue
         actual_summary = _persistence_summary(str(record.get("error_summary", "")))
         if not actual_summary:
-            if record.get("failed_at") != "timeout":
+            failed_at = record.get("failed_at")
+            evaluation = record.get("evaluation")
+            if failed_at == "timeout":
+                reason = "timeout_without_saved_persistence_summary"
+            elif failed_at in {"verification", "compilation"} and evaluation is None:
+                # These finalized attempts never reached evaluation, so there is
+                # no failure-mode evidence to replay into the persistent ledger.
+                reason = f"{failed_at}_without_evaluation"
+            else:
                 raise ValueError(
                     f"attempt {number} has no saved persistence summary"
                 )
             skipped.append(
                 {
                     "attempt_number": number,
-                    "reason": "timeout_without_saved_persistence_summary",
+                    "reason": reason,
                     "error_summary_sha256": _sha256_text(
                         str(record.get("error_summary", ""))
                     ),

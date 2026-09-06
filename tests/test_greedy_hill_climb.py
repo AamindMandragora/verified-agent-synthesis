@@ -395,6 +395,78 @@ def test_warm_resume_restores_best_incumbent_before_scoring_seed(tmp_path):
     assert generator.refine_calls[-1]["previous_strategy"] == "S12"
 
 
+def test_history_only_continuation_refines_restored_incumbent_without_replay(
+    tmp_path,
+):
+    restored = []
+    for attempt_number, strategy, accuracy in ((1, "S1", 0.2), (2, "S2", 0.5)):
+        evaluation = _result(accuracy, 0.9, n=10)
+        evaluation.planned_num_examples = 10
+        restored.append(
+            SynthesisAttempt(
+                attempt_number=attempt_number,
+                strategy_code=strategy,
+                full_dafny_code="",
+                timestamp="restored",
+                eval_result=evaluation,
+            )
+        )
+    candidate_results = [_result(0.1, 0.9), _result(0.1, 0.9)]
+    generator = FakeGenerator(["INITIAL-MUST-NOT-RUN", "S3", "S4"])
+    pipeline = make_pipeline(
+        tmp_path,
+        ScriptedEvaluator(candidate_results),
+        generator,
+        max_iterations=2,
+    )
+
+    with pytest.raises(SynthesisExhaustionError) as error:
+        pipeline.synthesize(
+            task_description="dummy",
+            output_name="history-only",
+            initial_attempt_offset=2,
+            initial_attempts=restored,
+            initial_failure_ledger={"next_id": 0, "modes": []},
+        )
+
+    assert generator.generate_initial_calls == []
+    assert [call["previous_strategy"] for call in generator.refine_calls] == [
+        "S2",
+        "S2",
+    ]
+    assert "Required thresholds:" in generator.refine_calls[0]["evaluation_feedback"]
+    assert "Accuracy: 50.0%" in generator.refine_calls[0]["evaluation_feedback"]
+    assert [attempt.attempt_number for attempt in error.value.attempts] == [1, 2, 3, 4]
+    assert [attempt.strategy_code for attempt in error.value.attempts[-2:]] == ["S3", "S4"]
+
+
+def test_history_only_continuation_requires_restored_failure_ledger(tmp_path):
+    evaluation = _result(0.2, 0.9, n=10)
+    evaluation.planned_num_examples = 10
+    pipeline = make_pipeline(
+        tmp_path,
+        ScriptedEvaluator([]),
+        FakeGenerator(["INITIAL-MUST-NOT-RUN", "S2"]),
+        max_iterations=1,
+    )
+
+    with pytest.raises(ValueError, match="failure ledger"):
+        pipeline.synthesize(
+            task_description="dummy",
+            output_name="history-without-ledger",
+            initial_attempt_offset=1,
+            initial_attempts=[
+                SynthesisAttempt(
+                    attempt_number=1,
+                    strategy_code="S1",
+                    full_dafny_code="",
+                    timestamp="restored",
+                    eval_result=evaluation,
+                )
+            ],
+        )
+
+
 def test_warm_resume_keeps_complete_timed_out_score_as_incumbent(tmp_path):
     restored = [
         SynthesisAttempt(

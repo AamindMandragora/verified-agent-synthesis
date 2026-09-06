@@ -205,6 +205,61 @@ def test_ledger_replay_verifies_saved_summary_and_records_skipped_timeout():
     ]
 
 
+@pytest.mark.parametrize("failed_at", ["verification", "compilation"])
+def test_ledger_replay_excludes_finalized_pre_evaluation_failure(
+    failed_at,
+):
+    seed = {
+        "version": 1,
+        "ledger": {"next_id": 0, "modes": []},
+        "included_attempts": [],
+        "excluded_attempts": [],
+    }
+    pre_evaluation_failure = {
+        "attempt_number": 1,
+        "strategy_code": "BROKEN",
+        "failed_at": failed_at,
+        "error_summary": f"Dafny {failed_at} failed",
+        "verification": {"success": False},
+        "evaluation": None,
+    }
+
+    rebuilt, replayed, skipped = reconstruct_failure_ledger(
+        seed,
+        [pre_evaluation_failure],
+        seed_through_attempt=0,
+        render_cluster_block=lambda *args, **kwargs: pytest.fail("no evaluation to replay"),
+    )
+
+    assert replayed == []
+    assert rebuilt["included_attempts"] == []
+    assert rebuilt["excluded_attempts"] == [1]
+    assert skipped == [
+        {
+            "attempt_number": 1,
+            "reason": f"{failed_at}_without_evaluation",
+            "error_summary_sha256": skipped[0]["error_summary_sha256"],
+        }
+    ]
+
+
+def test_ledger_replay_rejects_missing_summary_when_evaluation_exists():
+    seed = {
+        "version": 1,
+        "ledger": {"next_id": 0, "modes": []},
+        "included_attempts": [],
+        "excluded_attempts": [],
+    }
+
+    with pytest.raises(ValueError, match="no saved persistence summary"):
+        reconstruct_failure_ledger(
+            seed,
+            [_attempt(1, accuracy=0.4, syntax_rate=0.95)],
+            seed_through_attempt=0,
+            render_cluster_block=lambda *args, **kwargs: "",
+        )
+
+
 def test_ledger_replay_fails_closed_on_mismatched_saved_summary():
     attempt4 = _attempt(
         4,

@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from scripts.runtime import run_table5_8_queue as queue
+from synthesis.failure_taxonomy import make_persistent_ledger
 
 
 def _test_python_runtime():
@@ -318,6 +319,94 @@ def test_commands_bind_canonical_splits_and_no_warm_start():
         if row["table"] in (6, 7, 8):
             assert command[command.index("--refinement-beam-size") + 1] == str(row["beam_size"])
             assert command[command.index("--helper-selection-policy") + 1] == "bandit"
+
+
+def _continuation_evidence(tmp_path, row, *, offset=2):
+    report = {
+        "total_attempts": offset,
+        "attempts": [
+            {"attempt_number": number, "strategy_code": f"S{number}"}
+            for number in range(1, offset + 1)
+        ],
+        "run_configuration": {
+            "task_description": row["task"],
+            "max_iterations": 40,
+            "author_model": {
+                "backend": row["generation_backend"],
+                "model": row["generation_model"],
+                "max_new_tokens": row["synthesis_max_tokens"],
+                "reasoning_budget_tokens": row["synthesis_reasoning_budget"],
+            },
+            "evaluation": {
+                "dataset": row["dataset"],
+                "eval_model": row["eval_model"],
+                "eval_sample_size": row["eval_sample_size"],
+                "eval_max_steps": row["eval_max_steps"],
+                "eval_step_token_budget": row["token_budget"],
+                "eval_max_seconds_per_example": row["eval_max_seconds"],
+            },
+            "synthesis_controls": {
+                "adaptive_helper_mask": row["adaptive_helper_mask"],
+                "helper_selection_policy": row["helper_selection_policy"],
+                "refinement_beam_size": row["beam_size"],
+            },
+            "thresholds": {
+                "min_accuracy": row["min_accuracy"],
+                "min_syntax_rate": row["min_syntax_rate"],
+            },
+        },
+    }
+    history = tmp_path / "history.json"
+    ledger = tmp_path / "failure-ledger.json"
+    state = tmp_path / "source-state.json"
+    history.write_text(json.dumps(report), encoding="utf-8")
+    ledger.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "source_report_sha256": queue.hash_file(history),
+                "included_attempts": [],
+                "excluded_attempts": list(range(1, offset + 1)),
+                "ledger": make_persistent_ledger(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    state.write_text(json.dumps({"status": "interrupted"}), encoding="utf-8")
+    return {
+        "history_path": str(history),
+        "history_sha256": queue.hash_file(history),
+        "failure_ledger_path": str(ledger),
+        "failure_ledger_sha256": queue.hash_file(ledger),
+        "source_state_path": str(state),
+        "source_state_sha256": queue.hash_file(state),
+        "historical_synthesis_wall_time_seconds": 123.0,
+        "initial_attempt_offset": offset,
+    }
+
+
+def test_continuation_evidence_binds_history_ledger_and_remaining_budget(tmp_path):
+    row = next(
+        row
+        for row in queue.build_scope(tmp_path)
+        if row["execution_mode"] == "fresh_synthesis"
+    )
+    evidence = _continuation_evidence(tmp_path, row, offset=28)
+
+    [bound] = queue.bind_continuation_evidence(
+        tmp_path, [row], {row["cell_id"]: evidence}
+    )
+    command = queue.synthesis_command(bound, Path("python"))
+
+    assert command[command.index("--max-iterations") + 1] == "12"
+    assert command[command.index("--initial-attempt-history-file") + 1] == evidence["history_path"]
+    assert command[command.index("--initial-failure-ledger-file") + 1] == evidence["failure_ledger_path"]
+    assert command[command.index("--initial-attempt-offset") + 1] == "28"
+    assert "--initial-strategy-file" not in command
+
+    Path(evidence["history_path"]).write_text("{}", encoding="utf-8")
+    with pytest.raises(queue.ConfigError, match="continuation evidence changed"):
+        queue.validate_continuation_evidence(tmp_path, bound, evidence)
 
 
 def test_imported_opus_evidence_is_copied_into_the_sealed_campaign(tmp_path):
@@ -2949,6 +3038,46 @@ def test_dry_run_does_not_probe_provider_readiness(tmp_path, monkeypatch):
     monkeypatch.setattr(queue, "partition_profile_readiness", lambda *args, **kwargs: pytest.fail("provider readiness was called"))
     args = queue.controller_parser().parse_args(["--manifest", str(manifest), "--state-dir", str(tmp_path / "state"), "--log", str(tmp_path / "run.log"), "--dry-run"])
     assert queue.controller_main(args) == 0
+
+
+def test_controller_only_cells_filters_after_full_manifest_validation(
+    tmp_path, monkeypatch, capsys
+):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    rows = queue.build_tables6_to_8_ablation_scope(tmp_path)[:2]
+    validated = []
+    monkeypatch.setattr(
+        queue,
+        "validate_manifest",
+        lambda repo, payload: validated.append(payload) or rows,
+    )
+    args = queue.controller_parser().parse_args(
+        [
+            "--manifest", str(manifest),
+            "--state-dir", str(tmp_path / "state"),
+            "--log", str(tmp_path / "run.log"),
+            "--dry-run",
+            "--only-cells", rows[1]["cell_id"],
+        ]
+    )
+
+    assert queue.controller_main(args) == 0
+    assert validated == [{}]
+    assert capsys.readouterr().out.split()[0] == rows[1]["cell_id"]
+
+    duplicate = queue.controller_parser().parse_args(
+        [
+            "--manifest", str(manifest),
+            "--state-dir", str(tmp_path / "state-two"),
+            "--log", str(tmp_path / "run-two.log"),
+            "--dry-run",
+            "--only-cells", rows[0]["cell_id"],
+            "--only-cells", rows[0]["cell_id"],
+        ]
+    )
+    with pytest.raises(queue.ConfigError, match="must not repeat"):
+        queue.controller_main(duplicate)
 
 
 def _real_pilot_report(profile, commit, *, output_name="pilot", compiled_dir="/tmp/compiled"):
