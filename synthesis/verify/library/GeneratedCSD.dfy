@@ -39,6 +39,8 @@ module GeneratedCSD {
     ensures |generated| <= |generatedPrefix| + maxSteps
     ensures !insideConstrainedOut ==> currentConstrainedOut == []
     ensures insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
+    ensures insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+    ensures insideConstrainedOut ==> generated[|generated| - |currentConstrainedOut|..] == currentConstrainedOut
     ensures cost <= maxSteps
     ensures maxSteps == 0 || cost > 0 || generated != generatedPrefix ||
             insideConstrainedOut != insideConstrained ||
@@ -85,6 +87,8 @@ module GeneratedCSD {
     ensures |generated| <= |generatedPrefix| + maxSteps
     ensures !insideConstrainedOut ==> currentConstrainedOut == []
     ensures insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
+    ensures insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+    ensures insideConstrainedOut ==> generated[|generated| - |currentConstrainedOut|..] == currentConstrainedOut
     ensures cost <= maxSteps
   {
     var helpers := new CSDHelpers();

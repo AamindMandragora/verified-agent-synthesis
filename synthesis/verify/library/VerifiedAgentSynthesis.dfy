@@ -534,6 +534,7 @@ module VerifiedDecoderAgent {
       ensures |currentOut| <= |currentConstrained| + stepsUsed
       ensures |generatedOut| <= |generated| + stepsUsed
       ensures |currentOut| <= |generatedOut|
+      ensures generatedOut[|generatedOut| - |currentOut|..] == currentOut
       ensures stepsUsed <= maxSymbolTokens
       ensures stepsUsed > 0
       ensures cost == old(cost) + stepsUsed
@@ -547,6 +548,7 @@ module VerifiedDecoderAgent {
       assert |generatedOut| == |stablePrefix| + |currentOut|;
       assert |generatedOut| <= |generated| + stepsUsed;
       assert |currentOut| <= |generatedOut|;
+      assert generatedOut[|generatedOut| - |currentOut|..] == currentOut;
     }
 
     method OpenConstrainedSpan(lm: LM, generated: Prefix) returns (generatedOut: Prefix, insideOut: bool, currentOut: Prefix)
@@ -1305,6 +1307,7 @@ module VerifiedDecoderAgent {
       ensures |currentOut| <= |currentConstrained|
       ensures generatedOut == generated[..|generated| - |currentConstrained|] + currentOut
       ensures |currentOut| <= |generatedOut|
+      ensures generatedOut[|generatedOut| - |currentOut|..] == currentOut
       ensures |generatedOut| <= |generated|
     {
       var stablePrefix := generated[..|generated| - |currentConstrained|];
@@ -1314,6 +1317,7 @@ module VerifiedDecoderAgent {
       assert |generatedOut| == |stablePrefix| + |currentOut|;
       assert |generatedOut| <= |generated|;
       assert |currentOut| <= |generatedOut|;
+      assert generatedOut[|generatedOut| - |currentOut|..] == currentOut;
     }
 
     static method RollbackToCompletePrefix(parser: Parser, generated: Prefix) returns (repaired: Prefix)
@@ -1342,6 +1346,7 @@ module VerifiedDecoderAgent {
       ensures |currentOut| <= |currentConstrained|
       ensures generatedOut == generated[..|generated| - |currentConstrained|] + currentOut
       ensures |currentOut| <= |generatedOut|
+      ensures generatedOut[|generatedOut| - |currentOut|..] == currentOut
       ensures |generatedOut| <= |generated|
     {
       var stablePrefix := generated[..|generated| - |currentConstrained|];
@@ -1351,6 +1356,7 @@ module VerifiedDecoderAgent {
       assert |generatedOut| == |stablePrefix| + |currentOut|;
       assert |generatedOut| <= |generated|;
       assert |currentOut| <= |generatedOut|;
+      assert generatedOut[|generatedOut| - |currentOut|..] == currentOut;
     }
 
     // Rollback that actually lets the model RE-GENERATE. Plain RollbackToValidPrefix
@@ -2532,7 +2538,14 @@ module VerifiedDecoderAgent {
           return;
         }
         generatedOut := generated + [next];
-        if next == "<<" {
+        // Match the opener the same way the closer is matched: on the rendered
+        // text, not on an exact token. Qwen tokenizes the opener as ' <<' (with
+        // a leading space) in prose, so `next == "<<"` almost never fires.
+        var openHit := Contains(next, "<<");
+        if !openHit && |generatedOut| >= 2 {
+          openHit := Contains(RenderPrefix(generatedOut[|generatedOut| - 2..]), "<<");
+        }
+        if openHit {
           insideOut := true;
           currentOut := [];
         }
@@ -2629,7 +2642,12 @@ module VerifiedDecoderAgent {
             break;
           }
           generated := generated + [next];
-          if next == "<<" {
+          // Rendered-text opener match; see the note at the sibling site above.
+          var openHit := Contains(next, "<<");
+          if !openHit && |generated| >= 2 {
+            openHit := Contains(RenderPrefix(generated[|generated| - 2..]), "<<");
+          }
+          if openHit {
             insideConstrainedOut := true;
             currentConstrainedOut := [];
           }
@@ -2731,7 +2749,12 @@ module VerifiedDecoderAgent {
               break;
             }
             generated := generated + [next];
-            if next == "<<" {
+            // Rendered-text opener match; see the note at the sibling site above.
+            var openHit := Contains(next, "<<");
+            if !openHit && |generated| >= 2 {
+              openHit := Contains(RenderPrefix(generated[|generated| - 2..]), "<<");
+            }
+            if openHit {
               insideConstrainedOut := true;
               currentConstrainedOut := [];
             }
@@ -3039,6 +3062,7 @@ module VerifiedDecoderAgent {
       ensures !insideOut ==> currentOut == []
       ensures insideOut ==> parser.IsValidPrefix(currentOut)
       ensures insideOut ==> |currentOut| <= |generatedOut|
+      ensures insideOut ==> generatedOut[|generatedOut| - |currentOut|..] == currentOut
       ensures |generatedOut| <= |generated| + budget
       ensures cost <= old(cost) + budget
       ensures cost >= old(cost)
@@ -3085,6 +3109,8 @@ module VerifiedDecoderAgent {
         generatedOut := stablePrefix + running;
         insideOut := true;
         currentOut := running;
+        assert |generatedOut| - |currentOut| == |stablePrefix|;
+        assert generatedOut[|generatedOut| - |currentOut|..] == currentOut;
       }
     }
   }
