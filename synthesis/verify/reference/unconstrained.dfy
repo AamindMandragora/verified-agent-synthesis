@@ -14,31 +14,33 @@ module ReferenceUnconstrainedCSD {
     maxSteps: nat,
     stepTokenBudget: nat,
     validTokenGroups: seq<seq<Token>>,
-    eosToken: Token
+    eosToken: Token,
+    helpers: CSDHelpers
   ) returns (
     generated: Prefix,
     insideConstrainedOut: bool,
     currentConstrainedOut: Prefix,
     cost: int
   )
-    modifies lm.Logits
+    modifies lm.Logits, helpers
     requires lm.ValidTokensIdsLogits()
     requires parser.IsValidPrefix([])
     requires !insideConstrained ==> currentConstrained == []
     requires insideConstrained ==> parser.IsValidPrefix(currentConstrained)
     requires insideConstrained ==> |currentConstrained| <= |generatedPrefix|
     requires eosToken in lm.Tokens
+    requires helpers.cost == 0
     ensures lm.ValidTokensIdsLogits()
     ensures |generated| <= |generatedPrefix| + maxSteps
     ensures !insideConstrainedOut ==> currentConstrainedOut == []
     ensures insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
     ensures cost <= maxSteps
+    ensures cost == helpers.cost
     ensures maxSteps == 0 || cost > 0 || generated != generatedPrefix ||
             insideConstrainedOut != insideConstrained ||
             currentConstrainedOut != currentConstrained
 
   {
-    var helpers := new CSDHelpers();
     var g := generatedPrefix;
 
     if maxSteps == 0 {
