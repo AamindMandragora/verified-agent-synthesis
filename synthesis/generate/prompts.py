@@ -54,11 +54,13 @@ You must output ONLY the Dafny method body for:
     requires insideConstrained ==> parser.IsValidPrefix(currentConstrained)
     requires insideConstrained ==> |currentConstrained| <= |generatedPrefix|
     requires eosToken in lm.Tokens
+    requires helpers.cost == 0
     ensures lm.ValidTokensIdsLogits()
     ensures |generated| <= |generatedPrefix| + maxSteps
     ensures !insideConstrainedOut ==> currentConstrainedOut == []
     ensures insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
     ensures cost <= maxSteps
+    ensures cost == helpers.cost
     ensures maxSteps == 0 || cost > 0 || generated != generatedPrefix ||
             insideConstrainedOut != insideConstrained ||
             currentConstrainedOut != currentConstrained

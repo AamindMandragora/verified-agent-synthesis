@@ -44,9 +44,13 @@ module GeneratedCSD {
             insideConstrainedOut != insideConstrained ||
             currentConstrainedOut != currentConstrained
   {
+    var helpers := new CSDHelpers();
     generated, insideConstrainedOut, currentConstrainedOut, cost :=
       AuthorBody(lm, parser, prompt, generatedPrefix, insideConstrained,
-                 currentConstrained, maxSteps, stepTokenBudget, validTokenGroups, eosToken);
+                 currentConstrained, maxSteps, stepTokenBudget, validTokenGroups, eosToken,
+                 helpers);
+    // AuthorBody establishes cost == helpers.cost, so the bound below is a bound on
+    // charged library calls and not merely on a number the body chose to report.
     if maxSteps > 0 && cost <= 0 { cost := 1; }  // guarantee progress postcondition
   }
 
@@ -65,16 +69,18 @@ module GeneratedCSD {
     maxSteps: nat,
     stepTokenBudget: nat,
     validTokenGroups: seq<seq<Token>>,
-    eosToken: Token
+    eosToken: Token,
+    helpers: CSDHelpers
   ) returns (
     generated: Prefix,
     insideConstrainedOut: bool,
     currentConstrainedOut: Prefix,
     cost: int
   )
-    modifies lm.Logits
+    modifies lm.Logits, helpers
     requires lm.ValidTokensIdsLogits()
     requires parser.IsValidPrefix([])
+    requires helpers.cost == 0
     requires !insideConstrained ==> currentConstrained == []
     requires insideConstrained ==> parser.IsValidPrefix(currentConstrained)
     requires insideConstrained ==> |currentConstrained| <= |generatedPrefix|
@@ -86,8 +92,11 @@ module GeneratedCSD {
     ensures !insideConstrainedOut ==> currentConstrainedOut == []
     ensures insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
     ensures cost <= maxSteps
+    // Ties the reported step count to the library's charged-call counter. Without
+    // this, `cost <= maxSteps` bounds only the number the body chooses to return,
+    // and a body may make unboundedly many model calls while reporting zero.
+    ensures cost == helpers.cost
   {
-    var helpers := new CSDHelpers();
     generated := generatedPrefix;
     insideConstrainedOut := insideConstrained;
     currentConstrainedOut := currentConstrained;
