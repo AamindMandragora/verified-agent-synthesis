@@ -35,7 +35,6 @@ def _sample(output: str) -> dict:
         "contains_delimiters": True,
         "visible_delimiters": True,
         "used_constrained_chunk": False,
-        "uses_hidden_chunks": False,
         "is_syntax_valid": True,
         "syntax_rate": 1.0,
         "runtime_budget_exceeded": False,

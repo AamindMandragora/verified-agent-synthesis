@@ -32,7 +32,6 @@ def _base_sample(prompt_text: str, qwen_output: str, actual: str, expected: str)
         "contains_delimiters": False,
         "visible_delimiters": False,
         "used_constrained_chunk": False,
-        "uses_hidden_chunks": False,
         "is_syntax_valid": False,
         "syntax_rate": 0.0,
         "runtime_budget_exceeded": False,

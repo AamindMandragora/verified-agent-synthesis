@@ -113,7 +113,6 @@ def _make_sample(is_syntax_valid: bool, is_correct: bool):
     return {
         "is_syntax_valid": is_syntax_valid,
         "is_correct": is_correct,
-        "uses_hidden_chunks": False,
         "contains_delimiters": True,
         "full_output": "<<SELECT id FROM t>>",
         "actual": "SELECT id FROM t" if is_syntax_valid else None,

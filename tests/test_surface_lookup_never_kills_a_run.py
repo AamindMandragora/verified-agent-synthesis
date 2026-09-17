@@ -2,9 +2,9 @@
 
 The bug this pins
 -----------------
-`_start_inside_constrained()` decides one thing: a sentence of wording in the
-author's prompt. It says which surface generation runs on, so the author writes
-`EnterObservedConstrainedSpan` instead of waiting for a `<<` that never comes.
+`_force_open_span()` decides one thing: a sentence of wording in the author's
+prompt. It says whether the runtime already opened the span, so the author
+closes it instead of waiting for a `<<` that has already gone by.
 
 That is a *hint*. Getting it wrong costs one weaker strategy. It must never
 cost the run.
@@ -26,8 +26,8 @@ passed, and on its own the attempt-cap fix passed, but the cap's tests drive the
 loop with a stand-in dataset name, and the combination crashed. A decorative
 prompt hint had been given the power to abort synthesis.
 
-The fallback direction is False on purpose: that is the visible-delimiter
-surface, which is how every benchmark behaved before this hook existed.
+The fallback direction is False on purpose: "open the span yourself", which is
+how every benchmark behaved before this hook existed.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ class _StandInLoop:
 
 
 def _surface_for(dataset_name: str) -> bool:
-    return SynthesisPipeline._start_inside_constrained(_StandInLoop(dataset_name))
+    return SynthesisPipeline._force_open_span(_StandInLoop(dataset_name))
 
 
 @pytest.mark.parametrize(
@@ -80,16 +80,16 @@ def test_an_unknown_benchmark_falls_back_instead_of_raising(dataset_name):
         )
 
     assert surface is False, (
-        f"An unknown benchmark reported start_inside_constrained={surface!r}. "
-        "It must fall back to False, the visible-delimiter surface every "
-        "benchmark used before this hook existed."
+        f"An unknown benchmark reported force_open_span={surface!r}. It must "
+        "fall back to False -- open the span yourself -- which is how every "
+        "benchmark behaved before this hook existed."
     )
 
 
 def test_a_real_benchmark_still_reports_its_true_surface():
     """The fallback must not swallow the answer for benchmarks that do declare one."""
     assert _surface_for("spider") is True, (
-        "spider runs on the observed surface and must still say so. If a "
+        "spider runs with a runtime-opened span and must still say so. If a "
         "try/except now hides a real failure inside spider's own hook, this is "
         "where it shows up -- the fallback would quietly report the wrong "
         "surface for every benchmark, which is the bug the hook was added to fix."

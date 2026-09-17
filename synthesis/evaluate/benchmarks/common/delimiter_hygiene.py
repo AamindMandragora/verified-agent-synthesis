@@ -35,14 +35,14 @@ class SpanWalk:
     free_text_tail: str
 
 
-def walk_spans(text: str, start_inside: bool = False) -> SpanWalk:
+def walk_spans(text: str) -> SpanWalk:
     """Split rendered output into spans. Outside a span `<<` opens one; inside, the first `>>` closes it.
 
-    `start_inside=True` is the hidden-span surface (SMILES, Spider token-0): the text begins inside a span
-    that has no visible opener.
+    Every task's output carries its spans in the text: when the runtime opens the span itself, it does so
+    by putting a literal `<<` in the output, so there is one rule here and no hidden-span variant.
     """
     spans: list[Span] = []
-    inside = start_inside
+    inside = False
     span_start = 0
     free_tail_start = 0
     i = 0
@@ -141,3 +141,29 @@ def scrub_free_text(free_text_tail: str, text: str) -> str:
         kept.append(ch)
         prev = ch
     return "".join(kept)
+
+
+def closer_allowed(content_text: str, token_text: str) -> bool:
+    """Inside a span: may `token_text` follow `content_text`?
+
+    `>>` is how the output text ends a span, and it is always written by the span helper
+    (CloseConstrainedSpan), never by the grammar: no grammar here accepts `>>` in span content. The
+    grammar mask over-approximates, though (whitespace-led tokens such as ` >>` slip through), so this
+    bans every token that would put `>>` into the content, whole or completed across the boundary.
+    """
+    return ">>" not in content_text + token_text
+
+
+def apply_closer_rule(accept_mask, tokens_with_gt, content_text: str):
+    """Copy of `accept_mask` with every token that breaks `closer_allowed` switched off.
+    `tokens_with_gt` is the precomputed (index, text) list of vocabulary tokens containing `>`."""
+    banned = [
+        index for index, text in tokens_with_gt
+        if index < len(accept_mask) and bool(accept_mask[index])
+        and not closer_allowed(content_text, text)
+    ]
+    if not banned:
+        return accept_mask
+    out = accept_mask.clone()
+    out[banned] = False
+    return out

@@ -24,6 +24,9 @@ def test_evaluator_logs_the_completion_and_keeps_it_in_results(monkeypatch, caps
         def get_generation_runner(self):
             return lambda **_: (completion, 7, 0.25, [], [])
 
+        def force_open_span(self):
+            return True
+
         def build_dynamic_parser(self, *_):
             return None
 
@@ -54,7 +57,6 @@ def test_evaluator_logs_the_completion_and_keeps_it_in_results(monkeypatch, caps
     monkeypatch.setattr(evaluator, "_check_syntax_validity", lambda *_args, **_kwargs: (True, [(completion, True)]))
     monkeypatch.setattr(evaluator, "_example_syntax_pass", lambda *_: True)
     monkeypatch.setattr(evaluator, "_accuracy_applicable_for_example", lambda *_: True)
-    monkeypatch.setattr(evaluator, "_uses_hidden_chunks", lambda: False)
     monkeypatch.setattr(evaluator, "_compute_smiles_aux_metrics", lambda _: {})
 
     result = evaluator.evaluate_sample(Path("unused/GeneratedCSD.py"))

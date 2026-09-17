@@ -11,8 +11,7 @@ from synthesis.evaluate.benchmarks.common import benchmark_defaults as defaults
 from synthesis.evaluate.benchmarks.common.delimited_output import extract_last_delimited_span
 from synthesis.evaluate.benchmarks.common.ungradable import UngradableExample
 
-uses_hidden_chunks = defaults.uses_hidden_chunks
-starts_inside_constrained = defaults.starts_inside_constrained
+force_open_span = defaults.force_open_span
 example_syntax_pass = defaults.example_syntax_pass_from_segments
 accuracy_applicable = defaults.accuracy_applicable_always
 accuracy_upper_bound = defaults.accuracy_upper_bound_with_remaining
@@ -55,12 +54,6 @@ def get_grammar_file(evaluator: Any, grammars_dir: Path) -> Path:
     adaptive CRANE decode masks.
     """
     return grammars_dir / "gsm.lark"
-
-
-def emits_visible_delimiters() -> bool:
-    # GSM answers really are written as visible <<...>> spans, so the
-    # delimiter diagnostics tell the author something real here.
-    return True
 
 
 def load_dataset_sample(evaluator: Any) -> list[dict[str, Any]]:

@@ -273,7 +273,7 @@ def test_brace_in_span_fails_syntax_check():
         "<<({sides} - {target}) / {sides} * 100>>",
     ]:
         all_valid, segments = ev._check_syntax_validity(brace_span, example={})
-        pass_flag = ev._example_syntax_pass(all_valid, segments, False, None)
+        pass_flag = ev._example_syntax_pass(all_valid, segments, None)
         assert not pass_flag, (
             f"Output {brace_span!r} must fail syntax (brace in span). "
             f"Got: all_valid={all_valid}, segments={segments}"
@@ -286,7 +286,7 @@ def test_double_star_in_span_fails_syntax_check():
 
     ev = Evaluator(dataset_name="gsm_symbolic", backend="huggingface")
     all_valid, segments = ev._check_syntax_validity("<<n0 * (1 + r) ** d>>", example={})
-    pass_flag = ev._example_syntax_pass(all_valid, segments, False, None)
+    pass_flag = ev._example_syntax_pass(all_valid, segments, None)
     assert not pass_flag, (
         "'**' operator must fail GSM syntax (not in grammar)."
     )

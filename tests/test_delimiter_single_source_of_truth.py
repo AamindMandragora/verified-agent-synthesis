@@ -2,18 +2,15 @@
 
 Two mechanisms used to answer this question:
 
-  A. ask the benchmark  -- registry.resolve_require_delimiters(), which calls
-     each benchmark's emits_visible_delimiters(). Spider and SMILES cannot
-     emit a << >> span at all, so for them the answer is always False no
-     matter what the CLI asks for; GSM can, so there the CLI flag decides.
+  A. the CLI, routed through registry.resolve_require_delimiters(), which
+     validates the dataset name and then honours the flag. Every benchmark's
+     output carries visible << >> spans, so none of them can veto it.
 
   B. a central table    -- REQUIRE_DELIMITERS_BY_DATASET in run_constants.py,
-     which hardcoded the same three answers and ignored the CLI flag.
+     which hardcoded three answers and ignored the CLI flag.
 
-A is the one we keep. Whether Spider can emit << >> is a fact about Spider's
-own output surface, so it belongs next to Spider's logic rather than in a
-shared constants file, and A keeps --require-delimiters meaningful for GSM
-instead of quietly making it dead.
+A is the one we keep: it keeps --require-delimiters meaningful instead of
+quietly making it dead.
 
 B is deleted. The reason these tests exist rather than just deleting it: the
 table is still live on the prompt-rendering refactor branches, where
@@ -52,8 +49,8 @@ def test_retired_delimiter_table_is_gone():
     assert offenders == [], (
         f"{RETIRED_TABLE} is back in: {offenders}. It is a second, competing "
         "answer to whether a dataset needs a visible << >> span, and it "
-        "overrides the benchmark's own emits_visible_delimiters(). Route the "
-        "call through registry.resolve_require_delimiters() instead. If this "
+        "overrides the CLI flag. Route the call through "
+        "registry.resolve_require_delimiters() instead. If this "
         "fired right after merging the prompt-rendering refactor, that branch's "
         "run_synthesis.py still reads the table -- fix it there, do not restore "
         "the table here."
@@ -88,6 +85,6 @@ def test_evaluator_docstring_points_at_the_live_mechanism():
     )
     assert "run_constants.py" not in source, (
         "synthesis/evaluate/evaluator.py still points at run_constants.py for "
-        "the delimiter decision; that decision now lives in each benchmark's "
-        "emits_visible_delimiters()."
+        "the delimiter decision; that decision now comes from the CLI via "
+        "registry.resolve_require_delimiters()."
     )

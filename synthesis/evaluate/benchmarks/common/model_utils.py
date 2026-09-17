@@ -863,10 +863,13 @@ class _TensorizedLMBase:
         )
         self._generate_count = 0
         self._token_id_to_str: dict[int, str] = {}
-        # Free-text delimiter rule (see delimiter_hygiene): what the output so far renders to, and
-        # whether this benchmark starts inside a hidden span (SMILES, Spider token-0).
+        # Free-text delimiter rule (see delimiter_hygiene): what the output so far renders to.
         self._last_prefix_text = ""
-        self._starts_inside_span = False
+        # Delimiters the RUNTIME put in the output rather than the model sampling them. The Spider
+        # token-evidence check subtracts these before comparing sampled ids against the scored text,
+        # otherwise a forced `<<`/`>>` looks like text nobody generated and the check fails closed.
+        self._forced_span_open_text = ""
+        self._forced_span_close_text = ""
         self._delimiter_sets = None
         self._runtime_deadline: float | None = None
         # CRANE-style answer early stop (flag-gated, default OFF): when
@@ -950,8 +953,10 @@ class _TensorizedLMBase:
         if self._runtime_deadline is not None and time.monotonic() >= self._runtime_deadline:
             raise TimeoutError("CSD example exceeded its runtime budget")
 
-    def SetStartsInsideSpan(self, starts_inside: bool):
-        self._starts_inside_span = bool(starts_inside)
+    def SetForcedSpanDelimiters(self, opener: str = "", closer: str = ""):
+        """Record delimiter text the runtime inserted into the output itself."""
+        self._forced_span_open_text = str(opener or "")
+        self._forced_span_close_text = str(closer or "")
 
     def _token_text_or_empty(self, token_id: int) -> str:
         # The logits row can be wider than the tokenizer (padding ids); those ids have no text.
@@ -964,7 +969,7 @@ class _TensorizedLMBase:
         """Logits for sampling one free-text token: outside a span, no token may create or close a
         delimiter on its own; only the exact "<<" token may open a span. Inside a span nothing is
         banned here, because there the parser decides."""
-        walk = walk_spans(getattr(self, "_last_prefix_text", ""), getattr(self, "_starts_inside_span", False))
+        walk = walk_spans(getattr(self, "_last_prefix_text", ""))
         if walk.ends_inside:
             return full_logits
         if self._delimiter_sets is None:
@@ -1637,7 +1642,7 @@ class _TensorizedLMBase:
         if getattr(self, "_structured_prompt", None) is None:
             return True
 
-        expected = str(scored_output)
+        expected = self._scored_text_without_forced_delimiters(str(scored_output))
         history = [int(token_id) for token_id in getattr(self, "_generation_token_ids", [])]
         stop_ids = self._generation_stop_ids()
 
@@ -1673,6 +1678,17 @@ class _TensorizedLMBase:
             len(terminal_ids),
         )
         return True
+
+    def _scored_text_without_forced_delimiters(self, scored_output: str) -> str:
+        """Drop the delimiters the runtime inserted, so what is left is what the model sampled."""
+        opener = getattr(self, "_forced_span_open_text", "") or ""
+        closer = getattr(self, "_forced_span_close_text", "") or ""
+        text = scored_output
+        if opener and text.startswith(opener):
+            text = text[len(opener):]
+        if closer and text.endswith(closer):
+            text = text[: len(text) - len(closer)]
+        return text
 
     def _generation_stop_ids(self) -> frozenset[int]:
         return _coerce_token_id_set(
@@ -1747,7 +1763,7 @@ class _TensorizedLMBase:
         stopped_on_open = False
         stopped_on_eos = False
         stop_ids = self._generation_stop_ids() if spider_contract_active else frozenset()
-        free_text_tail = walk_spans(getattr(self, "_last_prefix_text", ""), getattr(self, "_starts_inside_span", False)).free_text_tail
+        free_text_tail = walk_spans(getattr(self, "_last_prefix_text", "")).free_text_tail
 
         for raw_token_id in token_ids:
             if steps_used >= max_new_tokens:

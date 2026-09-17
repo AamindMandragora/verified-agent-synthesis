@@ -2,9 +2,6 @@
 # Cycle-1 COLD synthesis — 1.5B, token-0 aligned surface (IterGen-style, NO visible <<>>).
 # Spec: spider-win-goal-spec.md. Cycle-0 fork RESOLVED to "drop the <<>> scaffold entirely"
 # (token-0 default ON), so:
-#   - SPIDER_TOKEN0_CONSTRAINED is left UNSET (defaults to "1" = aligned token-0 surface).
-#   - --no-require-delimiters (token-0 output has no << >> spans to require; require=True
-#     would reject every result).
 #   - bare task string (no `<<YOUR QUERY>>` framing).
 # COLD: NO --initial-strategy-file (warm starts permanently banned, spec §2.1).
 # Author = Sonnet-4.6 via Bedrock ONLY (spec §2.5), thinking enabled / effort high.

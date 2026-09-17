@@ -21,6 +21,7 @@ from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
     SpiderEvidenceContractError,
 )
 _SPIDER_CONTRACT_LOG = logging.getLogger("csd.spider_output_contract")
+_SPAN_LOG = logging.getLogger("csd.span_contract")
 
 
 def _strategy_sequence_texts(strategy_token_sequence):
@@ -174,7 +175,7 @@ def _call_my_csd_strategy(
     lm,
     parser,
     generated_prefix,
-    start_inside_constrained,
+    inside_constrained,
     current_constrained,
     max_steps,
     step_token_budget,
@@ -187,24 +188,24 @@ def _call_my_csd_strategy(
     if "validTokenGroups" in param_names:
         return GeneratedCSD.default__.MyCSDStrategy(
             lm, parser, _dafny.SeqWithoutIsStrInference([]), generated_prefix,
-            start_inside_constrained, current_constrained,
+            inside_constrained, current_constrained,
             max_steps, step_token_budget, valid_token_groups_dafny, eos_token_dafny,
         )
     if "validTokens" in param_names or n_params >= 10:
         return GeneratedCSD.default__.MyCSDStrategy(
             lm, parser, _dafny.SeqWithoutIsStrInference([]), generated_prefix,
-            start_inside_constrained, current_constrained,
+            inside_constrained, current_constrained,
             max_steps, step_token_budget, valid_tokens_dafny, eos_token_dafny,
         )
     if n_params >= 9:
         return GeneratedCSD.default__.MyCSDStrategy(
             lm, parser, _dafny.SeqWithoutIsStrInference([]), generated_prefix,
-            start_inside_constrained, current_constrained,
+            inside_constrained, current_constrained,
             max_steps, step_token_budget, eos_token_dafny,
         )
     return GeneratedCSD.default__.MyCSDStrategy(
         lm, parser, _dafny.SeqWithoutIsStrInference([]), generated_prefix,
-        start_inside_constrained, current_constrained,
+        inside_constrained, current_constrained,
         max_steps, eos_token_dafny,
     )
 
@@ -223,7 +224,7 @@ def run_crane_csd(
     grammar_file: Path,
     debug_delimiters: bool = False,
     dynamic_parser=None,
-    start_inside_constrained: bool = False,
+    force_open_span: bool = False,
     step_token_budget: int = 1,
     valid_tokens: Optional[List[str]] = None,
     valid_token_groups: Optional[List[List[str]]] = None,
@@ -244,10 +245,13 @@ def run_crane_csd(
         grammar_file: Path to grammar file for post-hoc segment validation
         debug_delimiters: Whether to print debug output
         dynamic_parser: Optional per-question parser
-        start_inside_constrained: Begin with an internal constrained chunk
-            already active. This is useful for tasks like Spider where the
-            answer is parser-governed from the first token but chunk boundaries
-            should not be serialized as visible delimiters.
+        force_open_span: Have the runtime open the constrained span itself.
+            Generation then starts with the output already equal to ``["<<"]``
+            and the strategy already inside the span. The runtime never writes
+            the closer: the verified template holds one step back and closes a
+            complete span itself. Used by tasks (Spider, SMILES) whose answer is
+            parser-governed from the first token, so their spans appear in the
+            output text exactly like every other task's.
         completion_mode: When True, set lm.instruction_text to the raw
             prompt_text string with no chat template applied. Required for base
             (non-instruction-tuned) completion models, which must see the prompt
@@ -363,8 +367,11 @@ def run_crane_csd(
         runtime_deadline = time.monotonic() + max_seconds
     if hasattr(lm, "SetRuntimeDeadline"):
         lm.SetRuntimeDeadline(runtime_deadline)
-    if hasattr(lm, "SetStartsInsideSpan"):
-        lm.SetStartsInsideSpan(start_inside_constrained)
+    if hasattr(lm, "SetForcedSpanDelimiters"):
+        # The closer is registered up front: the strategy writes ">>" without sampling it.
+        lm.SetForcedSpanDelimiters(
+            opener="<<" if force_open_span else "", closer=">>" if force_open_span else ""
+        )
     if early_stop_on_answer and hasattr(lm, "SetAnswerEarlyStop"):
         lm.SetAnswerEarlyStop(True)
 
@@ -387,9 +394,17 @@ def run_crane_csd(
 
     eos_token_str = lm.tokenizer.eos_token or "<|endoftext|>"
     eos_token_dafny = _dafny.Seq(eos_token_str)
-    generated_prefix = _dafny.SeqWithoutIsStrInference([])
-    if start_inside_constrained and __import__("os").environ.get("CSD_PROTO_FORCE_OPEN") == "1":  # PROTOTYPE, do not commit
+    if force_open_span:
+        # The runtime opens the span: "<<" is already part of the text the model
+        # sees as generated, and the strategy starts inside the span with nothing
+        # in it yet. The prompt is untouched.
         generated_prefix = _dafny.SeqWithoutIsStrInference([_dafny.Seq("<<")])
+        _SPAN_LOG.info(
+            "[span-contract] force_open_span=1 entry_output=%r inside=True current_span_len=0",
+            "<<",
+        )
+    else:
+        generated_prefix = _dafny.SeqWithoutIsStrInference([])
     current_constrained = _dafny.SeqWithoutIsStrInference([])
 
     trace_state = env.get("csd_trace")
@@ -464,7 +479,7 @@ def run_crane_csd(
                 lm,
                 parser,
                 generated_prefix,
-                start_inside_constrained,
+                force_open_span,
                 current_constrained,
                 max_steps,
                 step_token_budget,
@@ -520,6 +535,7 @@ def run_crane_csd(
         # next example's generation.
         lm.SetAnswerEarlyStop(False)
     _enforce_max_steps(result_tokens, max_steps)
+
     output_text = "".join(result_tokens)
     if isinstance(trace_state, dict):
         pending_prefix = trace_state.pop("_pending_spider_rollback_prefix", None)
@@ -545,22 +561,9 @@ def run_crane_csd(
     if task_guidance:
         helper_trace.append({"helper": "AppendTaskGuidance", "detail": task_guidance})
 
-    final_chunk_tokens = [
-        dafny_seq_to_str(final_current_constrained[i])
-        for i in range(len(final_current_constrained))
-    ]
-    final_chunk = "".join(final_chunk_tokens)
-    hidden_chunk_used = start_inside_constrained and (
-        bool(final_chunk)
-        or any(
-            event.get("helper") in {"AppendConstrainedToken", "ConstrainedStep", "CloseConstrainedSpan"}
-            for event in helper_trace
-        )
-    )
-    if hidden_chunk_used:
-        # Hidden constrained chunks are real parser-governed chunks even though
-        # no << / >> boundary tokens are rendered into user-visible output.
-        constrained_segments.append((final_chunk or output_text, True))
+    # `constrained_segments` stays empty on purpose: the spans of the output are
+    # read back out of the output TEXT (walk_spans), the same way for every task,
+    # never out of the runtime's own bookkeeping.
 
     if debug_delimiters:
         print(f"  [DEBUG] Generation finished in {execution_time:.2f}s. Cost: {total_cost}. Tokens: {len(result_tokens)}")

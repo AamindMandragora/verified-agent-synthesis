@@ -45,13 +45,27 @@ module GeneratedCSD {
     ensures Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
     ensures maxSteps > 0 ==> "<<" in generated
     ensures cost <= maxSteps
+    // A finished span is never left open: one step of the budget is held back for the closer.
+    ensures maxSteps >= 2 && insideConstrainedOut ==> !parser.IsCompletePrefix(currentConstrainedOut)
     ensures maxSteps == 0 || cost > 0 || generated != generatedPrefix ||
             insideConstrainedOut != insideConstrained ||
             currentConstrainedOut != currentConstrained
   {
+    // The author gets maxSteps - 1; the held-back step pays for the closing ">>" below, so the
+    // close is inside the step cap and inside the proof (mirror of the opener at token 0).
+    var authorSteps := if maxSteps >= 2 then maxSteps - 1 else maxSteps;
     generated, insideConstrainedOut, currentConstrainedOut, cost :=
       AuthorBody(lm, parser, prompt, generatedPrefix, insideConstrained,
-                 currentConstrained, maxSteps, stepTokenBudget, validTokenGroups, eosToken);
+                 currentConstrained, authorSteps, stepTokenBudget, validTokenGroups, eosToken);
+    if maxSteps >= 2 && insideConstrainedOut {
+      var closer := new CSDHelpers();
+      var closed: bool;
+      ghost var old_generated := generated;
+      generated, insideConstrainedOut, currentConstrainedOut, closed :=
+        closer.CloseSpanIfComplete(lm, parser, generated, currentConstrainedOut);
+      cost := cost + closer.cost;
+      assert forall t :: t in old_generated ==> t in generated;
+    }
     if maxSteps > 0 && cost <= 0 { cost := 1; }  // guarantee progress postcondition
   }
 

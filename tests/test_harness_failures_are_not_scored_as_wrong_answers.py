@@ -93,7 +93,6 @@ def _run_one_example(error):
     ev._format_prompt = lambda example: "prompt"
     ev._get_expected_answer = lambda example: "42"
     ev._accuracy_applicable_for_example = lambda aux: True
-    ev._uses_hidden_chunks = lambda: False
 
     return Evaluator._evaluate_one_example(
         ev,

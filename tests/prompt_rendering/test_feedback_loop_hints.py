@@ -65,11 +65,11 @@ def test_delimiter_miss_default_message():
 def test_delimiter_miss_open_not_closed_message():
     # >=20% of samples opened "<<" but never closed ">>"  -> root-cause-2 message
     samples = [
-        _s(full_output="foo <<", contains_delimiters=False, uses_hidden_chunks=False),
-        _s(full_output="bar <<", contains_delimiters=False, uses_hidden_chunks=False),
-        _s(full_output="baz", contains_delimiters=False, uses_hidden_chunks=False),
-        _s(full_output="qux", contains_delimiters=False, uses_hidden_chunks=False),
-        _s(full_output="quux", contains_delimiters=False, uses_hidden_chunks=False),
+        _s(full_output="foo <<", contains_delimiters=False),
+        _s(full_output="bar <<", contains_delimiters=False),
+        _s(full_output="baz", contains_delimiters=False),
+        _s(full_output="qux", contains_delimiters=False),
+        _s(full_output="quux", contains_delimiters=False),
     ]
     _check("delim_miss__open_not_closed", _delimiter_miss_hint(True, False, samples))
 
@@ -102,9 +102,9 @@ def test_span_not_closed_not_required_is_empty():
 
 def test_span_not_closed_message():
     # 2/10 opened "<<" without ">>"  -> 20% >= 10% threshold
-    samples = [_s(full_output="a <<", uses_hidden_chunks=False, contains_delimiters=False),
-               _s(full_output="b <<", uses_hidden_chunks=False, contains_delimiters=False)]
-    samples += [_s(full_output="ok <<x>>", uses_hidden_chunks=False, contains_delimiters=True) for _ in range(8)]
+    samples = [_s(full_output="a <<", contains_delimiters=False),
+               _s(full_output="b <<", contains_delimiters=False)]
+    samples += [_s(full_output="ok <<x>>", contains_delimiters=True) for _ in range(8)]
     _check("span_not_closed__message", _span_not_closed_hint(True, samples))
 
 
@@ -119,11 +119,11 @@ def test_constraint_bypassed_delimiters_absent_is_empty():
 def test_constraint_bypassed_message():
     # 5 relevant samples, only 1 engaged the constrained branch (4 bypassed)
     samples = [
-        _s(contains_delimiters=True, uses_hidden_chunks=False, used_constrained_chunk=True),
-        _s(contains_delimiters=True, uses_hidden_chunks=False, used_constrained_chunk=False),
-        _s(contains_delimiters=True, uses_hidden_chunks=False, used_constrained_chunk=False),
-        _s(contains_delimiters=True, uses_hidden_chunks=False, used_constrained_chunk=False),
-        _s(contains_delimiters=True, uses_hidden_chunks=False, used_constrained_chunk=False),
+        _s(contains_delimiters=True, used_constrained_chunk=True),
+        _s(contains_delimiters=True, used_constrained_chunk=False),
+        _s(contains_delimiters=True, used_constrained_chunk=False),
+        _s(contains_delimiters=True, used_constrained_chunk=False),
+        _s(contains_delimiters=True, used_constrained_chunk=False),
     ]
     _check("constraint_bypassed__message", _constraint_bypassed_hint(True, True, samples))
 
@@ -138,9 +138,9 @@ def test_final_span_failure_not_required_is_empty():
 
 def test_final_span_failure_all_categories():
     samples = [
-        _s(full_output="reasoning then <<", is_syntax_valid=False, uses_hidden_chunks=False),      # unclosed
-        _s(full_output="no span here at all", is_syntax_valid=False, uses_hidden_chunks=False),    # no_span
-        _s(full_output="answer <<3 ** 2>>", is_syntax_valid=False, uses_hidden_chunks=False),      # invalid (closed)
+        _s(full_output="reasoning then <<", is_syntax_valid=False),      # unclosed
+        _s(full_output="no span here at all", is_syntax_valid=False),    # no_span
+        _s(full_output="answer <<3 ** 2>>", is_syntax_valid=False),      # invalid (closed)
     ]
     _check("final_span__all_categories", _final_span_failure_hint(True, samples))
 

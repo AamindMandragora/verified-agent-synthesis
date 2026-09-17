@@ -1108,7 +1108,6 @@ def test_profile_and_heldout_environments_isolate_author_credentials(tmp_path):
         "CODEX_HOME": "/secret/codex",
         "CSD_RATIONALE_SUMMARY_API_KEY": "summary-secret",
         "AWS_BEARER_TOKEN_BEDROCK": "bedrock-secret",
-        "SPIDER_TOKEN0_CONSTRAINED": "0",
         "CSD_PARITY_SEED": "123",
         "CSD_UNCONSTRAINED_TEMPERATURE": "0.9",
     }
@@ -1130,7 +1129,6 @@ def test_profile_and_heldout_environments_isolate_author_credentials(tmp_path):
     for key in (
         "CSD_RATIONALE_SUMMARY_API_KEY",
         "AWS_BEARER_TOKEN_BEDROCK",
-        "SPIDER_TOKEN0_CONSTRAINED",
         "CSD_PARITY_SEED",
         "CSD_UNCONSTRAINED_TEMPERATURE",
     ):
@@ -1147,7 +1145,6 @@ def test_profile_and_heldout_environments_isolate_author_credentials(tmp_path):
         "CSD_GEMINI_BACKEND",
         "CSD_RATIONALE_SUMMARY_API_KEY",
         "AWS_BEARER_TOKEN_BEDROCK",
-        "SPIDER_TOKEN0_CONSTRAINED",
         "CSD_PARITY_SEED",
         "CSD_UNCONSTRAINED_TEMPERATURE",
     ):

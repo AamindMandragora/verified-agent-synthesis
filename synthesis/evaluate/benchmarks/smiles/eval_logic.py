@@ -126,27 +126,16 @@ def is_correct(
     return bool(aux and aux.get("unique_valid_candidate"))
 
 
-def uses_hidden_chunks() -> bool:
-    return False
-
-
-def starts_inside_constrained() -> bool:
-    # SMILES has no visible delimiters, so no `<<` is ever emitted for a
-    # strategy to detect; generation therefore begins already inside the
-    # constrained region.
+def force_open_span() -> bool:
+    # The molecule is parser-governed from the first token, so the runtime
+    # opens the span itself: the output starts as "<<" and the strategy starts
+    # inside it. The prompt is unchanged by this.
     return True
-
-
-def emits_visible_delimiters() -> bool:
-    # SMILES has exactly one constrained span and no << >> markers around it,
-    # so delimiter diagnostics would just be a constant, not real feedback.
-    return False
 
 
 def example_syntax_pass(
     all_valid_syntax: bool,
     segments: list[tuple[str, bool]],
-    used_hidden_chunk: bool,
     aux: dict[str, Any] | None,
 ) -> bool:
     return bool(aux and aux.get("syntax_valid"))
@@ -157,16 +146,13 @@ def accuracy_applicable(aux: dict[str, Any] | None) -> bool:
 
 
 def get_generation_runner():
-    from synthesis.evaluate.benchmarks.smiles.generation import run_crane_csd
+    from synthesis.evaluate.benchmarks.smiles import generation
 
-    # CARS/GCD/IterGen SMILES surfaces are grammar-constrained from token 0
-    # (raw molecule string; no visible << >>), so generation must start already
-    # inside the constrained region -- there is no leading `<<` to wait for.
-    def _token0_runner(*args, **kwargs):
-        kwargs.setdefault("start_inside_constrained", True)
-        return run_crane_csd(*args, **kwargs)
+    def _forced_span_runner(*args, **kwargs):
+        kwargs.setdefault("force_open_span", True)
+        return generation.run_crane_csd(*args, **kwargs)
 
-    return _token0_runner
+    return _forced_span_runner
 
 
 def get_syntax_parser(evaluator: Any, example: dict[str, Any] | None):

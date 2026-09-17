@@ -48,7 +48,7 @@ def _real_parser():
     return _CachedRealEvaluator()._get_syntax_parser(_example())
 
 
-def test_existing_token0_entry_rejects_sql_label_instead_of_extracting_it():
+def test_existing_forced_span_entry_rejects_sql_label_instead_of_extracting_it():
     actual, source, aux = sql_eval_logic.extract_actual(
         _CachedRealEvaluator(),
         "SQL: SELECT name FROM singer",
@@ -449,17 +449,22 @@ def test_itergen_generation_boundary_text_is_the_scored_text():
     assert aux["output_rejection_reason"] == "prompt_or_wrapper"
 
 
-def test_legacy_visible_span_opt_out_is_unchanged(monkeypatch):
-    monkeypatch.setenv("SPIDER_TOKEN0_CONSTRAINED", "0")
-    actual, source, aux = sql_eval_logic.extract_actual(
+def test_a_delimited_output_is_scored_exactly_like_the_bare_query(monkeypatch):
+    """The runtime's `<<`/`>>` come off; what is inside meets the same contract."""
+    delimited = sql_eval_logic.extract_actual(
         _CachedRealEvaluator(),
         "<<SELECT name FROM singer>>",
         _example(),
     )
+    bare = sql_eval_logic.extract_actual(
+        _CachedRealEvaluator(),
+        "SELECT name FROM singer",
+        _example(),
+    )
 
-    assert actual == "SELECT name FROM singer"
-    assert source == "last_visible_span"
-    assert aux is None
+    assert delimited == bare
+    assert delimited[0] == "SELECT name FROM singer"
+    assert delimited[1] == "bare_sql"
 
 
 def _evaluate_one_sample(
@@ -538,7 +543,7 @@ def test_evaluator_sample_carries_removed_terminal_token_count(monkeypatch):
 
 
 def test_accepted_evaluator_sample_fields_are_coherent(monkeypatch):
-    sample = _evaluate_one_sample(monkeypatch, "SELECT name FROM singer;")
+    sample = _evaluate_one_sample(monkeypatch, "<<SELECT name FROM singer>>")
 
     assert sample["actual"] == "SELECT name FROM singer"
     assert sample["answer_source"] == "bare_sql"
@@ -973,7 +978,7 @@ def _run_fake_spider_csd_with_ids(tmp_path, token_ids, token_texts):
         prompt_text=SpiderPromptParts("db_id: x\nquestion: q\n", model_name=lm.model_name),
         max_steps=32,
         grammar_file=tmp_path / "unused.lark",
-        start_inside_constrained=True,
+        force_open_span=True,
     )
     return lm, result
 
@@ -2179,7 +2184,7 @@ def test_reevaluation_export_preserves_static_close_strategy_evidence(
             step_token_budget=kwargs.get("step_token_budget", 1),
             grammar_file=kwargs["grammar_file"],
             dynamic_parser=kwargs.get("dynamic_parser"),
-            start_inside_constrained=True,
+            force_open_span=True,
         )
 
     sample = evaluator._evaluate_one_example(

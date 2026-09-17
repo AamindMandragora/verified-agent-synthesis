@@ -45,11 +45,10 @@ def _import_hint():
 # Helper: build a minimal sample_outputs list entry
 # ---------------------------------------------------------------------------
 
-def _sample(full_output: str, is_syntax_valid: bool, uses_hidden_chunks: bool = False) -> dict:
+def _sample(full_output: str, is_syntax_valid: bool) -> dict:
     return {
         "full_output": full_output,
         "is_syntax_valid": is_syntax_valid,
-        "uses_hidden_chunks": uses_hidden_chunks,
     }
 
 
@@ -204,24 +203,6 @@ def test_at_most_two_output_tails_per_category():
         f"Expected at most 2 'output tail:' entries per category, got {n_tails}"
     )
 
-
-# ---------------------------------------------------------------------------
-# Test 10 — Hidden-chunk samples are excluded from classification
-# ---------------------------------------------------------------------------
-
-def test_hidden_chunk_samples_excluded():
-    """Samples with uses_hidden_chunks=True must not be classified."""
-    fn = _import_hint()
-    samples = [
-        _sample("unconstrained output", is_syntax_valid=False, uses_hidden_chunks=True),
-        _sample("<<n * 2>>", is_syntax_valid=True),
-    ]
-    result = fn(require_delimiters=True, sample_outputs=samples)
-    # Only the hidden-chunk sample is failing, but it should be excluded →
-    # no classified failures → empty hint
-    assert result == "", (
-        "Hidden-chunk samples must be excluded from the failure classification"
-    )
 
 
 # ---------------------------------------------------------------------------

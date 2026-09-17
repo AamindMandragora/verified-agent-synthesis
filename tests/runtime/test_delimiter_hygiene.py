@@ -15,9 +15,11 @@ def test_walk_finds_closed_and_open_spans():
     assert w.ends_inside
 
 
-def test_walk_hidden_span_surface_is_one_span():
-    assert walk_spans("SELECT 1", start_inside=True).spans == (Span("SELECT 1", False),)
-    assert walk_spans("CCO>>", start_inside=True).spans == (Span("CCO", True),)
+def test_a_runtime_opened_span_is_read_back_out_of_the_text():
+    # The runtime opens the span by putting a literal "<<" in the output, so
+    # there is nothing special to read: it is one span like any other.
+    assert walk_spans("<<SELECT 1").spans == (Span("SELECT 1", False),)
+    assert walk_spans("<<CCO>>").spans == (Span("CCO", True),)
 
 
 def test_walk_matches_evaluator_regex_on_balanced_text():

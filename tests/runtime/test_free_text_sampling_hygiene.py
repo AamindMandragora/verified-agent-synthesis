@@ -30,14 +30,15 @@ class _FakeDafny:
         return list(items)
 
 
-def _lm(prefix_text="", starts_inside=False):
+def _lm(prefix_text=""):
     lm = object.__new__(_TensorizedLMBase)
     lm.tokenizer = _CharTokenizer()
     lm._dafny = _FakeDafny()
     lm._token_id_to_str = {}
     lm._delimiter_sets = None
     lm._last_prefix_text = prefix_text
-    lm._starts_inside_span = starts_inside
+    lm._forced_span_open_text = ""
+    lm._forced_span_close_text = ""
     return lm
 
 
@@ -68,7 +69,7 @@ def test_a_token_cannot_complete_a_delimiter_across_the_boundary():
 
 def test_nothing_is_banned_inside_a_span():
     assert _argmax_text(_lm("so <<1+2"), ">>") == ">>"
-    assert _argmax_text(_lm("CCO", starts_inside=True), ">>") == ">>"
+    assert _argmax_text(_lm("<<CCO"), ">>") == ">>"
 
 
 def test_the_callers_logits_are_not_modified():

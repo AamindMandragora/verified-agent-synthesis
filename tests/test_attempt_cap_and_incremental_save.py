@@ -60,10 +60,10 @@ class FakeGenerator:
         self.task_description = task_description
 
     def generate_initial(
-        self, task_description, allowed_helpers=None, start_inside_constrained=False
+        self, task_description, allowed_helpers=None, force_open_span=False
     ):
         # Mirrors the real StrategyGenerator.generate_initial. Keep the two in
-        # step: the pipeline passes start_inside_constrained by keyword, so a
+        # step: the pipeline passes force_open_span by keyword, so a
         # stand-in that lacks it fails with a TypeError that has nothing to do
         # with attempt caps.
         self.generate_initial_calls += 1
@@ -640,9 +640,9 @@ def test_timeout_restart_preserves_active_surface(monkeypatch, tmp_path):
     from synthesis.evaluate import feedback_loop as feedback_loop_module
 
     class RecordingGenerator(FakeGenerator):
-        def generate_initial(self, task_description, allowed_helpers=None, start_inside_constrained=False):
-            self.seen_start_inside_constrained = start_inside_constrained
-            return super().generate_initial(task_description, allowed_helpers, start_inside_constrained)
+        def generate_initial(self, task_description, allowed_helpers=None, force_open_span=False):
+            self.seen_force_open_span = force_open_span
+            return super().generate_initial(task_description, allowed_helpers, force_open_span)
 
     evaluator = FakeEvaluator(seconds_per_example=0.0, num_examples=1)
     pipeline = make_pipeline(tmp_path, evaluator, max_attempt_seconds=1.0, max_iterations=1)
@@ -654,9 +654,9 @@ def test_timeout_restart_preserves_active_surface(monkeypatch, tmp_path):
         timestamp="now",
     )
 
-    monkeypatch.setattr(pipeline, "_start_inside_constrained", lambda: True)
+    monkeypatch.setattr(pipeline, "_force_open_span", lambda: True)
     pipeline._handle_attempt_timeout(
         attempt, [], 1.1, "dummy task", "dummy", tmp_path
     )
 
-    assert pipeline.generator.seen_start_inside_constrained is True
+    assert pipeline.generator.seen_force_open_span is True

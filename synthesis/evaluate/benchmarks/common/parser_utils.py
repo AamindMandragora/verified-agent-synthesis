@@ -257,6 +257,12 @@ def create_lark_dafny_parser(
                 if any(_c in _ts for _c in _forbidden_chars):
                     _fb[_idx] = False
             self._forbidden_allow_mask: _torch.Tensor = _fb
+            # Candidates for the closer rule (delimiter_hygiene.closer_allowed): only tokens with `>`.
+            self._tokens_with_gt = [
+                (_idx, dafny_seq_to_str(_token))
+                for _idx, _token in enumerate(self._token_list)
+                if ">" in dafny_seq_to_str(_token)
+            ]
 
             # Lark parser for the rare IsValidPrefix fallback (keeps the CSD start
             # rule, e.g. csd_start, which requires the closing delimiter).
@@ -325,6 +331,9 @@ def create_lark_dafny_parser(
             with _parser_timed("is_valid_prefix.total"):
                 if not text:
                     return True
+                if ">>" in text:
+                    # The closer is written by the span helper, never part of the content.
+                    return False
                 cached = self._valid_prefix_cache.get(text)
                 if cached is not None:
                     return cached
@@ -369,6 +378,14 @@ def create_lark_dafny_parser(
             return result
 
         def _get_accept_mask_for_text(self, current_text: str):
+            """Grammar accept mask, minus every token that would put `>>` into the span content."""
+            from synthesis.evaluate.benchmarks.common.delimiter_hygiene import apply_closer_rule
+
+            return apply_closer_rule(
+                self._grammar_accept_mask_for_text(current_text), self._tokens_with_gt, current_text
+            )
+
+        def _grammar_accept_mask_for_text(self, current_text: str):
             """Get boolean accept mask using syncode's DFA mask store."""
             with _parser_timed("accept_mask.total"):
                 cached = self._valid_next_mask_cache.get(current_text)

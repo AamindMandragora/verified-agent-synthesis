@@ -61,7 +61,7 @@ def test_spider_csd_entry_keeps_structured_prompt_and_no_raw_completion_mode(mon
 
     assert callable(getattr(observed["prompt_text"], "render_for_model", None))
     assert observed.get("completion_mode", False) is False
-    assert observed["start_inside_constrained"] is True
+    assert observed["force_open_span"] is True
 
 
 def test_spider_guidance_is_before_the_final_sql_cue():
@@ -197,7 +197,7 @@ def test_spider_prompt_parts_are_immutable():
         prompt.task_text = "changed"
 
 
-def test_token0_guidance_rebuilds_before_final_sql_cue():
+def test_forced_span_guidance_rebuilds_before_final_sql_cue():
     from synthesis.evaluate.benchmarks.common.model_utils import (
         _TaskGuidanceState,
         _TensorizedLMBase,
@@ -411,3 +411,26 @@ def test_gsm_runner_registers_chat_guidance_and_resets_between_examples(tmp_path
     legacy_calls = [kwargs for _, kwargs in tokenizer.calls if "enable_thinking" not in kwargs]
     assert len(thinking_calls) == 3
     assert len(legacy_calls) == 3
+
+
+def test_spider_default_prompt_is_exact_itergen_surface():
+    """The prompt is IterGen's bare prompt, and the runtime-opened span does not touch it."""
+    from synthesis.evaluate.benchmarks.sql_spider import eval_logic
+
+    prompt = eval_logic.format_prompt(
+        evaluator=object(),
+        example={
+            "db_id": "concert_singer",
+            "db_info": "# singer ( singer_id , name )",
+            "question": "How many singers do we have?",
+        },
+    )
+
+    assert prompt == (
+        "db_id: concert_singer\n"
+        "db_info: # singer ( singer_id , name )\n"
+        "question: How many singers do we have? Only output the SQL quey. \n"
+        "SQL:"
+    )
+    assert "<<" not in prompt and ">>" not in prompt
+    assert "reason" not in prompt.lower()

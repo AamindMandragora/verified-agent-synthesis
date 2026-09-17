@@ -1,32 +1,30 @@
-"""What the author is TOLD about the decoding surface must match what happens.
+"""What the author is TOLD about the span contract must match what happens.
 
 The bug this guards
 -------------------
-Generation can reach the constrained region two ways:
+A strategy reaches the constrained region one of two ways:
 
-  - visible-delimiter surface: generation starts outside the constrained
-    region, and the strategy calls `OpenConstrainedSpan`, which puts a literal
-    `<<` into the output.
-  - observed surface: generation starts already inside, `EnterObservedConstrainedSpan`
-    emits nothing, and no `<<` is ever produced by anyone.
+  - it opens the span itself with `OpenConstrainedSpan`, which puts a literal
+    `<<` into the output; or
+  - the runtime opened the span before the strategy ran, so the output already
+    starts with `<<` and the strategy is already inside it.
 
-Spider runs on the observed surface. Authors kept writing strategies whose only
-route into constrained mode was `if next == "<<"`, which on Spider never fires,
-so nothing was ever constrained.
+Spider and SMILES are the second kind. Authors kept writing strategies whose
+only route into constrained mode was `if next == "<<"`, which never fires when
+the `<<` is already there, so nothing was ever constrained.
 
-The fix tells the author which surface it is on. But that only helps if the
-claim is TRUE. Today two separate pieces of code decide it:
+The fix tells the author which of the two it is on. That only helps if the
+claim is TRUE, and two separate pieces of code decide it:
 
-  - `starts_inside_constrained()`      -> what the author's prompt is told
-  - `get_generation_runner()`          -> what evaluation actually does
+  - `force_open_span()`        -> what the author's prompt is told
+  - `get_generation_runner()`  -> what evaluation actually does
 
-They are kept in agreement by a code comment and nothing else. A comment does
-not fail a build. If they ever drift, the author gets confidently told the
-wrong surface and writes a strategy that cannot work -- the same silent
-failure as before, now wearing a fix.
+Nothing but a comment keeps them in step, and a comment does not fail a build.
+If they drift, the author is confidently told the wrong thing and writes a
+strategy that cannot work -- the same silent failure as before, wearing a fix.
 
-So this file does not check the prompt wording (that is covered elsewhere). It
-checks the claim against the behaviour, under both settings of the mode switch.
+So this file does not check the prompt wording (covered elsewhere). It checks
+the claim against the behaviour.
 """
 
 from __future__ import annotations
@@ -36,88 +34,81 @@ import importlib
 import pytest
 
 
-TOKEN0_ENV = "SPIDER_TOKEN0_CONSTRAINED"
+FORCED_SPAN_BENCHMARKS = {
+    "spider": "synthesis.evaluate.benchmarks.sql_spider.generation",
+    "smiles": "synthesis.evaluate.benchmarks.smiles.generation",
+    "gsm_symbolic": "synthesis.evaluate.benchmarks.gsm_symbolic.generation",
+}
 
 
-def _spider_eval_logic():
-    """Freshly imported, so a changed env var is actually picked up."""
-    module = importlib.import_module(
-        "synthesis.evaluate.benchmarks.sql_spider.eval_logic"
-    )
-    return importlib.reload(module)
-
-
-def _surface_actually_used(monkeypatch) -> bool:
+def _surface_actually_used(monkeypatch, dataset: str) -> bool:
     """Run the real generation runner and observe what it asks for.
 
-    Returns whether `start_inside_constrained` was actually requested. The
-    runner imports `run_crane_csd` when it is called, not at module load, so
-    replacing it on the generation module beforehand is enough to intercept
-    the call without loading a model.
+    The runner imports `run_crane_csd` when it is called, not at module load,
+    so replacing it on the generation module beforehand intercepts the call
+    without loading a model.
     """
-    eval_logic = _spider_eval_logic()
-    generation = importlib.import_module(
-        "synthesis.evaluate.benchmarks.sql_spider.generation"
-    )
+    from synthesis.evaluate.benchmarks.registry import get_logic
 
+    generation = importlib.import_module(FORCED_SPAN_BENCHMARKS[dataset])
     seen: dict = {}
 
     def _capture(*args, **kwargs):
         seen.update(kwargs)
         return ("", 0, 0.0, [], [])
 
-    monkeypatch.setattr(generation, "run_crane_csd", _capture)
+    monkeypatch.setattr(generation, "run_crane_csd", _capture, raising=False)
+    monkeypatch.setattr(generation, "_run_crane_csd", _capture, raising=False)
 
-    runner = eval_logic.get_generation_runner()
+    runner = get_logic(dataset).get_generation_runner()
+    if runner is generation.run_crane_csd or runner is _capture:
+        # GSM hands back the bare function; calling it would run the real thing.
+        return False
     runner()
-    return bool(seen.get("start_inside_constrained", False))
+    return bool(seen.get("force_open_span", False))
 
 
 @pytest.mark.parametrize(
-    "token0_setting, expected_surface",
-    [
-        ("1", True),   # default mode: constrained from token 0, no visible "<<"
-        ("0", False),  # legacy mode: visible "<<" ... ">>" span
-    ],
+    ("dataset", "expected"),
+    [("spider", True), ("smiles", True), ("gsm_symbolic", False)],
 )
 def test_the_author_is_told_the_surface_that_is_actually_used(
-    monkeypatch, token0_setting, expected_surface
+    monkeypatch, dataset, expected
 ):
-    monkeypatch.setenv(TOKEN0_ENV, token0_setting)
+    from synthesis.evaluate.benchmarks.registry import get_logic
 
-    claimed = _spider_eval_logic().starts_inside_constrained()
-    actual = _surface_actually_used(monkeypatch)
+    claimed = bool(get_logic(dataset).force_open_span())
+    actual = _surface_actually_used(monkeypatch, dataset)
 
     assert claimed == actual, (
-        f"With {TOKEN0_ENV}={token0_setting}, the author's prompt is told "
-        f"start_inside_constrained={claimed}, but evaluation actually runs with "
-        f"start_inside_constrained={actual}. The author will write a strategy "
-        "for the wrong decoding surface and silently constrain nothing."
+        f"{dataset}: the author's prompt is told force_open_span={claimed}, but "
+        f"evaluation actually runs with force_open_span={actual}. The author "
+        "will write a strategy for the wrong starting point and silently "
+        "constrain nothing."
     )
-    assert actual == expected_surface, (
-        f"{TOKEN0_ENV}={token0_setting} was expected to produce "
-        f"start_inside_constrained={expected_surface}, but produced {actual}. "
-        "If this mode's meaning changed on purpose, update this test and the "
-        "author prompt together -- they must not drift apart."
+    assert actual is expected, (
+        f"{dataset} was expected to run with force_open_span={expected}, but "
+        f"produced {actual}. If that changed on purpose, update this test and "
+        "the author prompt together -- they must not drift apart."
     )
 
 
-def test_the_benchmark_registry_exposes_the_surface_to_the_feedback_loop():
+@pytest.mark.parametrize("dataset", sorted(FORCED_SPAN_BENCHMARKS))
+def test_the_benchmark_registry_exposes_the_surface_to_the_feedback_loop(dataset):
     """The feedback loop finds this hook by name through the registry.
 
     It looks the benchmark up with `get_logic(dataset_name)` and then reads
-    `starts_inside_constrained` off it with getattr, falling back to False when
-    absent. A rename would therefore not raise -- it would quietly report the
-    visible-delimiter surface for every benchmark, which is the pre-fix bug.
+    `force_open_span` off it with getattr, falling back to False when absent.
+    A rename would therefore not raise -- it would quietly report "you must
+    open the span yourself" for every benchmark, which is the pre-fix bug.
     """
     from synthesis.evaluate.benchmarks.registry import get_logic
 
-    logic = get_logic("spider")
-    hook = getattr(logic, "starts_inside_constrained", None)
+    hook = getattr(get_logic(dataset), "force_open_span", None)
 
     assert hook is not None, (
-        "spider no longer exposes starts_inside_constrained(). The feedback "
-        "loop's getattr lookup will silently fall back to False and tell every "
-        "author it is on the visible-delimiter surface."
+        f"{dataset} no longer exposes force_open_span(). The feedback loop's "
+        "getattr lookup will silently fall back to False and tell every author "
+        "it has to open the span itself."
     )
     assert isinstance(hook(), bool)

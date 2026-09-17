@@ -72,10 +72,10 @@ def test_smiles_prompts_do_not_request_visible_delimiters(monkeypatch):
         assert "<<SMILES>>" not in prompt
 
 
-def test_smiles_uses_hidden_constrained_chunks(monkeypatch):
+def test_smiles_runs_with_a_runtime_opened_span(monkeypatch):
     eval_logic = _load_eval_logic(monkeypatch)
 
-    assert eval_logic.uses_hidden_chunks() is True
+    assert eval_logic.force_open_span() is True
 
 
 def test_smiles_generation_starts_inside_hidden_constrained_chunk(monkeypatch):
@@ -100,4 +100,4 @@ def test_smiles_generation_starts_inside_hidden_constrained_chunk(monkeypatch):
         dynamic_parser=None,
     )
 
-    assert captured["start_inside_constrained"] is True
+    assert captured["force_open_span"] is True

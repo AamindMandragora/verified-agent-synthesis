@@ -99,8 +99,7 @@ def _delimiter_miss_hint(require_delimiters: bool, contains_delimiters: bool, sa
         n = len(sample_outputs)
         n_open_not_closed = sum(
             1 for s in sample_outputs
-            if not s.get("uses_hidden_chunks", False)
-            and "<<" in (s.get("full_output") or "")
+            if "<<" in (s.get("full_output") or "")
             and ">>" not in (s.get("full_output") or "")
         )
         if n > 0 and n_open_not_closed >= 0.2 * n:
@@ -149,8 +148,7 @@ def _span_not_closed_hint(require_delimiters: bool, sample_outputs) -> str:
     n = len(sample_outputs)
     n_unterminated = sum(
         1 for s in sample_outputs
-        if not s.get("uses_hidden_chunks", False)
-        and "<<" in (s.get("full_output") or "")
+        if "<<" in (s.get("full_output") or "")
         and ">>" not in (s.get("full_output") or "")
     )
     n_maxsteps_nodelim = sum(
@@ -184,13 +182,11 @@ def _constraint_bypassed_hint(require_delimiters: bool, contains_delimiters: boo
     """
     if not require_delimiters or not contains_delimiters or not sample_outputs:
         return ""
-    # Only examples that (a) actually show delimiters, (b) record whether the
-    # constrained branch ran, and (c) are not using a different (hidden-chunk)
-    # constraint mechanism can tell us whether the span content was constrained.
+    # Only examples that (a) actually show delimiters and (b) record whether the
+    # constrained branch ran can tell us whether the span content was constrained.
     relevant = [
         s for s in sample_outputs
-        if not s.get("uses_hidden_chunks", False)
-        and s.get("contains_delimiters", False)
+        if s.get("contains_delimiters", False)
         and "used_constrained_chunk" in s
     ]
     n_rel = len(relevant)
@@ -228,14 +224,12 @@ def _final_span_failure_hint(require_delimiters: bool, sample_outputs=None) -> s
 
     # Collect syntax-failing examples (ones where the final span was expected
     # but either absent or invalid).  We look at full_output for each sample
-    # that is NOT marked is_syntax_valid and is NOT using hidden chunks.
+    # that is NOT marked is_syntax_valid.
     unclosed: list[str] = []
     no_span: list[str] = []
     invalid: list[str] = []
 
     for s in sample_outputs:
-        if s.get("uses_hidden_chunks"):
-            continue
         if s.get("is_syntax_valid"):
             continue
         full_output = s.get("full_output") or ""
@@ -855,14 +849,12 @@ class SynthesisPipeline:
         # Ensure output directory exists
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def _start_inside_constrained(self) -> bool:
-        """Whether the active benchmark's evaluation generation starts already
-        inside the constrained region. Passed to the author's prompt so it
-        knows to enter constrained mode with EnterObservedConstrainedSpan
-        (no visible "<<") instead of OpenConstrainedSpan on benchmarks like
-        Spider that never emit visible delimiters. Falls back to False
-        (visible-delimiter surface, the historical default) if the benchmark
-        doesn't declare it, or isn't registered at all.
+    def _force_open_span(self) -> bool:
+        """Whether the runtime opens this benchmark's span itself, so generation
+        starts with a `<<` already in the output and the strategy already inside
+        the span. Passed to the author's prompt so it states the right starting
+        point. Falls back to False if the benchmark doesn't declare it, or isn't
+        registered at all.
 
         This value only chooses a sentence of wording in the author's prompt,
         so it must never be able to end a run. get_logic() raises for a dataset
@@ -880,7 +872,7 @@ class SynthesisPipeline:
             )
             return False
 
-        hook = getattr(logic, "starts_inside_constrained", None)
+        hook = getattr(logic, "force_open_span", None)
         return bool(hook()) if hook is not None else False
 
     def _git_commit_hash(self) -> str:
@@ -2077,7 +2069,7 @@ class SynthesisPipeline:
             strategy_code = self.generator.generate_initial(
                 task_description,
                 allowed_helpers=allowed_helpers,
-                start_inside_constrained=self._start_inside_constrained(),
+                force_open_span=self._force_open_span(),
             )
 
         if fixed_warm_continuation:
@@ -2208,7 +2200,7 @@ class SynthesisPipeline:
                     strategy_code = self.generator.generate_initial(
                         task_description,
                         allowed_helpers=next_allowed_helpers,
-                        start_inside_constrained=self._start_inside_constrained(),
+                        force_open_span=self._force_open_span(),
                     )
                     last_restart_index = len(attempts)
                     continue
@@ -2237,7 +2229,7 @@ class SynthesisPipeline:
                     strategy_code = self.generator.generate_initial(
                         task_description,
                         allowed_helpers=next_allowed_helpers,
-                        start_inside_constrained=self._start_inside_constrained(),
+                        force_open_span=self._force_open_span(),
                     )
                     last_restart_index = len(attempts)
                     continue
@@ -2506,7 +2498,7 @@ class SynthesisPipeline:
                     strategy_code = self.generator.generate_initial(
                         task_description,
                         allowed_helpers=next_allowed_helpers,
-                        start_inside_constrained=self._start_inside_constrained(),
+                        force_open_span=self._force_open_span(),
                     )
                     continue
 
@@ -3225,7 +3217,7 @@ class SynthesisPipeline:
         return self.generator.generate_initial(
             task_description,
             allowed_helpers=next_allowed_helpers,
-            start_inside_constrained=self._start_inside_constrained(),
+            force_open_span=self._force_open_span(),
         )
 
     def _save_failure_report(

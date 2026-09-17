@@ -376,9 +376,9 @@ class EvaluationResult:
 
         Callers get that flag from
         ``registry.resolve_require_delimiters(dataset, cli_value)``, which asks
-        the benchmark itself via ``emits_visible_delimiters()``. GSM can emit
-        spans, so there the CLI flag decides; Spider and SMILES generate whole
-        outputs and cannot emit a span at all, so for them it is always False.
+        which validates the dataset name and then follows the CLI flag: every
+        benchmark's output carries visible spans now, so none of them can veto
+        the flag.
         """
         eval_count_label = (
             f"{self.num_examples}/{self.planned_num_examples}"
@@ -668,13 +668,12 @@ class EvaluationResult:
             return "answer_extraction_or_completion"
         if sample.get("hit_max_steps"):
             return "token_budget_exhausted"
-        if not sample.get("uses_hidden_chunks"):
-            if int(sample.get("num_visible_spans", 0) or 0) == 0:
-                return "span_absent"
-            if int(sample.get("num_valid_visible_spans", 0) or 0) == 0:
-                return "no_valid_visible_span"
-            if not sample.get("is_syntax_valid"):
-                return "visible_span_syntax"
+        if int(sample.get("num_visible_spans", 0) or 0) == 0:
+            return "span_absent"
+        if int(sample.get("num_valid_visible_spans", 0) or 0) == 0:
+            return "no_valid_visible_span"
+        if not sample.get("is_syntax_valid"):
+            return "visible_span_syntax"
         if sample.get("is_syntax_valid") and not sample.get("is_correct"):
             return "syntax_valid_semantic_mismatch"
         if cls._sample_has_constrained_activity(sample):
@@ -822,7 +821,6 @@ class EvaluationResult:
         full_output = sample.get("full_output") or ""
         actual = sample.get("actual") or ""
         contains_delimiters = sample.get("contains_delimiters", False)
-        uses_hidden_chunks = sample.get("uses_hidden_chunks", False)
         visible_delimiters = sample.get("visible_delimiters", contains_delimiters)
         used_constrained_chunk = sample.get("used_constrained_chunk", contains_delimiters)
         syntax_rate = float(sample.get("syntax_rate", 0.0))
@@ -841,7 +839,7 @@ class EvaluationResult:
 
         n_open = full_output.count("<<")
         n_close = full_output.count(">>")
-        if not uses_hidden_chunks and n_open > n_close:
+        if n_open > n_close:
             if n_close == 0:
                 detail = "(opened `<<` but did not close `>>`)"
             else:
@@ -849,15 +847,11 @@ class EvaluationResult:
             modes.append(("unterminated_constrained_segment", detail))
             matched = True
 
-        if uses_hidden_chunks:
-            if not used_constrained_chunk:
-                modes.append(("missing_constrained_chunk", "(no internal parser-governed chunk was used)"))
-                matched = True
-        elif not contains_delimiters and "<<" not in full_output:
+        if not contains_delimiters and "<<" not in full_output:
             modes.append(("missing_constrained_segment", "(no `<< >>` segment detected)"))
             matched = True
 
-        if not uses_hidden_chunks and n_close > n_open:
+        if n_close > n_open:
             if n_open == 0:
                 detail = "(generated `>>` without a matching opening `<<`)"
             else:
@@ -867,11 +861,7 @@ class EvaluationResult:
 
         num_visible_spans = int(sample.get("num_visible_spans", 0))
         num_valid_visible_spans = int(sample.get("num_valid_visible_spans", 0))
-        if (
-            not uses_hidden_chunks
-            and num_visible_spans > 0
-            and num_valid_visible_spans < num_visible_spans
-        ):
+        if num_visible_spans > 0 and num_valid_visible_spans < num_visible_spans:
             detail = (
                 f"({num_visible_spans - num_valid_visible_spans}/{num_visible_spans} "
                 "closed spans failed syntax checks)"
@@ -879,7 +869,8 @@ class EvaluationResult:
             modes.append(("malformed_constrained_content", detail))
             matched = True
 
-        if not uses_hidden_chunks and self._looks_like_early_constrained_entry(full_output):
+        # When the runtime forced the opener at token 0 (Spider, SMILES) an early `<<` is by design.
+        if not sample.get("span_forced_open") and self._looks_like_early_constrained_entry(full_output):
             modes.append((
                 "entered_constrained_mode_too_early",
                 "(output entered `<<` almost immediately after the prompt continuation began)",
@@ -1104,10 +1095,7 @@ class EvaluationResult:
 
     @classmethod
     def _sample_has_valid_span_or_chunk(cls, sample: Dict[str, Any]) -> bool:
-        return (
-            int(sample.get("num_valid_visible_spans", 0) or 0) > 0
-            or bool(sample.get("used_constrained_chunk") and sample.get("uses_hidden_chunks"))
-        )
+        return int(sample.get("num_valid_visible_spans", 0) or 0) > 0
 
     @classmethod
     def _sample_has_constrained_activity(cls, sample: Dict[str, Any]) -> bool:
@@ -1373,10 +1361,7 @@ class EvaluationResult:
         )
         examples_with_valid_span_wrong = sum(
             1 for sample in self.sample_outputs
-            if (
-                int(sample.get("num_valid_visible_spans", 0) or 0) > 0
-                or bool(sample.get("used_constrained_chunk") and sample.get("uses_hidden_chunks"))
-            )
+            if int(sample.get("num_valid_visible_spans", 0) or 0) > 0
             and not sample.get("is_correct")
         )
         examples_format_valid_wrong = sum(
@@ -2166,13 +2151,15 @@ class Evaluator:
                 _time.sleep(wait_s)
 
     def _extract_constrained_content(self, output: str) -> List[str]:
-        """Extract content within << >> delimiters.
+        """The contents of the CLOSED `<< >>` spans of the output, in order.
 
-        Non-greedy `.*?` with DOTALL so spans containing `<`, `>`, or
-        comparison operators (Spider SQL: `>`, `<`, `>=`, `<=`, `<>`)
-        match — SQL has no `>>` operator, so the next `>>` always closes.
+        One rule for every task: the spans are whatever `walk_spans` reads out
+        of the output text. An unclosed span contributes nothing, because its
+        content was never claimed to be a finished parse.
         """
-        return re.findall(r"<<\s*(.*?)\s*>>", output, flags=re.DOTALL)
+        from synthesis.evaluate.benchmarks.common.delimiter_hygiene import walk_spans
+
+        return [span.content.strip() for span in walk_spans(output or "").spans if span.closed]
 
     def _truncate_gsm_output(self, output: str) -> str:
         """Trim obvious prompt restarts so scoring focuses on the first answer block."""
@@ -2402,19 +2389,14 @@ class Evaluator:
         logic = self._benchmark_logic()
         return bool(logic.is_correct(self, actual, expected, example, aux, scored_output))
 
-    def _uses_hidden_chunks(self) -> bool:
-        logic = self._benchmark_logic()
-        return bool(logic.uses_hidden_chunks())
-
     def _example_syntax_pass(
         self,
         all_valid_syntax: bool,
         segments: list[tuple[str, bool]],
-        used_hidden_chunk: bool,
         aux: Optional[dict[str, Any]],
     ) -> bool:
         logic = self._benchmark_logic()
-        return bool(logic.example_syntax_pass(all_valid_syntax, segments, used_hidden_chunk, aux))
+        return bool(logic.example_syntax_pass(all_valid_syntax, segments, aux))
 
     def _accuracy_applicable_for_example(self, aux: Optional[dict[str, Any]]) -> bool:
         logic = self._benchmark_logic()
@@ -2586,11 +2568,11 @@ class Evaluator:
                     self._active_generation_token_evidence = None
 
             visible_delimiters = self._contains_delimiters(scored_output)
-            used_hidden_chunk = bool(constrained_segments) or any(
+            used_constrained_chunk = any(
                 event.get("helper") in EvaluationResult._CONSTRAINED_HELPERS
                 for event in (helper_trace or [])
             )
-            contains_delimiters = used_hidden_chunk if self._uses_hidden_chunks() else visible_delimiters
+            contains_delimiters = visible_delimiters
 
             print(
                 f"  [scoring] example={i + 1}/{dataset_len} stage=syntax start",
@@ -2604,14 +2586,11 @@ class Evaluator:
                 flush=True,
             )
             # Per-example syntax pass:
-            # - GSM: visible <<...>> chunks must exist and parse.
-            # - SMILES: the full output is the generated molecule string.
-            # - Spider: chunks are internal/hidden; visible delimiter tokens are not
-            #   part of the answer contract, so count parser-governed chunk usage.
+            # - GSM and Spider: the visible <<...>> spans must exist and parse.
+            # - SMILES: the span content is the generated molecule string.
             example_syntax_pass = self._example_syntax_pass(
                 all_valid_syntax,
                 segments,
-                used_hidden_chunk,
                 benchmark_aux,
             )
             if self.dataset_name == "smiles" and os.environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
@@ -2623,7 +2602,7 @@ class Evaluator:
                 )
             accuracy_applicable = self._accuracy_applicable_for_example(benchmark_aux)
             example_syntax_rate = 1.0 if example_syntax_pass else 0.0
-            if self._uses_hidden_chunks() and self.dataset_name == "smiles":
+            if self.dataset_name == "smiles":
                 visible_span_lengths = (
                     [span_token_length(tokenizer, (benchmark_aux or {}).get("smiles", ""))]
                     if actual
@@ -2661,8 +2640,8 @@ class Evaluator:
                 "accuracy_applicable": accuracy_applicable,
                 "contains_delimiters": contains_delimiters,
                 "visible_delimiters": visible_delimiters,
-                "used_constrained_chunk": used_hidden_chunk,
-                "uses_hidden_chunks": self._uses_hidden_chunks(),
+                "used_constrained_chunk": used_constrained_chunk,
+                "span_forced_open": bool(self._benchmark_logic().force_open_span()),
                 "is_syntax_valid": example_syntax_pass,
                 "syntax_rate": example_syntax_rate,
                 "num_visible_spans": len(segments),
@@ -2793,7 +2772,6 @@ class Evaluator:
                 "contains_delimiters": False,
                 "visible_delimiters": False,
                 "used_constrained_chunk": False,
-                "uses_hidden_chunks": self._uses_hidden_chunks(),
                 "is_syntax_valid": False,
                 "syntax_rate": 0.0,
                 "num_visible_spans": 0,

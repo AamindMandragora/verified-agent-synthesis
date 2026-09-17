@@ -1,32 +1,27 @@
-"""SMILES must genuinely run without visible << >> delimiters.
+"""No SMILES prompt may ask the model for `<< >>` delimiters.
 
 What was wrong
 --------------
-SMILES declared itself delimiter-free -- `emits_visible_delimiters()` returns
-False, and its comment says "SMILES has exactly one constrained span and no
-<< >> markers around it". Its grammar agrees: `smiles_*.lark` starts at
-`start: smiles`, with no delimiter anywhere in it.
-
-But all three of its prompt builders told the model to produce delimiters:
+All three SMILES prompt builders told the model to produce delimiters:
 
     format_prompt                   "Wrap your answer molecule in << >> delimiters"
     format_prompt_expression_only   "Return exactly one line containing `<<SMILES>>`"
     format_prompt_chain_of_thought  "wrap your final SMILES in << >> delimiters"
 
-and its generation runner never asked to start inside the constrained region,
-so generation began outside it on the visible-delimiter surface.
+while the grammar (`smiles_*.lark`, `start: smiles`) has no delimiter in it and
+the baselines SMILES is compared against never ask for one either. Asking for
+something the grammar cannot produce made the comparison unfair and confused
+the strategy-writing AI.
 
-So the benchmark said one thing and did another. That matters twice over:
-`emits_visible_delimiters()` suppresses delimiter diagnostics, so real
-delimiter failures were being hidden; and the strategy-writing AI is told which
-surface it is on, so a wrong answer there makes it write a strategy that cannot
-work.
+The decision (2026-07-28) was to take the delimiters out of the prompts. That
+still holds, and it is what this file pins.
 
-The decision (2026-07-28) was to make the behaviour match the declaration:
-SMILES is delimiter-free for real.
-
-Note on extraction: `clean_smiles_output` in metrics.py strips `<<`/`>>` rather
-than requiring them, so removing the delimiters does not break answer parsing.
+Note the span is a separate matter. Since the span contract was unified, the
+SMILES OUTPUT does carry `<< >>`: the runtime opens the span itself by seeding
+a literal `<<` into the output, and closes it when the molecule is complete.
+None of that touches the PROMPT -- the model sees exactly what a baseline model
+sees -- which is why this file's claim survived the change. `clean_smiles_output`
+strips `<<`/`>>` rather than requiring them, so extraction is unaffected.
 """
 
 from __future__ import annotations
@@ -55,34 +50,15 @@ def test_no_prompt_asks_the_model_for_delimiters(builder_name):
     prompt = builder(None, EXAMPLE)
 
     assert "<<" not in prompt and ">>" not in prompt, (
-        f"{builder_name} still tells the model to emit << >> delimiters, but "
-        "SMILES reports emits_visible_delimiters() == False and its grammar has "
-        "no delimiter in it. The prompt and the benchmark must agree."
-    )
-    assert "delimiter" not in prompt.lower(), (
-        f"{builder_name} still mentions delimiters to the model."
+        f"{builder_name} tells the model to emit << >> delimiters. The SMILES "
+        "grammar has no delimiter in it and the baselines do not ask for one; "
+        "the span is opened by the RUNTIME, in the output, not by the prompt."
     )
 
 
-def test_smiles_reports_that_it_starts_inside_the_constrained_region():
-    assert _smiles_eval_logic().starts_inside_constrained() is True, (
-        "SMILES has no visible delimiters, so there is no `<<` for a strategy to "
-        "wait for. Generation must therefore begin already inside the "
-        "constrained region, and the author's prompt must be told so."
-    )
-
-
-def test_smiles_generation_actually_starts_inside_the_constrained_region(monkeypatch):
-    """The claim above must match what evaluation really does.
-
-    Declaring the surface is only useful if the run honours it. The runner
-    imports `run_crane_csd` when called, not at module load, so replacing it on
-    the generation module first intercepts the call without loading a model.
-    """
-    eval_logic = _smiles_eval_logic()
-    generation = importlib.import_module(
-        "synthesis.evaluate.benchmarks.smiles.generation"
-    )
+def test_the_runtime_opens_the_span_instead(monkeypatch):
+    """SMILES generation asks the runtime to open the span, not the model."""
+    from synthesis.evaluate.benchmarks.smiles import generation
 
     seen: dict = {}
 
@@ -91,13 +67,10 @@ def test_smiles_generation_actually_starts_inside_the_constrained_region(monkeyp
         return ("", 0, 0.0, [], [])
 
     monkeypatch.setattr(generation, "run_crane_csd", _capture)
+    _smiles_eval_logic().get_generation_runner()()
 
-    runner = eval_logic.get_generation_runner()
-    runner()
-
-    assert seen.get("start_inside_constrained") is True, (
-        "SMILES evaluation still generates on the visible-delimiter surface. "
-        f"start_inside_constrained was {seen.get('start_inside_constrained')!r}. "
-        "The strategy will wait for a `<<` that no one emits and never constrain "
-        "anything."
+    assert seen.get("force_open_span") is True, (
+        "SMILES generation must run with force_open_span=True: nothing in the "
+        "prompt asks the model for a `<<`, so if the runtime does not open the "
+        "span, a strategy waiting for one waits forever."
     )

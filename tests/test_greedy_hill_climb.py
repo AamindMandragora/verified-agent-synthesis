@@ -69,13 +69,13 @@ class FakeGenerator:
         return "summary"
 
     def generate_initial(
-        self, task_description, allowed_helpers=None, start_inside_constrained=False
+        self, task_description, allowed_helpers=None, force_open_span=False
     ):
         self.generate_initial_calls.append(
             {
                 "task_description": task_description,
                 "allowed_helpers": allowed_helpers,
-                "start_inside_constrained": start_inside_constrained,
+                "force_open_span": force_open_span,
             }
         )
         return self.strategies[0]

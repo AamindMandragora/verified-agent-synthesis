@@ -42,7 +42,6 @@ def _sample(index: int, *, visible: bool) -> dict:
         "contains_delimiters": visible,
         "visible_delimiters": visible,
         "used_constrained_chunk": not visible,
-        "uses_hidden_chunks": not visible,
         "is_syntax_valid": False,
         "syntax_rate": 0.0,
         "runtime_budget_exceeded": False,

@@ -272,7 +272,7 @@ class StrategyGenerator:
         self._client = None
         self._vllm = None
         self._current_task_description: Optional[str] = None
-        self._current_start_inside_constrained: bool = False
+        self._current_force_open_span: bool = False
         self._prompt_log_counter = 0
         self._synthesis_context: Optional[dict[str, str]] = None
         self._summary_client = None
@@ -2312,7 +2312,7 @@ class StrategyGenerator:
                 current,
                 search_memory,
                 allowed_helpers=allowed_helpers,
-                start_inside_constrained=self._current_start_inside_constrained,
+                force_open_span=self._current_force_open_span,
             )
             repaired_raw = self._generate_text(system_prompt, user_prompt)
             repaired = self._extract_strategy(repaired_raw)
@@ -2327,14 +2327,14 @@ class StrategyGenerator:
         self,
         task_description: str,
         allowed_helpers: list[str] | None = None,
-        start_inside_constrained: bool = False,
+        force_open_span: bool = False,
     ) -> str:
         """
         Generate an initial strategy for the given task.
 
         Args:
             task_description: Description of what the strategy should accomplish
-            start_inside_constrained: Whether this run's decoding surface starts
+            force_open_span: Whether this run's decoding surface starts
                 already inside the constrained region (EnterObservedConstrainedSpan,
                 no visible "<<") rather than outside it (OpenConstrainedSpan, which
                 emits "<<"). Told to the author so it enters constrained mode the
@@ -2344,15 +2344,15 @@ class StrategyGenerator:
             Strategy expression (Dafny code)
         """
         # set_task_description also rejects an empty task. It does not touch
-        # _current_start_inside_constrained, so that stays a separate line --
+        # _current_force_open_span, so that stays a separate line --
         # without it the flag would keep its initial False and every later
         # prompt would enter constrained mode the wrong way.
         self.set_task_description(task_description)
-        self._current_start_inside_constrained = start_inside_constrained
+        self._current_force_open_span = force_open_span
         system_prompt, user_prompt = build_initial_prompt(
             task_description,
             allowed_helpers=allowed_helpers,
-            start_inside_constrained=start_inside_constrained,
+            force_open_span=force_open_span,
         )
         raw_output = self._generate_text(system_prompt, user_prompt)
         strategy = self._extract_strategy(raw_output)
@@ -2390,7 +2390,7 @@ class StrategyGenerator:
             strategy_context,
             search_memory,
             allowed_helpers=allowed_helpers,
-            start_inside_constrained=self._current_start_inside_constrained,
+            force_open_span=self._current_force_open_span,
         )
         raw_output = self._generate_text(system_prompt, user_prompt)
         strategy = self._extract_strategy(raw_output)
@@ -2424,7 +2424,7 @@ class StrategyGenerator:
             task_description,
             search_memory,
             allowed_helpers=allowed_helpers,
-            start_inside_constrained=self._current_start_inside_constrained,
+            force_open_span=self._current_force_open_span,
         )
         raw_output = self._generate_text(system_prompt, user_prompt)
         strategy = self._extract_strategy(raw_output)
@@ -2456,7 +2456,7 @@ class StrategyGenerator:
             error_message,
             search_memory,
             allowed_helpers=allowed_helpers,
-            start_inside_constrained=self._current_start_inside_constrained,
+            force_open_span=self._current_force_open_span,
         )
         raw_output = self._generate_text(system_prompt, user_prompt)
         strategy = self._extract_strategy(raw_output)
@@ -2511,7 +2511,7 @@ class StrategyGenerator:
             eval_max_seconds_per_example=eval_max_seconds_per_example,
             mode_examples=mode_examples,
             attempt_outcome_ledger=attempt_outcome_ledger,
-            start_inside_constrained=self._current_start_inside_constrained,
+            force_open_span=self._current_force_open_span,
         )
         raw_output = self._generate_text(system_prompt, user_prompt)
         strategy = self._extract_strategy(raw_output)

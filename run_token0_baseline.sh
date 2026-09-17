@@ -10,7 +10,6 @@
 set -u
 cd ~/csd-generation
 export SPIDER_DB_DIR=~/csd-generation/synthesis/evaluate/syncode/syncode/utils/sql_spider_eval/databases
-export SPIDER_TOKEN0_CONSTRAINED=1   # explicit: token-0 default surface
 export CUDA_VISIBLE_DEVICES=2
 
 STRAT=outputs/strategies/spider_token0_crane_baseline.dfybody

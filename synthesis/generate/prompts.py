@@ -2335,29 +2335,26 @@ def _build_tool_reference_block(allowed_helpers: list[str] | None) -> str:
     return _filter_tool_reference(allowed_helpers) + "\n\n"
 
 
-def _build_decoding_surface_block(start_inside_constrained: bool) -> str:
-    """State which decoding surface this run uses.
+def _build_decoding_surface_block(force_open_span: bool) -> str:
+    """State where in the output this run starts.
 
-    Two different runs hand the strategy different starting points: one
-    starts outside the constrained region and must open it explicitly with
-    `OpenConstrainedSpan` (which emits a literal `<<`); the other starts
-    already inside the constrained region, entered with
-    `EnterObservedConstrainedSpan`, which emits nothing -- no `<<` token is
-    ever produced by anyone. Without this block a strategy written for one
-    surface silently does nothing on the other, e.g. a strategy that waits
-    for `next == "<<"` before constraining never constrains anything on a
-    run that starts inside the constrained region, because that token never
-    arrives.
+    Two different runs hand the strategy different starting points: one starts
+    outside the span and must open it; the other starts inside a span the
+    runtime already opened. Without this block a strategy written for one
+    starting point silently does nothing on the other, e.g. one that waits for
+    `next == "<<"` before constraining never constrains anything on a run whose
+    `<<` is already in the output.
     """
-    if start_inside_constrained:
+    if force_open_span:
         return (
             "## Decoding surface\n\n"
-            "This run starts inside the constrained region already. Enter "
-            "constrained mode by calling `EnterObservedConstrainedSpan`, not "
-            "`OpenConstrainedSpan` -- no `<<` token will ever appear in the "
-            "output, from you or anyone else. Do not write logic that waits "
-            "for `<<` before entering constrained mode; that logic will "
-            "never run.\n\n"
+            "This run starts inside a span the runtime already opened: the "
+            "output already contains a visible `<<` and you are inside the "
+            "span. Call `CloseConstrainedSpan` to append `>>` and leave the "
+            "span once its content is complete. If you are not inside a span, "
+            "open one with `OpenConstrainedSpan`, which appends a literal "
+            "`<<`. Do not write logic that waits for a `<<` to arrive; the "
+            "opening `<<` is already there.\n\n"
         )
     return (
         "## Decoding surface\n\n"
@@ -2398,13 +2395,13 @@ def _build_verified_examples_block(allowed_helpers: list[str] | None) -> str:
 def build_initial_prompt(
     task_description: str,
     allowed_helpers: list[str] | None = None,
-    start_inside_constrained: bool = False,
+    force_open_span: bool = False,
 ) -> tuple[str, str]:
     user_prompt = INITIAL_GENERATION_PROMPT.format(
         task_description=task_description,
         allowed_helpers_block=_build_allowed_helpers_block(allowed_helpers),
         tool_reference_block=_build_tool_reference_block(allowed_helpers),
-        decoding_surface_block=_build_decoding_surface_block(start_inside_constrained),
+        decoding_surface_block=_build_decoding_surface_block(force_open_span),
         verified_examples=_build_verified_examples_block(allowed_helpers),
     )
     return SYSTEM_PROMPT, user_prompt
@@ -2420,7 +2417,7 @@ def build_verification_error_prompt(
     strategy_context: str = "",
     search_memory: str = "",
     allowed_helpers: list[str] | None = None,
-    start_inside_constrained: bool = False,
+    force_open_span: bool = False,
 ) -> tuple[str, str]:
     behavioral_context_block = ""
     structured_feedback_block = ""
@@ -2456,7 +2453,7 @@ def build_verification_error_prompt(
         task_description=task_description,
         allowed_helpers_block=_build_allowed_helpers_block(allowed_helpers),
         tool_reference_block=_build_tool_reference_block(allowed_helpers),
-        decoding_surface_block=_build_decoding_surface_block(start_inside_constrained),
+        decoding_surface_block=_build_decoding_surface_block(force_open_span),
         previous_strategy=previous_strategy,
         error_message=error_message,
         strategy_context_block=strategy_context_block,
@@ -2475,14 +2472,14 @@ def build_runtime_error_prompt(
     task_description: str = "Unknown task",
     search_memory: str = "",
     allowed_helpers: list[str] | None = None,
-    start_inside_constrained: bool = False,
+    force_open_span: bool = False,
 ) -> tuple[str, str]:
     search_memory_block = f"{search_memory}\n" if search_memory else ""
     user_prompt = RUNTIME_ERROR_REFINEMENT_PROMPT.format(
         task_description=task_description,
         allowed_helpers_block=_build_allowed_helpers_block(allowed_helpers),
         tool_reference_block=_build_tool_reference_block(allowed_helpers),
-        decoding_surface_block=_build_decoding_surface_block(start_inside_constrained),
+        decoding_surface_block=_build_decoding_surface_block(force_open_span),
         previous_strategy=previous_strategy,
         error_traceback=error_traceback,
         search_memory_block=search_memory_block,
@@ -2495,13 +2492,13 @@ def build_compilation_error_prompt(
     error_message: str,
     search_memory: str = "",
     allowed_helpers: list[str] | None = None,
-    start_inside_constrained: bool = False,
+    force_open_span: bool = False,
 ) -> tuple[str, str]:
     search_memory_block = f"{search_memory}\n" if search_memory else ""
     user_prompt = COMPILATION_ERROR_REFINEMENT_PROMPT.format(
         allowed_helpers_block=_build_allowed_helpers_block(allowed_helpers),
         tool_reference_block=_build_tool_reference_block(allowed_helpers),
-        decoding_surface_block=_build_decoding_surface_block(start_inside_constrained),
+        decoding_surface_block=_build_decoding_surface_block(force_open_span),
         previous_strategy=previous_strategy,
         error_message=error_message,
         search_memory_block=search_memory_block,
@@ -2513,13 +2510,13 @@ def build_format_repair_prompt(
     previous_strategy: str,
     search_memory: str = "",
     allowed_helpers: list[str] | None = None,
-    start_inside_constrained: bool = False,
+    force_open_span: bool = False,
 ) -> tuple[str, str]:
     search_memory_block = f"{search_memory}\n" if search_memory else ""
     user_prompt = FORMAT_REPAIR_PROMPT.format(
         allowed_helpers_block=_build_allowed_helpers_block(allowed_helpers),
         tool_reference_block=_build_tool_reference_block(allowed_helpers),
-        decoding_surface_block=_build_decoding_surface_block(start_inside_constrained),
+        decoding_surface_block=_build_decoding_surface_block(force_open_span),
         previous_strategy=previous_strategy,
         search_memory_block=search_memory_block,
     )
@@ -2580,7 +2577,7 @@ def build_evaluation_failure_prompt(
     eval_max_seconds_per_example: float | None = None,
     mode_examples: str = "",
     attempt_outcome_ledger: str = "",
-    start_inside_constrained: bool = False,
+    force_open_span: bool = False,
 ) -> tuple[str, str]:
     search_memory_block = f"{search_memory}\n" if search_memory else ""
     best_so_far_block = _build_best_so_far_block(
@@ -2604,7 +2601,7 @@ def build_evaluation_failure_prompt(
         task_description=task_description,
         allowed_helpers_block=_build_allowed_helpers_block(allowed_helpers),
         tool_reference_block=_build_tool_reference_block(allowed_helpers),
-        decoding_surface_block=_build_decoding_surface_block(start_inside_constrained),
+        decoding_surface_block=_build_decoding_surface_block(force_open_span),
         previous_strategy=previous_strategy,
         previous_accuracy=previous_accuracy,
         previous_syntax_rate=previous_syntax_rate,

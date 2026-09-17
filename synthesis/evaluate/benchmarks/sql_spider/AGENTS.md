@@ -15,12 +15,13 @@
   guidance block is rebuilt before the final `SQL:` cue; missing state fails
   closed with a descriptive error, and guidance is never appended after the
   answer cue.
-- Token-0 Spider scoring accepts only one parser-valid bare SQL statement and
-  records a stable rejection reason plus complete ordered generated-token
-  boundary evidence. Remove only terminal IDs supplied by the generation
-  adapter's exact stop set; tokenizer-wide special IDs are not a stop rule.
-  Preserve `SPIDER_TOKEN0_CONSTRAINED=0` as the explicit legacy visible-span
-  mode.
+- Spider scoring reads the `<< >>` span content and accepts only one
+  parser-valid SQL statement, recording a stable rejection reason plus complete
+  ordered generated-token boundary evidence. Remove only terminal IDs supplied
+  by the generation adapter's exact stop set; tokenizer-wide special IDs are not
+  a stop rule. The runtime opens the span itself (a literal `<<` seeded into the
+  output) and closes it when the content is a complete parse; the prompt is
+  unaffected.
 
 ## See also
 

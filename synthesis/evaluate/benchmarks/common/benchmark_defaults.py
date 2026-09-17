@@ -5,22 +5,19 @@ from __future__ import annotations
 from typing import Any
 
 
-def uses_hidden_chunks() -> bool:
-    return False
+def force_open_span() -> bool:
+    """Whether the runtime opens this benchmark's constrained span itself.
 
-
-def starts_inside_constrained() -> bool:
-    """Whether this benchmark's evaluation generation starts already inside
-    the constrained region (EnterObservedConstrainedSpan surface) rather than
-    outside it (OpenConstrainedSpan surface, which emits a visible "<<").
-    Told to the strategy author so its prompt states the right surface."""
+    True means generation starts with the output already equal to ``["<<"]``
+    and the strategy already inside the span; the strategy closes it with
+    ``CloseConstrainedSpan``, and the verified template closes a complete span
+    the strategy left open. The Python runtime never writes the closer."""
     return False
 
 
 def example_syntax_pass_from_segments(
     all_valid_syntax: bool,
     segments: list[tuple[str, bool]],
-    used_hidden_chunk: bool,
     aux: dict[str, Any] | None,
 ) -> bool:
     return bool(segments) and all_valid_syntax

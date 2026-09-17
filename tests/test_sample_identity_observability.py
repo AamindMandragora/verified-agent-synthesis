@@ -44,7 +44,6 @@ def test_sample_observability_annotation_keeps_identity_fields():
         "contains_delimiters": True,
         "visible_delimiters": True,
         "used_constrained_chunk": False,
-        "uses_hidden_chunks": False,
         "is_syntax_valid": False,
         "syntax_rate": 0.0,
         "num_visible_spans": 0,

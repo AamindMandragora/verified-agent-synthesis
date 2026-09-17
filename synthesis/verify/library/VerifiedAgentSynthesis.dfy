@@ -3053,6 +3053,7 @@ module VerifiedDecoderAgent {
       requires ">>" in lm.Tokens
       ensures lm.ValidTokensIdsLogits()
       ensures |generatedOut| <= |generated| + 1
+      ensures generatedOut == generated || generatedOut == generated + [">>"]
       ensures parser.IsCompletePrefix(currentConstrained) ==>
               (!insideOut && currentOut == [] && cost == old(cost) + 1 && closed)
       ensures !parser.IsCompletePrefix(currentConstrained) ==>

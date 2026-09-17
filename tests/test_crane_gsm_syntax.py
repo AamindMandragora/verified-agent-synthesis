@@ -42,7 +42,7 @@ def _make_evaluator():
 def _syntax_pass(ev, output: str, example: dict | None = None) -> bool:
     """Run the full syntax-pass pipeline as the eval loop does."""
     all_valid, segments = ev._check_syntax_validity(output, example=example)
-    return ev._example_syntax_pass(all_valid, segments, False, None)
+    return ev._example_syntax_pass(all_valid, segments, None)
 
 
 # ---------------------------------------------------------------------------
