@@ -1561,9 +1561,11 @@ module VerifiedDecoderAgent {
       ensures |currentOut| <= |generatedOut|
       ensures generatedOut[|generatedOut| - |currentOut|..] == currentOut
       ensures |generatedOut| <= |generated|
+      ensures Tied(parser, generated, true, currentConstrained) ==> Tied(parser, generatedOut, true, currentOut)
     {
       var stablePrefix := generated[..|generated| - |currentConstrained|];
       currentOut := RollbackToCompletePrefix(parser, currentConstrained);
+      if Tied(parser, generated, true, currentConstrained) { ReplaceTied(parser, generated, currentConstrained, currentOut); }
       generatedOut := stablePrefix + currentOut;
       assert |stablePrefix| == |generated| - |currentConstrained|;
       assert |generatedOut| == |stablePrefix| + |currentOut|;
@@ -3028,6 +3030,7 @@ module VerifiedDecoderAgent {
       ensures !parser.IsCompletePrefix(currentConstrained) ==>
               (generatedOut == generated && insideOut == true &&
                currentOut == currentConstrained && cost == old(cost) && !closed)
+      ensures Tied(parser, generated, true, currentConstrained) ==> Tied(parser, generatedOut, insideOut, currentOut)
     {
       if parser.IsCompletePrefix(currentConstrained) {
         generatedOut, insideOut, currentOut := CloseConstrainedSpan(lm, parser, generated, currentConstrained);
