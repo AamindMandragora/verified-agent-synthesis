@@ -400,6 +400,120 @@ module VerifiedDecoderAgent {
     |s| >= |suf| && s[|s| - |suf|..] == suf
   }
 
+  // ---------------------------------------------------------------------------
+  // Span contract: what the OUTPUT token sequence is allowed to look like.
+  //
+  // Walking the output left to right, we are either in free text or inside a
+  // `<<` span. Free-text tokens carry no delimiter text. A span closes either
+  // because its own content ends in `>>` (GSM: the grammar includes the closer)
+  // or because an explicit `>>` token follows complete content (SQL, SMILES).
+  // A closed span must be a complete parse. Anything else is Bad.
+  // ---------------------------------------------------------------------------
+  datatype SpanState = Bad | Outside | Inside(content: Prefix)
+
+  predicate DelimFree(t: Token)
+  {
+    !Contains(t, "<<") && !Contains(t, ">>")
+  }
+
+  ghost function SpanStep(parser: Parser, st: SpanState, t: Token): SpanState
+  {
+    match st
+    case Bad => Bad
+    case Outside => if t == "<<" then Inside([]) else if DelimFree(t) then Outside else Bad
+    case Inside(c) =>
+      if t == ">>" && parser.IsCompletePrefix(c) && !RenderedEndsWith(c, ">>") then Outside
+      else if !parser.IsValidPrefix(c + [t]) then Bad
+      else if RenderedEndsWith(c + [t], ">>") then Outside
+      else Inside(c + [t])
+  }
+
+  ghost function SpanStateOf(parser: Parser, g: Prefix): SpanState
+    decreases |g|
+  {
+    if |g| == 0 then Outside
+    else SpanStep(parser, SpanStateOf(parser, g[..|g| - 1]), g[|g| - 1])
+  }
+
+  // The decoder's tracked state agrees with the output.
+  //   outside: the whole output walks to Outside (every span so far closed and complete);
+  //   inside : output == history + ["<<"] + current, history walks to Outside, current is a valid prefix.
+  ghost predicate Tied(parser: Parser, g: Prefix, inside: bool, cur: Prefix)
+  {
+    if inside then
+      |cur| + 1 <= |g| &&
+      g[|g| - |cur|..] == cur &&
+      g[|g| - |cur| - 1] == "<<" &&
+      SpanStateOf(parser, g[..|g| - |cur| - 1]) == Outside &&
+      parser.IsValidPrefix(cur)
+    else
+      cur == [] && SpanStateOf(parser, g) == Outside
+  }
+
+  // Assumptions about the grammar side, made true by the Python parser wrapper:
+  // a valid prefix stays valid when shortened, and once content ends in `>>`
+  // it is complete and nothing can follow it.
+  lemma {:axiom} ValidPrefixesAreClosed(parser: Parser, p: Prefix, k: nat)
+    requires parser.IsValidPrefix(p) && k <= |p|
+    ensures parser.IsValidPrefix(p[..k])
+
+  lemma {:axiom} CloserIsTerminal(parser: Parser, p: Prefix)
+    requires parser.IsValidPrefix(p) && RenderedEndsWith(p, ">>")
+    ensures parser.IsCompletePrefix(p)
+    ensures forall t: Token :: !parser.IsValidPrefix(p + [t])
+
+  lemma SpanStateAppend(parser: Parser, g: Prefix, t: Token)
+    ensures SpanStateOf(parser, g + [t]) == SpanStep(parser, SpanStateOf(parser, g), t)
+  {
+    assert (g + [t])[..|g + [t]| - 1] == g;
+  }
+
+  // Walking `hist + ["<<"] + cur` for valid `cur`: still inside with content `cur`,
+  // unless `cur` itself ends in `>>`, in which case the span has closed.
+  lemma InsideRun(parser: Parser, hist: Prefix, cur: Prefix)
+    requires SpanStateOf(parser, hist) == Outside
+    requires parser.IsValidPrefix(cur)
+    ensures SpanStateOf(parser, hist + ["<<"] + cur) ==
+            (if RenderedEndsWith(cur, ">>") then Outside else Inside(cur))
+    decreases |cur|
+  {
+    if |cur| == 0 {
+      SpanStateAppend(parser, hist, "<<");
+      assert hist + ["<<"] + cur == hist + ["<<"];
+      assert RenderPrefix(cur) == "";
+    } else {
+      var init := cur[..|cur| - 1];
+      var t := cur[|cur| - 1];
+      ValidPrefixesAreClosed(parser, cur, |cur| - 1);
+      InsideRun(parser, hist, init);
+      assert cur == init + [t];
+      if RenderedEndsWith(init, ">>") {
+        CloserIsTerminal(parser, init);
+        assert false;
+      }
+      assert hist + ["<<"] + cur == (hist + ["<<"] + init) + [t];
+      SpanStateAppend(parser, hist + ["<<"] + init, t);
+      if t == ">>" && parser.IsCompletePrefix(init) {
+        // explicit-closer reading and content reading agree: both give Outside
+        assert RenderedEndsWith(cur, ">>") by { RenderAppend(init, t); }
+      }
+    }
+  }
+
+  lemma RenderAppend(p: Prefix, t: Token)
+    ensures RenderPrefix(p + [t]) == RenderPrefix(p) + t
+    decreases |p|
+  {
+    if |p| == 0 {
+      assert p + [t] == [t];
+      assert RenderPrefix([t]) == t + RenderPrefix([]);
+    } else {
+      assert (p + [t])[0] == p[0];
+      assert (p + [t])[1..] == p[1..] + [t];
+      RenderAppend(p[1..], t);
+    }
+  }
+
   class CSDHelpers {
     var cost: int
 
@@ -683,7 +797,7 @@ module VerifiedDecoderAgent {
       ensures lm.ValidTokensIdsLogits()
       ensures parser.IsValidPrefix(out)
       ensures |out| <= |cur| + budget
-      ensures cost <= old(cost) + budget
+      ensures old(cost) <= cost <= old(cost) + budget
     {
       out := cur;
       if num == 0 || budget == 0 {
@@ -696,6 +810,7 @@ module VerifiedDecoderAgent {
         invariant parser.IsValidPrefix(out)
         invariant 0 <= steps <= budget
         invariant |out| <= |cur| + steps
+        invariant cost == old(cost) + steps
         decreases budget - steps
       {
         if parser.CompletedSymbolCount(out, unit, baseline) >= num {
@@ -722,6 +837,7 @@ module VerifiedDecoderAgent {
         if total > 0 {
           var endIdx := parser.SymbolEndTokenIndex(out, unit, total - 1);
           if endIdx <= |out| {
+            ValidPrefixesAreClosed(parser, out, endIdx);
             out := out[..endIdx];
           }
         }
@@ -747,6 +863,7 @@ module VerifiedDecoderAgent {
       }
       var which := total - num;
       var idx := parser.SymbolStartTokenIndex(cur, unit, which);
+      ValidPrefixesAreClosed(parser, cur, idx);
       truncated := cur[..idx];
     }
 
@@ -2448,12 +2565,15 @@ module VerifiedDecoderAgent {
             );
             unitIters := unitIters + 1;
             if |currentConstrained| > maxSteps {
+              ValidPrefixesAreClosed(parser, currentConstrained, maxSteps);
               currentConstrained := currentConstrained[..maxSteps];
             }
             generated := generated[..spanStart] + currentConstrained;
             if |generated| > maxSteps {
               generated := generated[..maxSteps];
               if |generated| >= spanStart {
+                ValidPrefixesAreClosed(parser, currentConstrained, maxSteps - spanStart);
+                assert generated[spanStart..] == currentConstrained[..maxSteps - spanStart];
                 currentConstrained := generated[spanStart..];
               } else {
                 currentConstrained := [];
