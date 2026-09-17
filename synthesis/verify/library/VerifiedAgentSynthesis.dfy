@@ -2860,6 +2860,7 @@ module VerifiedDecoderAgent {
       requires boostAmount >= 0.0 && boostAmount <= 100000000.0
       requires eosToken in lm.Tokens
       ensures lm.ValidTokensIdsLogits()
+      ensures Tied(parser, generatedPrefix, insideConstrained, currentConstrained) ==> Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
       ensures |generated| <= |generatedPrefix| + maxSteps
       ensures !insideConstrainedOut ==> currentConstrainedOut == []
       ensures insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
@@ -2876,6 +2877,7 @@ module VerifiedDecoderAgent {
       while steps < maxSteps
         invariant 0 <= steps <= maxSteps
         invariant lm.ValidTokensIdsLogits()
+        invariant Tied(parser, generatedPrefix, insideConstrained, currentConstrained) ==> Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
         invariant !insideConstrainedOut ==> currentConstrainedOut == []
         invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
         invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
@@ -2890,7 +2892,6 @@ module VerifiedDecoderAgent {
             break;
           }
           generated := generated + [next];
-          // Rendered-text opener match; see the note at the sibling site above.
           // Outside a span the sampler bans every opener variant except the exact token.
           var openHit := next == "<<";
           if openHit {
@@ -2964,6 +2965,7 @@ module VerifiedDecoderAgent {
       requires prefixBudget <= maxSteps
       requires eosToken in lm.Tokens
       ensures lm.ValidTokensIdsLogits()
+      ensures Tied(parser, generatedPrefix, insideConstrained, currentConstrained) ==> Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
       ensures |generated| <= |generatedPrefix| + maxSteps
       ensures !insideConstrainedOut ==> currentConstrainedOut == []
       ensures insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
@@ -2980,6 +2982,7 @@ module VerifiedDecoderAgent {
       while steps < maxSteps
         invariant 0 <= steps <= maxSteps
         invariant lm.ValidTokensIdsLogits()
+        invariant Tied(parser, generatedPrefix, insideConstrained, currentConstrained) ==> Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
         invariant !insideConstrainedOut ==> currentConstrainedOut == []
         invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
         invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
@@ -2995,8 +2998,7 @@ module VerifiedDecoderAgent {
               break;
             }
             generated := generated + [next];
-            // Rendered-text opener match; see the note at the sibling site above.
-            // Outside a span the sampler bans every opener variant except the exact token.
+              // Outside a span the sampler bans every opener variant except the exact token.
             var openHit := next == "<<";
             if openHit {
               insideConstrainedOut := true;
