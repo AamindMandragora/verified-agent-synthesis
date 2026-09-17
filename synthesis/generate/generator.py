@@ -56,6 +56,28 @@ CLAUDE_ACCESS_ERROR_MARKER = "[claude-author-access]"
 CODEX_MODEL = "gpt-5.6-sol"
 CODEX_ACCESS_ERROR_MARKER = "[codex-author-access]"
 
+# The one Dafny template every strategy body is inserted into. There is exactly
+# one contract, in GeneratedCSD.dfy; a strategy (synthesized or reference) is a
+# BODY that goes at the marker. Anything that needs a full .dfy file builds it
+# here rather than keeping its own copy of the signature.
+TEMPLATE_PATH = Path(__file__).parent.parent / "verify" / "library" / "GeneratedCSD.dfy"
+STRATEGY_MARKER = "// QWEN_INSERT_STRATEGY_HERE"
+
+
+def load_template() -> str:
+    """Read the GeneratedCSD.dfy template."""
+    if not TEMPLATE_PATH.exists():
+        raise FileNotFoundError(
+            f"Template not found at {TEMPLATE_PATH}. "
+            "Make sure GeneratedCSD.dfy exists in synthesis/verify/library/."
+        )
+    return TEMPLATE_PATH.read_text()
+
+
+def inject_strategy_into_template(strategy: str) -> str:
+    """Insert a strategy body into the template, returning complete Dafny source."""
+    return load_template().replace(STRATEGY_MARKER, strategy)
+
 
 class ClaudeTransientError(RuntimeError):
     """A temporary Claude transport failure that must not consume an attempt."""
@@ -75,12 +97,6 @@ class StrategyGenerator:
 
     # Default model - can be overridden
     DEFAULT_MODEL = "Qwen/Qwen2.5-Coder-7B-Instruct"
-
-    # Path to the template file
-    TEMPLATE_PATH = Path(__file__).parent.parent / "verify" / "library" / "GeneratedCSD.dfy"
-
-    # Marker in template to replace
-    STRATEGY_MARKER = "// QWEN_INSERT_STRATEGY_HERE"
 
     def __init__(
         self,
@@ -386,12 +402,7 @@ class StrategyGenerator:
 
     def _load_template(self) -> str:
         """Load the GeneratedCSD.dfy template."""
-        if not self.TEMPLATE_PATH.exists():
-            raise FileNotFoundError(
-                f"Template not found at {self.TEMPLATE_PATH}. "
-                "Make sure GeneratedCSD.dfy exists in synthesis/verify/library/."
-            )
-        return self.TEMPLATE_PATH.read_text()
+        return load_template()
 
     def set_synthesis_context(
         self,
@@ -2531,7 +2542,7 @@ class StrategyGenerator:
         Returns:
             Complete Dafny source code
         """
-        return self._template.replace(self.STRATEGY_MARKER, strategy)
+        return self._template.replace(STRATEGY_MARKER, strategy)
 
     def get_template(self) -> str:
         """Get the raw template content."""

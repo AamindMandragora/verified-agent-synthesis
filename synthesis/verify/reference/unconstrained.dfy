@@ -1,70 +1,54 @@
-include "../library/VerifiedAgentSynthesis.dfy"
+    // Reference reconstruction: pure unconstrained decoding (no grammar enforcement).
+    //
+    // Two honest concessions to the span contract, neither of which changes what the
+    // model is allowed to sample:
+    //   * On Spider/SMILES the runtime starts the body already inside a span
+    //     (generatedPrefix == ["<<"]). This baseline enforces no grammar, so it drops
+    //     that opener (rolling the span's content back to the entry point first) and
+    //     decodes free text from there. Nothing the model produced is discarded: at
+    //     token 0 the span content is empty.
+    //   * The contract requires "<<" somewhere in the output whenever maxSteps > 0,
+    //     so if the model never emits one, a single held-back step opens a span at the
+    //     very end. It carries no content and no grammar mask is ever applied.
+    if maxSteps == 0 { return; }
 
-// Reference reconstruction: pure unconstrained decoding (no grammar enforcement).
-module ReferenceUnconstrainedCSD {
-  import opened VerifiedDecoderAgent
-
-  method MyCSDStrategy(
-    lm: LM,
-    parser: Parser,
-    prompt: Prefix,
-    generatedPrefix: Prefix,
-    insideConstrained: bool,
-    currentConstrained: Prefix,
-    maxSteps: nat,
-    stepTokenBudget: nat,
-    validTokenGroups: seq<seq<Token>>,
-    eosToken: Token
-  ) returns (
-    generated: Prefix,
-    insideConstrainedOut: bool,
-    currentConstrainedOut: Prefix,
-    cost: int
-  )
-    modifies lm.Logits
-    requires lm.ValidTokensIdsLogits()
-    requires parser.IsValidPrefix([])
-    requires !insideConstrained ==> currentConstrained == []
-    requires insideConstrained ==> parser.IsValidPrefix(currentConstrained)
-    requires insideConstrained ==> |currentConstrained| <= |generatedPrefix|
-    requires eosToken in lm.Tokens
-    ensures lm.ValidTokensIdsLogits()
-    ensures |generated| <= |generatedPrefix| + maxSteps
-    ensures !insideConstrainedOut ==> currentConstrainedOut == []
-    ensures insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-    ensures cost <= maxSteps
-    ensures maxSteps == 0 || cost > 0 || generated != generatedPrefix ||
-            insideConstrainedOut != insideConstrained ||
-            currentConstrainedOut != currentConstrained
-
-  {
-    var helpers := new CSDHelpers();
-    var g := generatedPrefix;
-
-    if maxSteps == 0 {
-      generated := g;
-      insideConstrainedOut := false;
+    if insideConstrainedOut {
+      // Roll the open span back to its entry point, then drop the opener itself.
+      var stable := generated[..|generated| - |currentConstrainedOut|];
+      ReplaceTied(parser, generated, currentConstrainedOut, []);
+      assert stable + [] == stable;
+      generated := stable;
       currentConstrainedOut := [];
-      cost := helpers.cost;
-      return;
+      assert Tied(parser, generated, true, []);
+      generated := generated[..|generated| - 1];
+      insideConstrainedOut := false;
     }
+    assert Tied(parser, generated, false, []);
 
-    while helpers.cost < maxSteps
+    while helpers.cost + 1 < maxSteps
       invariant lm.ValidTokensIdsLogits()
-      invariant |g| <= |generatedPrefix| + helpers.cost
-      invariant 0 <= helpers.cost <= maxSteps
+      invariant |generated| <= |generatedPrefix| + helpers.cost
+      invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+      invariant !insideConstrainedOut ==> currentConstrainedOut == []
+      invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
+      invariant 0 <= helpers.cost && helpers.cost + 1 <= maxSteps
       decreases maxSteps - helpers.cost
     {
-      var next := helpers.UnconstrainedStep(lm, prompt, g);
-      g := g + [next];
-      if next == eosToken {
+      if insideConstrainedOut { break; }
+      var next := helpers.UnconstrainedStep(lm, prompt, generated);
+      generated := generated + [next];
+      if next == "<<" {
+        // The model wrote an opener itself; free-running past it would break the
+        // span contract, so stop here and let the template close the span.
+        insideConstrainedOut := true;
+        currentConstrainedOut := [];
         break;
       }
+      if next == eosToken { break; }
     }
 
-    generated := g;
-    insideConstrainedOut := false;
-    currentConstrainedOut := [];
+    if !insideConstrainedOut && "<<" !in generated {
+      generated, insideConstrainedOut, currentConstrainedOut :=
+        helpers.OpenConstrainedSpan(lm, generated);
+    }
     cost := helpers.cost;
-  }
-}

@@ -23,12 +23,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from synthesis.evaluate.baseline_store import build_metrics_from_eval_samples
+from synthesis.generate.generator import inject_strategy_into_template
 from synthesis.evaluate.evaluator import Evaluator
 
 
@@ -44,24 +44,6 @@ STRATEGY_DFY: dict[str, str] = {
 REFERENCE_DIR = Path(__file__).resolve().parents[1] / "verify" / "reference"
 
 
-def _rewrite_to_generated_csd(source_text: str) -> str:
-    """Rewrite the module name so the evaluator can import it as GeneratedCSD."""
-    source_text = re.sub(
-        r"module\s+Reference\w+CSD\s*\{",
-        "module GeneratedCSD {",
-        source_text,
-        count=1,
-    )
-    # The compiler stages VerifiedAgentSynthesis.dfy alongside the source (not in
-    # a library/ subdir), so strip any directory prefix from its include path.
-    source_text = re.sub(
-        r'include\s+"[^"]*VerifiedAgentSynthesis\.dfy"',
-        'include "VerifiedAgentSynthesis.dfy"',
-        source_text,
-    )
-    return source_text
-
-
 def _compile_reference(strategy: str, output_dir: Path) -> Path:
     """Compile a reference .dfy to Python under output_dir, return GeneratedCSD.py path."""
     from synthesis.verify.tooling import build_default_compiler
@@ -71,8 +53,10 @@ def _compile_reference(strategy: str, output_dir: Path) -> Path:
     if not source_path.is_file():
         raise FileNotFoundError(f"Reference strategy not found: {source_path}")
 
-    source_text = source_path.read_text()
-    source_text = _rewrite_to_generated_csd(source_text)
+    # Each reference is a BODY only. The single copy of the decoder contract lives
+    # in synthesis/verify/library/GeneratedCSD.dfy, and the same function the
+    # synthesis pipeline uses builds the full file from it.
+    source_text = inject_strategy_into_template(source_path.read_text())
 
     compiler = build_default_compiler(output_dir=output_dir)
     result = compiler.compile(source_text, output_name=f"ref_{strategy}")
