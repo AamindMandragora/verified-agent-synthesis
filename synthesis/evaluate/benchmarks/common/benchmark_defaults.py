@@ -15,6 +15,19 @@ def force_open_span() -> bool:
     return False
 
 
+def constrained_temperature() -> float:
+    """Temperature for picking a token inside this benchmark's constrained span.
+
+    0.0 means argmax: the same prompt always decodes to the same answer. That
+    is what GSM-Symbolic and Spider want, because they are scored on whether
+    one answer is right.
+
+    A benchmark scored on VARIETY must override this. SMILES counts how many
+    distinct valid molecules come out, so under argmax every example returns
+    the same molecule and the score collapses to about zero."""
+    return 0.0
+
+
 def example_syntax_pass_from_segments(
     all_valid_syntax: bool,
     segments: list[tuple[str, bool]],

@@ -766,8 +766,6 @@ def _run_rerun_row(row: dict[str, Any], *, repo: Path, python: Path, claims_dir:
     # run_synthesis takes its isolated campaign name from this environment
     # contract; it has no --output-name command-line option.
     env["CSD_OUTPUT_NAME"] = rerun_output_name(row)
-    if row["dataset"] == "smiles":
-        env["CSD_CONSTRAINED_TEMPERATURE"] = "0.7"
     if state_dir is not None:
         _state_write(state_path, {"cell_id": identity, "status": "running", "phase": "synthesis", "manifest_sha256": manifest_sha256, "started_at": utc_now()})
     if runner is subprocess.run:
@@ -838,8 +836,6 @@ def run_row(row: dict[str, Any], *, repo: Path, python: Path, claims_dir: Path, 
         env["CUDA_VISIBLE_DEVICES"] = str(assigned_gpu)
     env["CSD_VLLM_GPU_MEMORY_UTILIZATION"] = str(row["gpu_mem_util"])
     env["CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX"] = str(row["gpu_mem_util"])
-    if row["dataset"] == "smiles":
-        env["CSD_CONSTRAINED_TEMPERATURE"] = "0.7"
     state_payload = {"cell_id": row["cell_id"], "status": "running", "manifest_sha256": manifest_sha256, "started_at": utc_now()}
     if runner is subprocess.run:
         result = _default_run(command, repo=repo, env=env, state_path=state_dir / f"{row['cell_id']}.json" if state_dir is not None else None, state_payload=state_payload)

@@ -282,8 +282,8 @@ def test_poolable_synthesis_environment_keeps_one_worker_per_gpu_for_big_models(
     assert env["CSD_EVAL_GPU_SLOTS"] == joined
 
 
-def test_smiles_synthesis_environment_enables_constrained_sampling_and_job_gpu_util():
-    """SMILES unique-valid scoring needs span sampling; jobs carry the util bar."""
+def test_smiles_synthesis_environment_carries_the_job_gpu_util():
+    """The span-sampling temperature is a benchmark fact now, not an env var."""
     job = _job("smiles")
     job["cell_id"] = "smiles-acrylates-qwen25-1p5b"
     job["output_name"] = "coldq_smiles-acrylates-qwen25-1p5b_20260724"
@@ -292,7 +292,7 @@ def test_smiles_synthesis_environment_enables_constrained_sampling_and_job_gpu_u
 
     env = queue.synthesis_environment(job, (3,), {"PATH": "/bin"}, Path("/repo"))
 
-    assert env["CSD_CONSTRAINED_TEMPERATURE"] == "0.7"
+    assert "CSD_CONSTRAINED_TEMPERATURE" not in env
     assert env["CSD_VLLM_GPU_MEMORY_UTILIZATION"] == "0.4"
     assert env["CUDA_VISIBLE_DEVICES"] == "3"
     assert "CSD_EVAL_GPU_SLOTS" not in env
@@ -307,12 +307,10 @@ def test_non_smiles_synthesis_environment_does_not_force_constrained_temperature
     assert env["CSD_VLLM_GPU_MEMORY_UTILIZATION"] == "0.8"
 
 
-def test_smiles_heldout_environment_enables_constrained_sampling():
-    env = queue.author_free_environment(
-        {"PATH": "/bin", "AWS_ACCESS_KEY_ID": "x"}, 3, dataset="smiles"
-    )
+def test_heldout_environment_sets_no_constrained_temperature():
+    env = queue.author_free_environment({"PATH": "/bin", "AWS_ACCESS_KEY_ID": "x"}, 3)
 
-    assert env["CSD_CONSTRAINED_TEMPERATURE"] == "0.7"
+    assert "CSD_CONSTRAINED_TEMPERATURE" not in env
     assert env["CUDA_VISIBLE_DEVICES"] == "3"
     assert "AWS_ACCESS_KEY_ID" not in env
 

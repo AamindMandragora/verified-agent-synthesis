@@ -546,7 +546,6 @@ def run_hardened_smoke_job(
     env["PYTHONPATH"] = str(code_root) + (
         os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
     )
-    env.setdefault("CSD_CONSTRAINED_TEMPERATURE", "0.7")
     env.setdefault("CSD_VLLM_GPU_MEMORY_UTILIZATION", str(SMOKE_GPU_MEM_UTIL))
 
     job = runner or _default_subprocess_runner
@@ -712,7 +711,6 @@ def run_twin_accuracy_probe(
     env["PYTHONPATH"] = str(live) + (
         os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
     )
-    env.setdefault("CSD_CONSTRAINED_TEMPERATURE", "0.7")
     env.setdefault("CSD_VLLM_GPU_MEMORY_UTILIZATION", str(SMOKE_GPU_MEM_UTIL))
 
     job = runner or _default_subprocess_runner

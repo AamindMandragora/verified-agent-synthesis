@@ -853,14 +853,12 @@ class _TensorizedLMBase:
         self._logits_tensor = torch.zeros(n, dtype=torch.float32, device=self._logits_device)
         self._token_ids_tensor = torch.tensor(tids, dtype=torch.long, device=self._logits_device)
         self._full_logits: torch.Tensor | None = None
-        # Self-consistency: when > 0, the constrained-span selection
-        # (ChooseNextToken) samples from softmax(logits / T) instead of argmax,
-        # so running the SAME strategy k times yields k DIFFERENT decodes to vote
-        # over. Default 0.0 => exact argmax behavior, byte-for-byte unchanged for
-        # every benchmark that does not opt in via this env var.
-        self._constrained_temperature = float(
-            os.environ.get("CSD_CONSTRAINED_TEMPERATURE", "0.0")
-        )
+        # When > 0, the constrained-span selection (ChooseNextToken) samples
+        # from softmax(logits / T) instead of argmax, so the same strategy can
+        # decode differently on each example. The benchmark decides: the
+        # generation path calls SetConstrainedTemperature with the value from
+        # its eval_logic. 0.0 is exact argmax.
+        self._constrained_temperature = 0.0
         self._generate_count = 0
         self._token_id_to_str: dict[int, str] = {}
         # Free-text delimiter rule (see delimiter_hygiene): what the output so far renders to.
@@ -952,6 +950,14 @@ class _TensorizedLMBase:
     def _check_runtime_deadline(self):
         if self._runtime_deadline is not None and time.monotonic() >= self._runtime_deadline:
             raise TimeoutError("CSD example exceeded its runtime budget")
+
+    def SetConstrainedTemperature(self, temperature: float = 0.0):
+        """Set how tokens are picked inside the constrained span.
+
+        0.0 is argmax. A positive value samples among the tokens the grammar
+        allows, so repeated examples can decode differently -- which is what a
+        benchmark scored on variety (SMILES) needs."""
+        self._constrained_temperature = float(temperature or 0.0)
 
     def SetForcedSpanDelimiters(self, opener: str = "", closer: str = ""):
         """Record delimiter text the runtime inserted into the output itself."""

@@ -15,7 +15,7 @@ Applies to the **`synthesis/`** Python package (pipeline implementation). Reposi
 - **Parser performance:** preserve DFA-mask (`DFAMaskStore`) validity paths; do not replace per-step validity with O(vocab) brute-force parsing.
 - **Dafny contracts:** do not weaken or remove formal contracts in **`verify/library/`** unless the change is required and reviewed.
 - **`run_synthesis.py` GSM-Symbolic:** the only supported data source is local CRANE-style JSONs (`--gsm-source-dir` auto-filled from vendored `legacy/CRANE/src/gsm_symbolic` when unset). HuggingFace loading has been removed; runs error out if no CRANE folder is resolvable.
-- **Cold-queue env knobs:** `CSD_VLLM_GPU_MEMORY_UTILIZATION` overrides the settled vLLM memory fraction; SMILES cold jobs must set `CSD_CONSTRAINED_TEMPERATURE=0.7` (else unique-valid collapses under argmax).
+- **Cold-queue env knobs:** `CSD_VLLM_GPU_MEMORY_UTILIZATION` overrides the settled vLLM memory fraction. The constrained-span sampling temperature is NOT an env knob: each benchmark states it in its `eval_logic.constrained_temperature()` (0.0 everywhere, 0.7 for SMILES, which needs sampling or unique-valid collapses under argmax).
 
 ## Subfolder guides
 

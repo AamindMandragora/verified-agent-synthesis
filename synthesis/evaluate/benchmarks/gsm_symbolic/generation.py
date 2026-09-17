@@ -231,6 +231,7 @@ def run_crane_csd(
     max_seconds: Optional[float] = None,
     completion_mode: bool = False,
     early_stop_on_answer: bool = False,
+    constrained_temperature: float = 0.0,
 ) -> Tuple[str, int, float, List[Tuple[str, bool]], List[dict]]:
     """
     Run generation using the Dafny-verified CSD strategy.
@@ -256,6 +257,11 @@ def run_crane_csd(
             prompt_text string with no chat template applied. Required for base
             (non-instruction-tuned) completion models, which must see the prompt
             as a raw continuation rather than ChatML-wrapped.
+        constrained_temperature: How the runtime picks a token inside the
+            constrained span. 0.0 is argmax (GSM-Symbolic, Spider). A positive
+            value samples among the tokens the grammar allows, which is what a
+            benchmark scored on variety needs (SMILES). The benchmark's
+            eval_logic supplies it; there is no environment override.
         early_stop_on_answer: When True, stop generation as soon as the output
             contains a finished final-answer span ('final answer' followed by a
             complete <<...>> span), mirroring CRANE's answer stopping. The
@@ -367,6 +373,8 @@ def run_crane_csd(
         runtime_deadline = time.monotonic() + max_seconds
     if hasattr(lm, "SetRuntimeDeadline"):
         lm.SetRuntimeDeadline(runtime_deadline)
+    if hasattr(lm, "SetConstrainedTemperature"):
+        lm.SetConstrainedTemperature(constrained_temperature)
     if hasattr(lm, "SetForcedSpanDelimiters"):
         # The closer is registered up front: the strategy writes ">>" without sampling it.
         lm.SetForcedSpanDelimiters(

@@ -995,13 +995,13 @@ def test_frozen_common_bars_and_author_token_budget_are_bound():
         assert row["synthesis_max_tokens"] == 32768
 
 
-def test_profile_environment_is_forced_and_smiles_temperature_is_exported(tmp_path):
+def test_profile_environment_is_forced_and_smiles_sets_no_temperature(tmp_path):
     opus = next(r for r in queue.build_scope(Path("/repo")) if r["profile"] == "opus5")
     env = queue.synthesis_environment(opus, (2, 3), {"CSD_CLAUDE_CONFIG_DIR": "wrong", "CSD_CLAUDE_EXPECTED_ACCOUNT": "wrong"}, tmp_path)
     assert env["CSD_CLAUDE_CONFIG_DIR"] == "/home/aadivyar/.claude-csd-synthesis"
     assert env["CSD_CLAUDE_EXPECTED_ACCOUNT"] == "ssdear@gmail.com"
     smiles = _fixture_row("smiles")
-    assert queue.synthesis_environment(smiles, (2,), {}, tmp_path)["CSD_CONSTRAINED_TEMPERATURE"] == "0.7"
+    assert "CSD_CONSTRAINED_TEMPERATURE" not in queue.synthesis_environment(smiles, (2,), {}, tmp_path)
 
 
 def test_gpt_profile_environment_uses_only_pi_oauth_runtime(tmp_path):

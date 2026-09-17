@@ -2304,8 +2304,6 @@ def synthesis_environment(row: dict[str, Any], gpus: tuple[int, ...], inherited:
             env["GEMINI_API_KEY"] = api_key
         env["CSD_GEMINI_BACKEND"] = "gemini"
         env["CSD_GEMINI_MODEL"] = "gemini-3.7-flash"
-    if row["dataset"] == "smiles":
-        env["CSD_CONSTRAINED_TEMPERATURE"] = "0.7"
     return env
 
 
@@ -2327,8 +2325,6 @@ def heldout_environment(
     env["CUDA_VISIBLE_DEVICES"] = ",".join(str(gpu) for gpu in gpus)
     env["CSD_VLLM_GPU_MEMORY_UTILIZATION"] = str(row["gpu_mem_util"])
     env["CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX"] = str(row["gpu_mem_util"])
-    if row["dataset"] == "smiles":
-        env["CSD_CONSTRAINED_TEMPERATURE"] = "0.7"
     return env
 
 

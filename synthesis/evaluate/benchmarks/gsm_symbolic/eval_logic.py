@@ -12,6 +12,7 @@ from synthesis.evaluate.benchmarks.common.delimited_output import extract_last_d
 from synthesis.evaluate.benchmarks.common.ungradable import UngradableExample
 
 force_open_span = defaults.force_open_span
+constrained_temperature = defaults.constrained_temperature
 example_syntax_pass = defaults.example_syntax_pass_from_segments
 accuracy_applicable = defaults.accuracy_applicable_always
 accuracy_upper_bound = defaults.accuracy_upper_bound_with_remaining

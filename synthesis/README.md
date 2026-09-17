@@ -21,9 +21,6 @@ It provides an end-to-end loop that produces candidate CSD strategies, proves co
   - **Env overrides used by the cold queue:**
     - `CSD_VLLM_GPU_MEMORY_UTILIZATION` — per-job vLLM memory fraction
       (falls back to `VLLM_GPU_MEMORY_UTILIZATION` when unset).
-    - `CSD_CONSTRAINED_TEMPERATURE` — constrained-span sampling temperature
-      (read in `evaluate/benchmarks/common/model_utils.py`; SMILES cold
-      jobs must set `0.7` or unique-valid collapses under argmax).
   - **GSM-Symbolic:** the only supported data source is local CRANE-style
     JSONs (vendored `legacy/CRANE/src/gsm_symbolic`). HuggingFace loading has
     been removed.

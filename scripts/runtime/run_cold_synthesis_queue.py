@@ -647,10 +647,6 @@ def synthesis_environment(
         # card; 7B-class cells stay at one worker per GPU.
         slots = [gpu for gpu in gpus for _ in range(eval_workers_per_gpu(job))]
         env["CSD_EVAL_GPU_SLOTS"] = ",".join(str(gpu) for gpu in slots)
-    if job["dataset"] == "smiles":
-        # Unique-valid / diversity need span sampling; default argmax collapses
-        # every example to the same tiny SMILES (zero unique-valid).
-        env["CSD_CONSTRAINED_TEMPERATURE"] = "0.7"
     return env
 
 
@@ -658,7 +654,6 @@ def author_free_environment(
     inherited: dict[str, str],
     gpu: int,
     *,
-    dataset: str | None = None,
     gpu_memory_utilization_max: float | None = None,
 ) -> dict[str, str]:
     clean = {
@@ -674,8 +669,6 @@ def author_free_environment(
         clean["CSD_VLLM_GPU_MEMORY_UTILIZATION_MAX"] = str(
             gpu_memory_utilization_max
         )
-    if dataset == "smiles":
-        clean["CSD_CONSTRAINED_TEMPERATURE"] = "0.7"
     return clean
 
 
@@ -1540,7 +1533,6 @@ def run_job(
             env=author_free_environment(
                 os.environ,
                 primary_gpu,
-                dataset=str(job["dataset"]),
                 gpu_memory_utilization_max=float(job["gpu_mem_util"]),
             ),
             streams=(log, combined_log),

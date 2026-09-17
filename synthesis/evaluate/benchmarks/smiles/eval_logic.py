@@ -133,6 +133,14 @@ def force_open_span() -> bool:
     return True
 
 
+def constrained_temperature() -> float:
+    # SMILES is scored on how many DISTINCT valid molecules come out. Argmax
+    # (0.0, the shared default) makes every example decode to the same
+    # molecule, so the score collapses to about zero. Sampling inside the span
+    # is what gives this benchmark anything to count.
+    return 0.7
+
+
 def example_syntax_pass(
     all_valid_syntax: bool,
     segments: list[tuple[str, bool]],
@@ -150,6 +158,7 @@ def get_generation_runner():
 
     def _forced_span_runner(*args, **kwargs):
         kwargs.setdefault("force_open_span", True)
+        kwargs.setdefault("constrained_temperature", constrained_temperature())
         return generation.run_crane_csd(*args, **kwargs)
 
     return _forced_span_runner

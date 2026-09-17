@@ -25,6 +25,9 @@ def force_open_span() -> bool:
     return True
 
 
+constrained_temperature = defaults.constrained_temperature
+
+
 def example_syntax_pass(
     all_valid_syntax: bool,
     segments: list,
@@ -184,6 +187,7 @@ def get_generation_runner():
 
     def _forced_span_runner(*args, **kwargs):
         kwargs.setdefault("force_open_span", True)
+        kwargs.setdefault("constrained_temperature", constrained_temperature())
         return generation.run_crane_csd(*args, **kwargs)
 
     return _forced_span_runner

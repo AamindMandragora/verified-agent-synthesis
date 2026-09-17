@@ -27,6 +27,9 @@ def test_evaluator_logs_the_completion_and_keeps_it_in_results(monkeypatch, caps
         def force_open_span(self):
             return True
 
+        def constrained_temperature(self):
+            return 0.0
+
         def build_dynamic_parser(self, *_):
             return None
 

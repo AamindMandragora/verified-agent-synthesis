@@ -11,7 +11,6 @@ Verifies the mechanism directly on _TensorizedLMBase, no model/vLLM load:
 """
 import os, sys, math
 os.environ["CSD_RECURRENCE_PENALTY"] = "0.3"
-os.environ["CSD_CONSTRAINED_TEMPERATURE"] = "0.0"
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import torch
 from types import SimpleNamespace
