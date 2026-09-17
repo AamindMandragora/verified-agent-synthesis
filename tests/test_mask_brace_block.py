@@ -65,7 +65,7 @@ def _make_minimal_parser(grammar_text: str, vocab: list[str]):
 
     Returns the parser instance and a token list (Dafny-style list of strings).
     """
-    from evaluations.common.parser_utils import create_lark_dafny_parser
+    from synthesis.evaluate.benchmarks.common.parser_utils import create_lark_dafny_parser
 
     tokenizer = _FakeTokenizer(vocab)
 
@@ -116,17 +116,8 @@ def test_parser_utils_has_hard_block_for_forbidden_chars():
     """
     import ast
 
-    # parser_utils.py lives at different paths depending on repo structure.
-    # Focal server: synthesis/evaluate/benchmarks/common/parser_utils.py
-    # Old local:    evaluations/common/parser_utils.py
-    candidates = [
-        _REPO / "synthesis" / "evaluate" / "benchmarks" / "common" / "parser_utils.py",
-        _REPO / "evaluations" / "common" / "parser_utils.py",
-    ]
-    parser_utils_path = next((p for p in candidates if p.exists()), None)
-    assert parser_utils_path is not None, (
-        f"Could not find parser_utils.py at any of: {candidates}"
-    )
+    parser_utils_path = _REPO / "synthesis" / "evaluate" / "benchmarks" / "common" / "parser_utils.py"
+    assert parser_utils_path.exists(), f"Could not find parser_utils.py at {parser_utils_path}"
     tree = ast.parse(parser_utils_path.read_text())
 
     # Look for a string constant containing one of the forbidden chars being

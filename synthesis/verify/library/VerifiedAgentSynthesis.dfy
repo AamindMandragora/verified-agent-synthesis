@@ -2885,45 +2885,15 @@ module VerifiedDecoderAgent {
         invariant cost == old(cost) + steps
         decreases maxSteps - steps
       {
-        if !insideConstrainedOut {
-          var next := UnconstrainedStep(lm, prompt, generated);
-          steps := steps + 1;
-          if next == eosToken {
-            break;
-          }
-          generated := generated + [next];
-          // Outside a span the sampler bans every opener variant except the exact token.
-          var openHit := next == "<<";
-          if openHit {
-            insideConstrainedOut := true;
-            currentConstrainedOut := [];
-          }
-        } else {
-          var cg, ci, cc, closed := CloseSpanIfComplete(lm, parser, generated, currentConstrainedOut);
-          steps := steps + 1;
-          if closed {
-            generated := cg;
-            insideConstrainedOut := ci;
-            currentConstrainedOut := cc;
-            break;
-          } else {
-            var constrainedPrompt := prompt + generated[..|generated| - |currentConstrainedOut|];
-            var next := AdaptiveConstrainedStep(
-              lm, parser, constrainedPrompt, currentConstrainedOut,
-              validTokenGroups, boostAmount, narrowThreshold, eosToken
-            );
-            if next == eosToken {
-              break;
-            } else {
-              var appendedGenerated, appendedInside, appendedCurrent := AppendConstrainedToken(
-                lm, parser, generated, currentConstrainedOut, next
-              );
-              generated := appendedGenerated;
-              insideConstrainedOut := appendedInside;
-              currentConstrainedOut := appendedCurrent;
-            }
-          }
-        }
+        var g, i, c, done := ManagedStep(
+          lm, parser, prompt, generated, insideConstrainedOut, currentConstrainedOut,
+          validTokenGroups, boostAmount, narrowThreshold, eosToken
+        );
+        steps := steps + 1;
+        generated := g;
+        insideConstrainedOut := i;
+        currentConstrainedOut := c;
+        if done { break; }
       }
     }
 
@@ -2990,52 +2960,23 @@ module VerifiedDecoderAgent {
         invariant cost == old(cost) + steps
         decreases maxSteps - steps
       {
-        if !insideConstrainedOut {
-          if steps < prefixBudget {
-            var next := UnconstrainedStep(lm, prompt, generated);
-            steps := steps + 1;
-            if next == eosToken {
-              break;
-            }
-            generated := generated + [next];
-              // Outside a span the sampler bans every opener variant except the exact token.
-            var openHit := next == "<<";
-            if openHit {
-              insideConstrainedOut := true;
-              currentConstrainedOut := [];
-            }
-          } else {
-            var go, io, co := OpenConstrainedSpan(lm, generated);
-            steps := steps + 1;
-            generated := go;
-            insideConstrainedOut := io;
-            currentConstrainedOut := co;
-          }
-        } else {
-          var cg, ci, cc, closed := CloseSpanIfComplete(lm, parser, generated, currentConstrainedOut);
+        if !insideConstrainedOut && steps >= prefixBudget {
+          // The preamble budget is spent: force the span open instead of sampling.
+          var go, io, co := OpenConstrainedSpan(lm, generated);
           steps := steps + 1;
-          if closed {
-            generated := cg;
-            insideConstrainedOut := ci;
-            currentConstrainedOut := cc;
-            break;
-          } else {
-            var constrainedPrompt := prompt + generated[..|generated| - |currentConstrainedOut|];
-            var next := AdaptiveConstrainedStep(
-              lm, parser, constrainedPrompt, currentConstrainedOut,
-              validTokenGroups, boostAmount, narrowThreshold, eosToken
-            );
-            if next == eosToken {
-              break;
-            } else {
-              var appendedGenerated, appendedInside, appendedCurrent := AppendConstrainedToken(
-                lm, parser, generated, currentConstrainedOut, next
-              );
-              generated := appendedGenerated;
-              insideConstrainedOut := appendedInside;
-              currentConstrainedOut := appendedCurrent;
-            }
-          }
+          generated := go;
+          insideConstrainedOut := io;
+          currentConstrainedOut := co;
+        } else {
+          var g, i, c, done := ManagedStep(
+            lm, parser, prompt, generated, insideConstrainedOut, currentConstrainedOut,
+            validTokenGroups, boostAmount, narrowThreshold, eosToken
+          );
+          steps := steps + 1;
+          generated := g;
+          insideConstrainedOut := i;
+          currentConstrainedOut := c;
+          if done { break; }
         }
       }
     }

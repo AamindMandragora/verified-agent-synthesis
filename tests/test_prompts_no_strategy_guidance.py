@@ -469,8 +469,8 @@ def test_model_facing_prompt_surfaces_use_positive_contract_language():
     combined = "\n".join(rendered for _label, rendered in rendered_surfaces)
     assert "Assign the existing out-parameters directly" in combined
     assert "Call instance helper methods as `helpers.<Method>`" in combined
-    assert "Use visible delimiters only when the task or evaluator requires visible constrained spans" in combined
+    assert "Every constrained span is visible" in combined
     assert "Call it once at method start" in combined
     assert "Return exactly the Dafny method body" in combined
-    assert "Return exactly one line containing only the SMILES string" in combined
+    assert "Return exactly one line containing the SMILES molecule" in combined
     assert "Only output the SQL quey." in combined
