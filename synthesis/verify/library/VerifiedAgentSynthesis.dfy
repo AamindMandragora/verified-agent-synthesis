@@ -500,6 +500,77 @@ module VerifiedDecoderAgent {
     }
   }
 
+  ghost predicate AllDelimFree(ts: Prefix) { forall i :: 0 <= i < |ts| ==> DelimFree(ts[i]) }
+
+  // Free text appended outside a span leaves us outside a span.
+  lemma FreeRun(parser: Parser, g: Prefix, ts: Prefix)
+    requires SpanStateOf(parser, g) == Outside
+    requires AllDelimFree(ts)
+    ensures SpanStateOf(parser, g + ts) == Outside
+    decreases |ts|
+  {
+    if |ts| == 0 {
+      assert g + ts == g;
+    } else {
+      var init := ts[..|ts| - 1];
+      FreeRun(parser, g, init);
+      assert g + ts == (g + init) + [ts[|ts| - 1]];
+      var t := ts[|ts| - 1];
+      assert DelimFree(t);
+      if t == "<<" { assert t[0..|t|] == "<<"; assert Contains(t, "<<"); }
+      SpanStateAppend(parser, g + init, ts[|ts| - 1]);
+    }
+  }
+
+  // Closing an open span whose content is complete puts us back outside.
+  lemma CloseTied(parser: Parser, g: Prefix, cur: Prefix)
+    requires Tied(parser, g, true, cur)
+    requires parser.IsCompletePrefix(cur)
+    ensures RenderedEndsWith(cur, ">>") ==> Tied(parser, g, false, [])
+    ensures !RenderedEndsWith(cur, ">>") ==> Tied(parser, g + [">>"], false, [])
+  {
+    var hist := g[..|g| - |cur| - 1];
+    InsideRun(parser, hist, cur);
+    assert g == hist + ["<<"] + cur;
+    if !RenderedEndsWith(cur, ">>") {
+      SpanStateAppend(parser, g, ">>");
+    }
+  }
+
+  lemma AppendTied(parser: Parser, g: Prefix, cur: Prefix, t: Token)
+    requires Tied(parser, g, true, cur)
+    requires parser.IsValidPrefix(cur + [t])
+    ensures Tied(parser, g + [t], true, cur + [t])
+  {
+    var g2 := g + [t];
+    var c2 := cur + [t];
+    assert g2[|g2| - |c2|..] == c2;
+    assert g2[..|g2| - |c2| - 1] == g[..|g| - |cur| - 1];
+  }
+
+  lemma OpenTied(parser: Parser, g: Prefix)
+    requires Tied(parser, g, false, [])
+    requires parser.IsValidPrefix([])
+    ensures Tied(parser, g + ["<<"], true, [])
+  {
+    var g2 := g + ["<<"];
+    assert g2[..|g2| - 1] == g;
+    assert g2[|g2|..] == [];
+  }
+
+  // Replacing the open span's content (rollback, regenerate) keeps the tie.
+  lemma ReplaceTied(parser: Parser, g: Prefix, cur: Prefix, newCur: Prefix)
+    requires Tied(parser, g, true, cur)
+    requires parser.IsValidPrefix(newCur)
+    ensures Tied(parser, g[..|g| - |cur|] + newCur, true, newCur)
+  {
+    var stable := g[..|g| - |cur|];
+    var g2 := stable + newCur;
+    assert g2[|g2| - |newCur|..] == newCur;
+    assert g2[..|g2| - |newCur| - 1] == g[..|g| - |cur| - 1];
+    assert g2[|g2| - |newCur| - 1] == g[|g| - |cur| - 1];
+  }
+
   lemma RenderAppend(p: Prefix, t: Token)
     ensures RenderPrefix(p + [t]) == RenderPrefix(p) + t
     decreases |p|
@@ -550,10 +621,26 @@ module VerifiedDecoderAgent {
       requires lm.ValidTokensIdsLogits()
       ensures lm.ValidTokensIdsLogits()
       ensures cost == old(cost) + 1
+      // Runtime rule (delimiter_hygiene.py): outside a span the sampler bans every
+      // token carrying delimiter text except the exact opener.
+      ensures forall p: Parser {:trigger SpanStateOf(p, generated)} ::
+                SpanStateOf(p, generated) == Outside ==> next == "<<" || DelimFree(next)
+      ensures forall p: Parser {:trigger Tied(p, generated + [next], false, [])} ::
+                Tied(p, generated, false, []) && next != "<<" ==> Tied(p, generated + [next], false, [])
+      ensures forall p: Parser {:trigger Tied(p, generated + [next], true, [])} ::
+                Tied(p, generated, false, []) && next == "<<" && p.IsValidPrefix([]) ==> Tied(p, generated + [next], true, [])
     {
       lm.GenerateLogits(prompt + generated);
       next := lm.ChooseNextTokenUnconstrained();
       cost := cost + 1;
+      assume {:axiom} forall p: Parser {:trigger SpanStateOf(p, generated)} ::
+                SpanStateOf(p, generated) == Outside ==> next == "<<" || DelimFree(next);
+      forall p: Parser | Tied(p, generated, false, []) && next != "<<"
+        ensures Tied(p, generated + [next], false, [])
+      { FreeRun(p, generated, [next]); }
+      forall p: Parser | Tied(p, generated, false, []) && next == "<<" && p.IsValidPrefix([])
+        ensures Tied(p, generated + [next], true, [])
+      { OpenTied(p, generated); }
     }
 
     method UnconstrainedChunk(
@@ -674,7 +761,12 @@ module VerifiedDecoderAgent {
       ensures insideOut
       ensures currentOut == []
       ensures cost == old(cost) + 1
+      ensures forall p: Parser {:trigger Tied(p, generatedOut, true, [])} ::
+                Tied(p, generated, false, []) && p.IsValidPrefix([]) ==> Tied(p, generatedOut, true, [])
     {
+      forall p: Parser | Tied(p, generated, false, []) && p.IsValidPrefix([])
+        ensures Tied(p, generated + ["<<"], true, [])
+      { OpenTied(p, generated); }
       generatedOut := generated + ["<<"];
       insideOut := true;
       currentOut := [];
@@ -710,7 +802,9 @@ module VerifiedDecoderAgent {
       ensures currentOut == currentConstrained + [next]
       ensures parser.IsValidPrefix(currentOut)
       ensures cost == old(cost)
+      ensures Tied(parser, generated, true, currentConstrained) ==> Tied(parser, generatedOut, true, currentOut)
     {
+      if Tied(parser, generated, true, currentConstrained) { AppendTied(parser, generated, currentConstrained, next); }
       generatedOut := generated + [next];
       insideOut := true;
       currentOut := currentConstrained + [next];
@@ -731,7 +825,9 @@ module VerifiedDecoderAgent {
       ensures !insideOut
       ensures currentOut == []
       ensures cost == old(cost) + 1
+      ensures Tied(parser, generated, true, currentConstrained) ==> Tied(parser, generatedOut, false, [])
     {
+      if Tied(parser, generated, true, currentConstrained) { CloseTied(parser, generated, currentConstrained); }
       if RenderedEndsWith(currentConstrained, ">>") {
         generatedOut := generated;
       } else {

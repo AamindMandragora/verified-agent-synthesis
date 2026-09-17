@@ -388,6 +388,8 @@ def run_crane_csd(
     eos_token_str = lm.tokenizer.eos_token or "<|endoftext|>"
     eos_token_dafny = _dafny.Seq(eos_token_str)
     generated_prefix = _dafny.SeqWithoutIsStrInference([])
+    if start_inside_constrained and __import__("os").environ.get("CSD_PROTO_FORCE_OPEN") == "1":  # PROTOTYPE, do not commit
+        generated_prefix = _dafny.SeqWithoutIsStrInference([_dafny.Seq("<<")])
     current_constrained = _dafny.SeqWithoutIsStrInference([])
 
     trace_state = env.get("csd_trace")

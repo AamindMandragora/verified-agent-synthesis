@@ -31,16 +31,18 @@ module GeneratedCSD {
     requires parser.IsValidPrefix([])
     requires !insideConstrained ==> currentConstrained == []
     requires insideConstrained ==> parser.IsValidPrefix(currentConstrained)
-    requires insideConstrained ==> |currentConstrained| <= |generatedPrefix|
-    requires insideConstrained ==> generatedPrefix[|generatedPrefix| - |currentConstrained|..] == currentConstrained
+    // The tracked span state agrees with the output so far (see Tied in the library).
+    requires Tied(parser, generatedPrefix, insideConstrained, currentConstrained)
     requires "<<" in lm.Tokens && ">>" in lm.Tokens
     requires eosToken in lm.Tokens
     ensures lm.ValidTokensIdsLogits()
     ensures |generated| <= |generatedPrefix| + maxSteps
     ensures !insideConstrainedOut ==> currentConstrainedOut == []
     ensures insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-    ensures insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
-    ensures insideConstrainedOut ==> generated[|generated| - |currentConstrainedOut|..] == currentConstrainedOut
+    // Every closed span in the output is a complete parse, free text carries no
+    // delimiter text, and an open last span is a valid prefix equal to currentConstrainedOut.
+    ensures Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+    ensures maxSteps > 0 ==> "<<" in generated
     ensures cost <= maxSteps
     ensures maxSteps == 0 || cost > 0 || generated != generatedPrefix ||
             insideConstrainedOut != insideConstrained ||
@@ -79,16 +81,18 @@ module GeneratedCSD {
     requires parser.IsValidPrefix([])
     requires !insideConstrained ==> currentConstrained == []
     requires insideConstrained ==> parser.IsValidPrefix(currentConstrained)
-    requires insideConstrained ==> |currentConstrained| <= |generatedPrefix|
-    requires insideConstrained ==> generatedPrefix[|generatedPrefix| - |currentConstrained|..] == currentConstrained
+    // The tracked span state agrees with the output so far (see Tied in the library).
+    requires Tied(parser, generatedPrefix, insideConstrained, currentConstrained)
     requires "<<" in lm.Tokens && ">>" in lm.Tokens
     requires eosToken in lm.Tokens
     ensures lm.ValidTokensIdsLogits()
     ensures |generated| <= |generatedPrefix| + maxSteps
     ensures !insideConstrainedOut ==> currentConstrainedOut == []
     ensures insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-    ensures insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
-    ensures insideConstrainedOut ==> generated[|generated| - |currentConstrainedOut|..] == currentConstrainedOut
+    // Every closed span in the output is a complete parse, free text carries no
+    // delimiter text, and an open last span is a valid prefix equal to currentConstrainedOut.
+    ensures Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+    ensures maxSteps > 0 ==> "<<" in generated
     ensures cost <= maxSteps
   {
     var helpers := new CSDHelpers();
