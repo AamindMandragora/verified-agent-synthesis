@@ -953,17 +953,24 @@ class _TensorizedLMBase:
     def SetStartsInsideSpan(self, starts_inside: bool):
         self._starts_inside_span = bool(starts_inside)
 
+    def _token_text_or_empty(self, token_id: int) -> str:
+        # The logits row can be wider than the tokenizer (padding ids); those ids have no text.
+        try:
+            return self._token_str_from_id(token_id)
+        except (KeyError, IndexError, OverflowError, TypeError):
+            return ""
+
     def _free_text_logits(self, full_logits: torch.Tensor) -> torch.Tensor:
         """Logits for sampling one free-text token: outside a span, no token may create or close a
         delimiter on its own; only the exact "<<" token may open a span. Inside a span nothing is
         banned here, because there the parser decides."""
-        walk = walk_spans(self._last_prefix_text, self._starts_inside_span)
+        walk = walk_spans(getattr(self, "_last_prefix_text", ""), getattr(self, "_starts_inside_span", False))
         if walk.ends_inside:
             return full_logits
         if self._delimiter_sets is None:
             n = int(full_logits.numel())
             self._delimiter_sets = build_delimiter_token_sets(
-                {i: self._token_str_from_id(i) for i in range(n)}
+                {i: self._token_text_or_empty(i) for i in range(n)}
             )
             _HYGIENE_LOG.info(
                 "[delimiter_hygiene] vocab=%d exact_openers=%d opener_variants=%d always_banned=%d",
@@ -1740,7 +1747,7 @@ class _TensorizedLMBase:
         stopped_on_open = False
         stopped_on_eos = False
         stop_ids = self._generation_stop_ids() if spider_contract_active else frozenset()
-        free_text_tail = walk_spans(self._last_prefix_text, self._starts_inside_span).free_text_tail
+        free_text_tail = walk_spans(getattr(self, "_last_prefix_text", ""), getattr(self, "_starts_inside_span", False)).free_text_tail
 
         for raw_token_id in token_ids:
             if steps_used >= max_new_tokens:
