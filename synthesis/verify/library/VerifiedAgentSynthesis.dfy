@@ -739,12 +739,14 @@ module VerifiedDecoderAgent {
       ensures stepsUsed <= maxSymbolTokens
       ensures stepsUsed > 0
       ensures cost == old(cost) + stepsUsed
+      ensures Tied(parser, generated, true, currentConstrained) ==> Tied(parser, generatedOut, true, currentOut)
     {
       var stablePrefix := generated[..|generated| - |currentConstrained|];
       currentOut, hitEos, stepsUsed := ConstrainedSymbol(
         lm, parser, constrainedPrompt, currentConstrained, maxSymbolTokens, eosToken
       );
       generatedOut := stablePrefix + currentOut;
+      if Tied(parser, generated, true, currentConstrained) { assert generated[..|generated| - |currentConstrained|] == stablePrefix; ReplaceTied(parser, generated, currentConstrained, currentOut); }
       assert |stablePrefix| == |generated| - |currentConstrained|;
       assert |generatedOut| == |stablePrefix| + |currentOut|;
       assert |generatedOut| <= |generated| + stepsUsed;
@@ -1506,9 +1508,11 @@ module VerifiedDecoderAgent {
       ensures parser.IsValidPrefix(currentOut)
       ensures |currentOut| <= |currentConstrained|
       ensures generatedOut == stablePrefix + currentOut
+      ensures Tied(parser, generated, true, currentConstrained) ==> Tied(parser, generatedOut, true, currentOut)
     {
       currentOut := RollbackToValidPrefix(parser, currentConstrained);
       generatedOut := stablePrefix + currentOut;
+      if Tied(parser, generated, true, currentConstrained) { assert generated[..|generated| - |currentConstrained|] == stablePrefix; ReplaceTied(parser, generated, currentConstrained, currentOut); }
     }
 
     method RollbackConstrainedSuffix(
@@ -1522,10 +1526,12 @@ module VerifiedDecoderAgent {
       ensures |currentOut| <= |generatedOut|
       ensures generatedOut[|generatedOut| - |currentOut|..] == currentOut
       ensures |generatedOut| <= |generated|
+      ensures Tied(parser, generated, true, currentConstrained) ==> Tied(parser, generatedOut, true, currentOut)
     {
       var stablePrefix := generated[..|generated| - |currentConstrained|];
       currentOut := RollbackToValidPrefix(parser, currentConstrained);
       generatedOut := stablePrefix + currentOut;
+      if Tied(parser, generated, true, currentConstrained) { assert generated[..|generated| - |currentConstrained|] == stablePrefix; ReplaceTied(parser, generated, currentConstrained, currentOut); }
       assert |stablePrefix| == |generated| - |currentConstrained|;
       assert |generatedOut| == |stablePrefix| + |currentOut|;
       assert |generatedOut| <= |generated|;
@@ -1637,6 +1643,7 @@ module VerifiedDecoderAgent {
       ensures generatedOut == generated[..|generated| - |currentConstrained|] + currentOut
       ensures cost <= old(cost) + (maxSteps - closeReserve)
       ensures cost >= old(cost)
+      ensures Tied(parser, generated, true, currentConstrained) ==> Tied(parser, generatedOut, true, currentOut)
     {
       var stablePrefix := generated[..|generated| - |currentConstrained|];
       var budget := maxSteps - closeReserve;
@@ -1664,6 +1671,7 @@ module VerifiedDecoderAgent {
       }
       currentOut := bestComplete;
       generatedOut := stablePrefix + currentOut;
+      if Tied(parser, generated, true, currentConstrained) { assert generated[..|generated| - |currentConstrained|] == stablePrefix; ReplaceTied(parser, generated, currentConstrained, currentOut); }
     }
 
     static method FlattenTokenGroups(groups: seq<seq<Token>>) returns (flat: seq<Token>)
@@ -3285,6 +3293,7 @@ module VerifiedDecoderAgent {
       ensures |generatedOut| <= |generated| + budget
       ensures cost <= old(cost) + budget
       ensures cost >= old(cost)
+      ensures Tied(parser, generated, true, currentConstrained) ==> Tied(parser, generatedOut, insideOut, currentOut)
     {
       var stablePrefix := generated[..|generated| - |currentConstrained|];
       var running := currentConstrained;
@@ -3320,11 +3329,13 @@ module VerifiedDecoderAgent {
       }
 
       if steps < budget && haveComplete {
+        if Tied(parser, generated, true, currentConstrained) { ReplaceTied(parser, generated, currentConstrained, bestComplete); }
         var gc, ci, cc := CloseConstrainedSpan(lm, parser, stablePrefix + bestComplete, bestComplete);
         generatedOut := gc;
         insideOut := ci;
         currentOut := cc;
       } else {
+        if Tied(parser, generated, true, currentConstrained) { ReplaceTied(parser, generated, currentConstrained, running); }
         generatedOut := stablePrefix + running;
         insideOut := true;
         currentOut := running;
