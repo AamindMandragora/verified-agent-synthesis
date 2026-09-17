@@ -588,6 +588,14 @@ module VerifiedDecoderAgent {
     }
   }
 
+  // An open span means the output contains the opener.
+  lemma OpenSpanHasOpener(parser: Parser, g: Prefix, cur: Prefix)
+    requires Tied(parser, g, true, cur)
+    ensures "<<" in g
+  {
+    assert g[|g| - |cur| - 1] == "<<";
+  }
+
   class CSDHelpers {
     var cost: int
 
@@ -2660,10 +2668,8 @@ module VerifiedDecoderAgent {
           generated := generated + [next];
           // CRANE: `start_symbol in unconstrained_gen`. Check last token and the
           // last-two-token render so split '<'+'<' opens without O(n^2) full re-render.
-          var openHit := Contains(next, "<<");
-          if !openHit && |generated| >= 2 {
-            openHit := Contains(RenderPrefix(generated[|generated| - 2..]), "<<");
-          }
+          // Outside a span the sampler bans every opener variant except the exact token.
+          var openHit := next == "<<";
           if openHit {
             insideConstrained := true;
             currentConstrained := [];
@@ -2767,6 +2773,7 @@ module VerifiedDecoderAgent {
       requires boostAmount >= 0.0 && boostAmount <= 100000000.0
       requires eosToken in lm.Tokens
       ensures lm.ValidTokensIdsLogits()
+      ensures Tied(parser, generated, insideConstrained, currentConstrained) ==> Tied(parser, generatedOut, insideOut, currentOut)
       ensures cost == old(cost) + 1
       ensures |generatedOut| <= |generated| + 1
       ensures !insideOut ==> currentOut == []
@@ -2784,13 +2791,8 @@ module VerifiedDecoderAgent {
           return;
         }
         generatedOut := generated + [next];
-        // Match the opener the same way the closer is matched: on the rendered
-        // text, not on an exact token. Qwen tokenizes the opener as ' <<' (with
-        // a leading space) in prose, so `next == "<<"` almost never fires.
-        var openHit := Contains(next, "<<");
-        if !openHit && |generatedOut| >= 2 {
-          openHit := Contains(RenderPrefix(generatedOut[|generatedOut| - 2..]), "<<");
-        }
+        // Outside a span the sampler bans every opener variant except the exact token.
+        var openHit := next == "<<";
         if openHit {
           insideOut := true;
           currentOut := [];
@@ -2889,10 +2891,8 @@ module VerifiedDecoderAgent {
           }
           generated := generated + [next];
           // Rendered-text opener match; see the note at the sibling site above.
-          var openHit := Contains(next, "<<");
-          if !openHit && |generated| >= 2 {
-            openHit := Contains(RenderPrefix(generated[|generated| - 2..]), "<<");
-          }
+          // Outside a span the sampler bans every opener variant except the exact token.
+          var openHit := next == "<<";
           if openHit {
             insideConstrainedOut := true;
             currentConstrainedOut := [];
@@ -2996,10 +2996,8 @@ module VerifiedDecoderAgent {
             }
             generated := generated + [next];
             // Rendered-text opener match; see the note at the sibling site above.
-            var openHit := Contains(next, "<<");
-            if !openHit && |generated| >= 2 {
-              openHit := Contains(RenderPrefix(generated[|generated| - 2..]), "<<");
-            }
+            // Outside a span the sampler bans every opener variant except the exact token.
+            var openHit := next == "<<";
             if openHit {
               insideConstrainedOut := true;
               currentConstrainedOut := [];
