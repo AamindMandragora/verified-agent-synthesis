@@ -35,6 +35,7 @@ module GeneratedCSD {
     requires Tied(parser, generatedPrefix, insideConstrained, currentConstrained)
     requires "<<" in lm.Tokens && ">>" in lm.Tokens
     requires eosToken in lm.Tokens
+    requires eosToken != "<<" && eosToken != ">>"
     ensures lm.ValidTokensIdsLogits()
     ensures |generated| <= |generatedPrefix| + maxSteps
     ensures !insideConstrainedOut ==> currentConstrainedOut == []
@@ -85,6 +86,7 @@ module GeneratedCSD {
     requires Tied(parser, generatedPrefix, insideConstrained, currentConstrained)
     requires "<<" in lm.Tokens && ">>" in lm.Tokens
     requires eosToken in lm.Tokens
+    requires eosToken != "<<" && eosToken != ">>"
     ensures lm.ValidTokensIdsLogits()
     ensures |generated| <= |generatedPrefix| + maxSteps
     ensures !insideConstrainedOut ==> currentConstrainedOut == []
