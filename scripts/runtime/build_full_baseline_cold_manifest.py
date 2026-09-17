@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from scripts.runtime.win_bar import accuracy_bar
 
 from synthesis.evaluate.benchmarks.gsm_symbolic.prompts import GSM_CRANE_COT_TASK
 
@@ -315,12 +316,8 @@ def build_campaign(
                 rows.append(row)
             max_correct = max(row["num_correct"] for row in rows)
             max_syntax = max(row["syntax_count"] for row in rows)
-            if max_correct == cohort.sample_size:
-                min_accuracy = 0.95
-                threshold_policy = "perfect_baseline_95_percent_exception"
-            else:
-                min_accuracy = (max_correct + 1) / cohort.sample_size
-                threshold_policy = "strict_plus_one"
+            bar = accuracy_bar(max_correct, cohort.sample_size)
+            min_accuracy, threshold_policy = bar.min_accuracy, bar.policy
             min_syntax = min(max_syntax / cohort.sample_size, 0.90)
             evidence_cells[cell] = {
                 "dataset": cohort.dataset,
@@ -530,12 +527,8 @@ def validate_campaign(jobs: list[dict[str, Any]], repo: Path) -> None:
         total = int(job["eval_sample_size"])
         max_correct = max(int(row["num_correct"]) for row in rows)
         max_syntax = max(int(row["syntax_count"]) for row in rows)
-        if max_correct == total:
-            expected_accuracy = 0.95
-            expected_policy = "perfect_baseline_95_percent_exception"
-        else:
-            expected_accuracy = (max_correct + 1) / total
-            expected_policy = "strict_plus_one"
+        bar = accuracy_bar(max_correct, total)
+        expected_accuracy, expected_policy = bar.min_accuracy, bar.policy
         expected_syntax = min(max_syntax / total, 0.90)
         if (
             int(job["baseline_num_correct"]) != max_correct

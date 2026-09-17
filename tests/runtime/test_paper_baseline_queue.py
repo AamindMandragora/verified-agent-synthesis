@@ -84,7 +84,7 @@ def test_rerun_command_reaches_real_parser_for_each_dataset(dataset):
 
 def test_rerun_thresholds_keep_the_cold_queue_syntax_gate():
     thresholds = queue.rerun_thresholds({"accuracy": 0.3, "syntax_rate": 0.1}, 49)
-    assert thresholds["min_accuracy"] == 16 / 49
+    assert thresholds["min_accuracy"] == 20 / 49  # 15 correct + 10 points (5 examples)
     assert thresholds["min_syntax_rate"] == 0.90
 
 

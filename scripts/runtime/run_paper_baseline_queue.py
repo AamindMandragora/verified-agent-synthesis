@@ -32,6 +32,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from scripts.runtime import run_cold_synthesis_queue as cold_queue
+from scripts.runtime.win_bar import accuracy_bar
 
 
 LOG = logging.getLogger("paper-baseline-queue")
@@ -338,12 +339,8 @@ def fixed_baseline_command(row: dict[str, Any], python: Path) -> list[str]:
 
 def rerun_thresholds(metrics: dict[str, float], total: int) -> dict[str, Any]:
     accuracy_count = min(total, max(0, int(round(metrics["accuracy"] * total))))
-    if accuracy_count == total:
-        minimum_accuracy = 0.95
-        policy = "perfect_baseline_95_percent_exception"
-    else:
-        minimum_accuracy = (accuracy_count + 1) / total
-        policy = "strict_plus_one"
+    bar = accuracy_bar(accuracy_count, total)
+    minimum_accuracy, policy = bar.min_accuracy, bar.policy
     syntax_count = min(total, max(0, int(round(metrics["syntax_rate"] * total))))
     return {
         "min_accuracy": minimum_accuracy,

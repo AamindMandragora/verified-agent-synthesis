@@ -1504,7 +1504,7 @@ def test_exhaustive_campaign_requires_all_twenty_one_exact_cells_and_unique_outp
         job["baseline_num_correct"] = 0
         job["baseline_num_examples"] = job["eval_sample_size"]
         job["baseline_source"] = f"outputs/baselines/{cell}.json"
-        job["min_accuracy"] = 1 / job["baseline_num_examples"]
+        job["min_accuracy"] = queue.accuracy_bar(0, job["baseline_num_examples"]).min_accuracy
         job["output_name"] = f"coldq_{cell}_0719"
         job["log_file"] = f"outputs/generated/{job['output_name']}/run.log"
         job["heldout_output_json"] = f"outputs/reeval/exhaustive_0719/{cell}.json"

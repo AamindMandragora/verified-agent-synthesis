@@ -71,14 +71,14 @@ def test_build_campaign_uses_all_five_baselines_and_exact_thresholds(
     assert cell["max_syntax_count"] == 49
     job = next(job for job in manifest["jobs"] if job["cell_id"] == "gsm-qwen25-1p5b")
     assert job["baseline_num_correct"] == 5
-    assert job["min_accuracy"] == 6 / 49
+    assert job["min_accuracy"] == 10 / 49
     assert job["min_syntax_rate"] == 0.9
-    assert job["threshold_policy"] == "strict_plus_one"
+    assert job["threshold_policy"] == "baseline_plus_10_points"
     assert job["claude_expected_account"] == "aadivya@fermi.ai"
     assert job["eval_max_steps"] == 900
 
 
-def test_perfect_baseline_uses_the_approved_95_percent_exception(
+def test_perfect_baseline_must_be_matched(
     tmp_path: Path,
 ) -> None:
     _write_all_artifacts(tmp_path, perfect=True)
@@ -88,8 +88,8 @@ def test_perfect_baseline_uses_the_approved_95_percent_exception(
     cell = evidence["cells"]["spider-qwen35-4b"]
     job = next(job for job in manifest["jobs"] if job["cell_id"] == "spider-qwen35-4b")
     assert cell["max_accuracy_count"] == 300
-    assert job["min_accuracy"] == 0.95
-    assert job["threshold_policy"] == "perfect_baseline_95_percent_exception"
+    assert job["min_accuracy"] == 1.0
+    assert job["threshold_policy"] == "perfect_baseline_must_match"
 
 
 def test_incomplete_or_tampered_baseline_blocks_manifest(tmp_path: Path) -> None:

@@ -14,6 +14,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any
+from scripts.runtime.win_bar import accuracy_bar
 
 from synthesis.evaluate.benchmarks.gsm_symbolic.prompts import GSM_CRANE_COT_TASK
 from synthesis.run_constants import (
@@ -1350,10 +1351,11 @@ def validate_exhaustive_campaign(
             raise ConfigError(
                 f"{cell} baseline counts must match the train sample size"
             )
-        strict_bar = (correct + 1) / total
-        if abs(float(job["min_accuracy"]) - strict_bar) > 1e-12:
+        bar = accuracy_bar(correct, total).min_accuracy
+        if abs(float(job["min_accuracy"]) - bar) > 1e-12:
             raise ConfigError(
-                f"{cell} min_accuracy must be the one-example strict train bar"
+                f"{cell} min_accuracy must be the shared win bar {bar:.6f} "
+                "(baseline + 10 points, see scripts/runtime/win_bar.py)"
             )
         baseline_source = str(job.get("baseline_source", "")).strip()
         if not baseline_source:
