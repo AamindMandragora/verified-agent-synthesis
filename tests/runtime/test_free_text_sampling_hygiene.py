@@ -96,3 +96,17 @@ def test_chunk_handles_a_close_split_across_tokens_and_the_boundary():
 def test_chunk_still_stops_at_an_opener_variant():
     text, on_open, _, _ = _chunk(_lm("so"), ["x", " <<", "x"])
     assert (text, on_open) == ("x <<", True)
+
+
+class _MergingTokenizer(_CharTokenizer):
+    """Re-tokenizes badly: decodes "x>" pieces back with a doubled ">"."""
+
+    def encode(self, text, add_special_tokens=False):
+        return [VOCAB.index(">>") if ch == ">" else VOCAB.index(ch) for ch in text]
+
+
+def test_chunk_output_is_clean_even_if_retokenizing_misbehaves():
+    lm = _lm("so ")
+    lm.tokenizer = _MergingTokenizer()
+    text, _, _, _ = _chunk(lm, ["x", ">>", "x"])
+    assert text == "x>x"

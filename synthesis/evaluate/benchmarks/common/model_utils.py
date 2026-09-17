@@ -1708,6 +1708,14 @@ class _TensorizedLMBase:
         self._last_generation_evidence = evidence
         return evidence
 
+    def _exact_token_strs_from_text(self, text: str) -> list[str]:
+        token_strs = self._token_strs_from_text(text)
+        if "".join(token_strs) == text:
+            return token_strs
+        # Re-tokenizing did not give the text back; one string per character always does.
+        _HYGIENE_LOG.warning("[delimiter_hygiene] retokenize mismatch for %r", text)
+        return list(text)
+
     def _build_unconstrained_chunk_result(self, token_ids, open_span_token, eos_token, max_new_tokens: int):
         from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
 
@@ -1757,7 +1765,7 @@ class _TensorizedLMBase:
                 if spider_contract_active:
                     self._record_generated_token_ids([raw_token_id])
                 prefix_text = candidate_text[:open_idx]
-                chunk_tokens = self._token_strs_from_text(prefix_text)
+                chunk_tokens = self._exact_token_strs_from_text(prefix_text)
                 chunk_tokens.append(open_span_str)
                 stopped_on_open = True
                 break
@@ -1766,7 +1774,7 @@ class _TensorizedLMBase:
                 self._record_generated_token_ids([raw_token_id])
             if scrubbed:
                 _HYGIENE_LOG.info("[delimiter_hygiene] scrubbed chunk token %r", token_str)
-                chunk_tokens = self._token_strs_from_text(candidate_text)
+                chunk_tokens = self._exact_token_strs_from_text(candidate_text)
             else:
                 chunk_tokens.append(token_str)
             chunk_text = candidate_text
