@@ -261,6 +261,9 @@ module VerifiedDecoderAgent {
       ensures stoppedOnEos ==> stepsUsed == |chunk| + 1
       ensures !stoppedOnEos ==> stepsUsed == |chunk|
       ensures maxNewTokens > 0 ==> stepsUsed > 0
+      // Runtime rule (delimiter_hygiene.scrub_free_text): chunk text carries no
+      // delimiter text, apart from the opener it stopped on.
+      ensures AllDelimFree(if stoppedOnOpenSpan then chunk[..|chunk| - 1] else chunk)
 
     method {:extern} {:axiom} MaskValidNextAndEos(parser: Parser, prefix: Prefix, eosToken: Token)
       modifies this.Logits
@@ -661,6 +664,11 @@ module VerifiedDecoderAgent {
       ensures stoppedOnEos ==> |generatedOut| + 1 == |generated| + stepsUsed
       ensures !stoppedOnEos ==> |generatedOut| == |generated| + stepsUsed
       ensures maxChunkTokens > 0 ==> stepsUsed > 0
+      ensures forall p: Parser {:trigger Tied(p, generatedOut, false, [])} ::
+                Tied(p, generated, false, []) && !stoppedOnOpenSpan ==> Tied(p, generatedOut, false, [])
+      ensures forall p: Parser {:trigger Tied(p, generatedOut, true, [])} ::
+                Tied(p, generated, false, []) && stoppedOnOpenSpan && openSpanToken == "<<" && p.IsValidPrefix([])
+                ==> Tied(p, generatedOut, true, [])
     {
       var chunk: Prefix;
       chunk, stoppedOnOpenSpan, stoppedOnEos, stepsUsed := lm.GenerateUnconstrainedChunk(
@@ -668,6 +676,18 @@ module VerifiedDecoderAgent {
       );
       generatedOut := generated + chunk;
       cost := cost + stepsUsed;
+      forall p: Parser | Tied(p, generated, false, []) && !stoppedOnOpenSpan
+        ensures Tied(p, generatedOut, false, [])
+      { FreeRun(p, generated, chunk); }
+      forall p: Parser | Tied(p, generated, false, []) && stoppedOnOpenSpan && openSpanToken == "<<" && p.IsValidPrefix([])
+        ensures Tied(p, generatedOut, true, [])
+      {
+        var free := chunk[..|chunk| - 1];
+        FreeRun(p, generated, free);
+        OpenTied(p, generated + free);
+        assert chunk == free + ["<<"];
+        assert generatedOut == (generated + free) + ["<<"];
+      }
     }
 
     // Generates one symbol worth of tokens via a multi-token LM call,
