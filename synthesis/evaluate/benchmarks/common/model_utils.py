@@ -21,6 +21,12 @@ from contextlib import contextmanager
 from typing import Any
 
 import torch
+from synthesis.evaluate.benchmarks.common.delimiter_hygiene import (
+    banned_ids_outside_span,
+    build_delimiter_token_sets,
+    scrub_free_text,
+    walk_spans,
+)
 
 
 # Diagnostic logging for the prompt-grounding extern (SpanGrounded) and the
@@ -30,6 +36,7 @@ import torch
 # Set CSD_GROUNDING_LOG=1 to attach a stderr handler at INFO and make them show — an
 # OPT-IN diagnostic only; with the env var unset this block is a no-op and behaviour
 # (masks, scoring, decode) is byte-identical to before.
+_HYGIENE_LOG = logging.getLogger("csd.delimiter_hygiene")
 _GROUNDING_LOG = logging.getLogger("csd.grounding")
 _SPIDER_CONTRACT_LOG = logging.getLogger("csd.spider_output_contract")
 
@@ -856,6 +863,11 @@ class _TensorizedLMBase:
         )
         self._generate_count = 0
         self._token_id_to_str: dict[int, str] = {}
+        # Free-text delimiter rule (see delimiter_hygiene): what the output so far renders to, and
+        # whether this benchmark starts inside a hidden span (SMILES, Spider token-0).
+        self._last_prefix_text = ""
+        self._starts_inside_span = False
+        self._delimiter_sets = None
         self._runtime_deadline: float | None = None
         # CRANE-style answer early stop (flag-gated, default OFF): when
         # enabled, per-step hooks raise AnswerCompleteStop once the output
@@ -937,6 +949,35 @@ class _TensorizedLMBase:
     def _check_runtime_deadline(self):
         if self._runtime_deadline is not None and time.monotonic() >= self._runtime_deadline:
             raise TimeoutError("CSD example exceeded its runtime budget")
+
+    def SetStartsInsideSpan(self, starts_inside: bool):
+        self._starts_inside_span = bool(starts_inside)
+
+    def _free_text_logits(self, full_logits: torch.Tensor) -> torch.Tensor:
+        """Logits for sampling one free-text token: outside a span, no token may create or close a
+        delimiter on its own; only the exact "<<" token may open a span. Inside a span nothing is
+        banned here, because there the parser decides."""
+        walk = walk_spans(self._last_prefix_text, self._starts_inside_span)
+        if walk.ends_inside:
+            return full_logits
+        if self._delimiter_sets is None:
+            n = int(full_logits.numel())
+            self._delimiter_sets = build_delimiter_token_sets(
+                {i: self._token_str_from_id(i) for i in range(n)}
+            )
+            _HYGIENE_LOG.info(
+                "[delimiter_hygiene] vocab=%d exact_openers=%d opener_variants=%d always_banned=%d",
+                n, len(self._delimiter_sets.exact_opener_ids),
+                len(self._delimiter_sets.opener_ids) - len(self._delimiter_sets.exact_opener_ids),
+                len(self._delimiter_sets.always_banned_ids),
+            )
+        banned = [i for i in banned_ids_outside_span(self._delimiter_sets, walk.free_text_tail)
+                  if i < full_logits.numel()]
+        if not banned:
+            return full_logits
+        masked = full_logits.clone()
+        masked[torch.tensor(banned, dtype=torch.long, device=masked.device)] = -1e9
+        return masked
 
     def SetAnswerEarlyStop(self, enabled: bool):
         self._answer_early_stop_enabled = bool(enabled)
@@ -1691,6 +1732,7 @@ class _TensorizedLMBase:
         stopped_on_open = False
         stopped_on_eos = False
         stop_ids = self._generation_stop_ids() if spider_contract_active else frozenset()
+        free_text_tail = walk_spans(self._last_prefix_text, self._starts_inside_span).free_text_tail
 
         for raw_token_id in token_ids:
             if steps_used >= max_new_tokens:
@@ -1708,7 +1750,8 @@ class _TensorizedLMBase:
                 stopped_on_eos = True
                 break
 
-            candidate_text = chunk_text + token_str
+            candidate_text = scrub_free_text(free_text_tail, chunk_text + token_str)
+            scrubbed = candidate_text != chunk_text + token_str
             open_idx = candidate_text.find(open_span_str)
             if open_idx != -1:
                 if spider_contract_active:
@@ -1721,7 +1764,11 @@ class _TensorizedLMBase:
 
             if spider_contract_active:
                 self._record_generated_token_ids([raw_token_id])
-            chunk_tokens.append(token_str)
+            if scrubbed:
+                _HYGIENE_LOG.info("[delimiter_hygiene] scrubbed chunk token %r", token_str)
+                chunk_tokens = self._token_strs_from_text(candidate_text)
+            else:
+                chunk_tokens.append(token_str)
             chunk_text = candidate_text
 
         if spider_contract_active:
@@ -1772,6 +1819,7 @@ class _TensorizedLMBase:
     def _sample_full_token_id(self) -> int:
         if self._full_logits is None:
             raise RuntimeError("Must call GenerateLogits before sampling unconstrained tokens")
+        full_logits = self._free_text_logits(self._full_logits)
 
         # Default greedy (argmax) to match CRANE / IterGen do_sample=False.
         # Multinomial(softmax) made unconstrained CoT diverge from frozen
@@ -1782,7 +1830,7 @@ class _TensorizedLMBase:
             # index. On GSM ex0 that picks token " <<" over " $\\" at equal
             # 22.875 and opens constrained early. Prefer a tied token that does
             # not contain the CRANE start marker "<<", else the highest tied id.
-            logits = self._full_logits
+            logits = full_logits
             # IterGen opportunistic SoftConstrained: never accept EOS on the first
             # unconstrained peek (HF stopping is separate; grammar mask fallback
             # also clears EOS). Otherwise empty-prefix Spider picks <|im_end|>.
@@ -1814,9 +1862,9 @@ class _TensorizedLMBase:
                 return best
             return int(tied.max().item())
 
-        probs = torch.softmax(self._full_logits / temperature, dim=0)
+        probs = torch.softmax(full_logits / temperature, dim=0)
         if torch.isnan(probs).any() or torch.sum(probs).item() <= 0.0:
-            return int(self._full_logits.argmax().item())
+            return int(full_logits.argmax().item())
         chosen = int(torch.multinomial(probs, num_samples=1).item())
         return chosen
 
@@ -2216,6 +2264,7 @@ def create_huggingface_lm(
             self._check_runtime_deadline()
             self._check_answer_early_stop(input_prefix)
             prefix_text = self._prefix_text(input_prefix)
+            self._last_prefix_text = prefix_text
             full_prompt = self.instruction_text + prefix_text
             self._begin_generation_transaction(input_prefix)
 
@@ -2288,6 +2337,7 @@ def create_huggingface_lm(
                 return self._build_unconstrained_chunk_result([], openSpanToken, eosToken, 0)
 
             prefix_text = self._prefix_text(input_prefix)
+            self._last_prefix_text = prefix_text
             full_prompt = self.instruction_text + prefix_text
             self._begin_generation_transaction(input_prefix)
             id_list = self._full_input_ids(input_prefix)
@@ -2365,6 +2415,7 @@ def create_vllm_lm(
             with _timed("GenerateLogits.total"):
                 with _timed("GenerateLogits.prefix_text"):
                     prefix_text = self._prefix_text(input_prefix)
+                    self._last_prefix_text = prefix_text
                     full_prompt = self.instruction_text + prefix_text
                     self._begin_generation_transaction(input_prefix)
 
@@ -2414,6 +2465,7 @@ def create_vllm_lm(
                 return self._build_unconstrained_chunk_result([], openSpanToken, eosToken, 0)
 
             prefix_text = self._prefix_text(input_prefix)
+            self._last_prefix_text = prefix_text
             full_prompt = self.instruction_text + prefix_text
             self._begin_generation_transaction(input_prefix)
             sampling_params = SamplingParams(

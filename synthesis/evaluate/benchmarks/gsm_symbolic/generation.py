@@ -363,6 +363,8 @@ def run_crane_csd(
         runtime_deadline = time.monotonic() + max_seconds
     if hasattr(lm, "SetRuntimeDeadline"):
         lm.SetRuntimeDeadline(runtime_deadline)
+    if hasattr(lm, "SetStartsInsideSpan"):
+        lm.SetStartsInsideSpan(start_inside_constrained)
     if early_stop_on_answer and hasattr(lm, "SetAnswerEarlyStop"):
         lm.SetAnswerEarlyStop(True)
 
