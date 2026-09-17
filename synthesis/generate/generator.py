@@ -2346,10 +2346,10 @@ class StrategyGenerator:
         Args:
             task_description: Description of what the strategy should accomplish
             force_open_span: Whether this run's decoding surface starts
-                already inside the constrained region (EnterObservedConstrainedSpan,
-                no visible "<<") rather than outside it (OpenConstrainedSpan, which
-                emits "<<"). Told to the author so it enters constrained mode the
-                right way for this run instead of guessing.
+                already inside the constrained region, with the runtime's visible
+                "<<" as token 0, rather than outside it with an empty output.
+                Told to the author so it enters constrained mode the right way
+                for this run instead of guessing.
 
         Returns:
             Strategy expression (Dafny code)

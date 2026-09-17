@@ -14,15 +14,42 @@ The generator expects these entrypoints:
 """
 
 import re
+from pathlib import Path
 
 # NOTE:
 # The synthesized output is injected into
 # `synthesis/verify/library/GeneratedCSD.dfy` as the BODY
-# of method `MyCSDStrategy(...)`.
+# of method `AuthorBody(...)`, which `MyCSDStrategy` calls.
 #
 # The output is a multi-line Dafny method body.
 # It receives the full generated prefix so far plus explicit state for the
 # currently active constrained segment, if any.
+
+_TEMPLATE_PATH = (
+    Path(__file__).resolve().parents[1] / "verify" / "library" / "GeneratedCSD.dfy"
+)
+_CONTRACT_MARKER = "__AUTHOR_BODY_CONTRACT__"
+
+
+def _read_author_body_contract() -> str:
+    """Read the signature and contract of `AuthorBody` out of the Dafny template.
+
+    The template is the only place the contract is written down. A copy in this
+    file is how the prompt goes stale, so the prompt quotes the file instead.
+    Comment lines are dropped; the prompt explains the rules in its own words.
+    """
+    text = _TEMPLATE_PATH.read_text()
+    start = text.index("  method AuthorBody(")
+    header = text[start:text.index("\n  {", start)]
+    lines = [
+        line[2:] if line.startswith("  ") else line
+        for line in header.splitlines()
+        if not line.strip().startswith("//")
+    ]
+    return "\n".join(lines)
+
+
+AUTHOR_BODY_CONTRACT = _read_author_body_contract()
 
 
 SYSTEM_PROMPT = """\
@@ -30,39 +57,7 @@ You are generating a *constrained decoding strategy* (CSD) that composes verifie
 
 You must output ONLY the Dafny method body for:
 
-  method MyCSDStrategy(
-    lm: LM,
-    parser: Parser,
-    prompt: Prefix,
-    generatedPrefix: Prefix,
-    insideConstrained: bool,
-    currentConstrained: Prefix,
-    maxSteps: nat,
-    stepTokenBudget: nat,
-    validTokenGroups: seq<seq<Token>>,
-    eosToken: Token
-  ) returns (
-    generated: Prefix,
-    insideConstrainedOut: bool,
-    currentConstrainedOut: Prefix,
-    cost: int
-  )
-    modifies lm.Logits
-    requires lm.ValidTokensIdsLogits()
-    requires parser.IsValidPrefix([])
-    requires !insideConstrained ==> currentConstrained == []
-    requires insideConstrained ==> parser.IsValidPrefix(currentConstrained)
-    requires insideConstrained ==> |currentConstrained| <= |generatedPrefix|
-    requires eosToken in lm.Tokens
-    ensures lm.ValidTokensIdsLogits()
-    ensures |generated| <= |generatedPrefix| + maxSteps
-    ensures !insideConstrainedOut ==> currentConstrainedOut == []
-    ensures insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-    ensures cost <= maxSteps
-    ensures maxSteps == 0 || cost > 0 || generated != generatedPrefix ||
-            insideConstrainedOut != insideConstrained ||
-            currentConstrainedOut != currentConstrained
-    decreases maxSteps
+__AUTHOR_BODY_CONTRACT__
 
 ## Output rules
 - Start with: `// CSD_RATIONALE_BEGIN\n// ...\n// CSD_RATIONALE_END`
@@ -82,10 +77,42 @@ You must output ONLY the Dafny method body for:
 - `generated` / `generatedPrefix` contain the full answer text, including delimiter tokens.
 - `currentConstrained` / `currentConstrainedOut` track only the active constrained segment contents between delimiters.
 - EOS is terminal.
-- Visible delimiters such as `"<<"` and `">>"` are task-contract artifacts.
-  Use visible delimiters only when the task or evaluator requires visible constrained spans.
-  For hidden constrained chunks, fully constrained objects, or another structured-output surface,
-  emit the task-native surface.
+
+## Span rules
+
+Every constrained span is visible: it starts with a `"<<"` token in `generated`
+and ends with a `">>"` token. There is no hidden or invisible span.
+
+- `Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)` is given
+  to you on entry and must hold again when you return. In plain words it says:
+  every span you already closed holds a complete parse, free text outside a span
+  carries no delimiter text, and if a span is still open then `generated` ends
+  with `"<<"` followed by exactly `currentConstrainedOut`, which must be a valid
+  grammar prefix.
+- Text inside `<< >>` must always be a valid grammar prefix. Add to it only
+  through `AppendConstrainedToken` or another helper that takes `generated` and
+  `currentConstrained` together; never write to `generated` by hand while a span
+  is open. Those helpers carry the proof; a hand-written append does not.
+- A span may be closed only when its content is complete. Use
+  `CloseConstrainedSpan` when you have already checked
+  `parser.IsCompletePrefix(currentConstrainedOut)`, or `CloseSpanIfComplete`,
+  which checks for you and tells you whether it closed.
+- You cannot leave a span by setting `insideConstrainedOut := false`. That
+  breaks `Tied` and the body will not verify. If the content cannot be finished,
+  shorten it with a rollback helper (`RollbackConstrainedToComplete`,
+  `RollbackConstrainedSuffix`) and close, or leave the span open and return.
+- Outside a span you may append a free token to `generated` directly. If that
+  token is `"<<"`, the model has opened a span itself: set
+  `insideConstrainedOut := true; currentConstrainedOut := [];` (or call
+  `EnterObservedConstrainedSpan`, which does the same bookkeeping at no cost).
+- `maxSteps > 0 ==> "<<" in generated` must hold when you return. If the run
+  starts outside a span and the model never emits `"<<"`, hold one step back and
+  call `OpenConstrainedSpan` before returning.
+- `maxSteps` here is already one less than the caller's budget. The caller holds
+  a step back and, if you return inside a span whose content is complete, writes
+  the closing `">>"` itself. So you may return with a finished span still open.
+- Loops need `invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)`
+  to verify, and usually an invariant that keeps the opener fact alive as well.
 
 ## Available Tools
 
@@ -150,10 +177,13 @@ var promptResemblance: real := helpers.PrefixResemblesPromptExamples(lm, prefix)
 var anyInGroup := helpers.GroupHasValidMember(parser, prefix, group);
 var rolledGen, rolledCurrent := helpers.RollbackConstrainedSpan(parser, stablePrefix, generated, currentConstrained);
 ```
-`OpenConstrainedSpan` appends a new `"<<"` token and costs 1 step. If `"<<"`
-was already emitted by `UnconstrainedStep` or `UnconstrainedChunk`, use
-`EnterObservedConstrainedSpan` to update span state without appending another
-delimiter or consuming additional token budget.
+`OpenConstrainedSpan` appends a new `"<<"` token and costs 1 step. Use it only
+when the last token of `generated` is not already `"<<"`.
+`EnterObservedConstrainedSpan` is for the other case: the model itself sampled
+`"<<"` during free text, through `UnconstrainedStep` or `UnconstrainedChunk`, so
+the opener is already in `generated`. It only updates the tracked span state; it
+appends nothing and costs no budget. It does not create a span on its own, so
+calling it when `generated` does not end with `"<<"` breaks `Tied`.
 
 ### Parser queries
 ```
@@ -265,9 +295,11 @@ consume token budget by themselves.
   Control profile: direct delimiter/state control, no LM sampling.
 
 - `helpers.EnterObservedConstrainedSpan(lm, generated)`
-  Role: state transition after `"<<"` is already present in visible output.
+  Role: state transition after the model itself sampled `"<<"` in free text, so
+  the opener is already the last token of `generated`.
   Mechanics: leaves `generated` unchanged, sets `insideOut := true`, and resets
-  `currentOut := []`.
+  `currentOut := []`. It appends no delimiter, so it cannot open a span on its
+  own; calling it when `generated` does not end with `"<<"` breaks `Tied`.
   Cost: +0.
   Control profile: bookkeeping only.
 
@@ -789,12 +821,19 @@ Summaries align with `synthesis/verify/library/README.md`; the `.dfy` file state
 Your output must include a `// CSD_PROOF_SKETCH_BEGIN ... // CSD_PROOF_SKETCH_END`
 block between the rationale and the method body.
 
-For each of the following two non-trivial loop invariants, explain in one or
+For each of the following three non-trivial loop invariants, explain in one or
 two sentences per branch why that branch preserves the invariant:
 
 1. `parser_validity`:
    `insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)`
-2. `progress`:
+2. `span_tie`:
+   `Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)`
+   Say for each branch which helper carries the tie forward: the state helpers
+   (`AppendConstrainedToken`, `CloseConstrainedSpan`, `CloseSpanIfComplete`,
+   `OpenConstrainedSpan`, the rollback helpers) each preserve it, and a free
+   token appended outside a span preserves it because the sampler cannot emit
+   delimiter text there except the exact opener.
+3. `progress`:
    `|generated| <= |generatedPrefix| + steps`
    Each branch should increment `steps` by the token budget consumed by its
    generation/forced-delimiter helper. Some helpers may consume tokens that are
@@ -806,6 +845,8 @@ The proof sketch should explain preservation of the listed invariants.
 
 """
 
+
+SYSTEM_PROMPT = SYSTEM_PROMPT.replace(_CONTRACT_MARKER, AUTHOR_BODY_CONTRACT)
 
 _TOOL_REFERENCE_START = "\n## Available Tools\n"
 _PROOF_DISCIPLINE_START = "\n## Proof sketch discipline\n"
@@ -968,6 +1009,9 @@ For exact visible spans, use hard parser-controlled helpers such as
 // while the active prefix is narrow, and switches to penalty-aware constrained
 // decoding once the prefix has grown past the initial region. The keyword
 // groups, penalty tokens, and narrow threshold are caller-provided parameters.
+// The loop stops one step short of the budget. That held-back step pays for an
+// OpenConstrainedSpan at the end if the model never emitted "<<", because the
+// contract requires the output to carry an opener whenever maxSteps > 0.
 // CSD_RATIONALE_END
 // CSD_PROOF_SKETCH_BEGIN
 // parser_validity: AppendTaskGuidance leaves generated state unchanged.
@@ -980,11 +1024,20 @@ For exact visible spans, use hard parser-controlled helpers such as
 //   and appends at most one visible token, so the output-length bound remains
 //   linear in steps. The adaptive branch only changes which parser-valid helper
 //   is used.
+// span_tie: every state change goes through a helper that carries
+//   Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+//   forward -- the constrained append, the close, the rollback helpers, and
+//   OpenConstrainedSpan across the appended "<<". Free tokens appended outside a
+//   span preserve the tie because the sampler cannot emit delimiter text there
+//   except the exact opener, and that is the case that flips the flag. Nothing
+//   writes `generated` by hand while a span is open and nothing clears the
+//   inside flag directly, so the tie holds on every path to the return.
 // CSD_PROOF_SKETCH_END
 generated := generatedPrefix;
 insideConstrainedOut := insideConstrained;
 currentConstrainedOut := currentConstrained;
 cost := 0;
+if maxSteps == 0 {{ return; }}
 
 var guidance: string := "Generate exactly one task-appropriate output. No explanation or Markdown. Follow the task's declared output contract exactly.";
 helpers.AppendTaskGuidance(lm, guidance);
@@ -996,12 +1049,12 @@ var narrowThreshold: nat := 10;
 var steps: nat := 0;
 var phase: nat := 0; // 0 = initial narrow phase, 1 = post-penalty phase
 
-while steps < maxSteps
-  invariant 0 <= steps <= maxSteps
+while steps + 1 < maxSteps
+  invariant 0 <= steps && steps + 1 <= maxSteps
   invariant lm.ValidTokensIdsLogits()
   invariant !insideConstrainedOut ==> currentConstrainedOut == []
   invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-  invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+  invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
   invariant |generated| <= |generatedPrefix| + steps
   invariant phase == 0 || phase == 1
   decreases maxSteps - steps
@@ -1063,6 +1116,14 @@ while steps < maxSteps
   }}
 }}
 
+// The model never opened a span: emit the opener with the held-back step so the
+// output carries one, as the contract requires.
+if !insideConstrainedOut && "<<" !in generated {{
+  generated, insideConstrainedOut, currentConstrainedOut :=
+    helpers.OpenConstrainedSpan(lm, generated);
+  steps := steps + 1;
+}}
+
 cost := steps;
 ```
 
@@ -1071,6 +1132,9 @@ cost := steps;
 // Simple delimiter-triggered CSD. Generate freely until "<<" appears, then
 // constrain; each constrained step calls CloseSpanIfComplete, which emits ">>"
 // once the parser accepts the span and is a no-op otherwise.
+// The loop stops one step short of the budget. That held-back step pays for an
+// OpenConstrainedSpan at the end if the model never emitted "<<", because the
+// contract requires the output to carry an opener whenever maxSteps > 0.
 // CSD_RATIONALE_END
 // CSD_PROOF_SKETCH_BEGIN
 // parser_validity: In the unconstrained branch we only flip insideConstrainedOut
@@ -1082,20 +1146,29 @@ cost := steps;
 //   preserves parser validity when IsTokenValidNext holds.
 // progress: Every branch appends at most one token to generated and steps grows
 //   by 1, so |generated| - |generatedPrefix| <= steps <= steps * stepTokenBudget.
+// span_tie: every state change goes through a helper that carries
+//   Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+//   forward -- the constrained append, the close, the rollback helpers, and
+//   OpenConstrainedSpan across the appended "<<". Free tokens appended outside a
+//   span preserve the tie because the sampler cannot emit delimiter text there
+//   except the exact opener, and that is the case that flips the flag. Nothing
+//   writes `generated` by hand while a span is open and nothing clears the
+//   inside flag directly, so the tie holds on every path to the return.
 // CSD_PROOF_SKETCH_END
 generated := generatedPrefix;
 insideConstrainedOut := insideConstrained;
 currentConstrainedOut := currentConstrained;
 cost := 0;
+if maxSteps == 0 {{ return; }}
 
 var steps: nat := 0;
 
-while steps < maxSteps
-  invariant 0 <= steps <= maxSteps
+while steps + 1 < maxSteps
+  invariant 0 <= steps && steps + 1 <= maxSteps
   invariant lm.ValidTokensIdsLogits()
   invariant !insideConstrainedOut ==> currentConstrainedOut == []
   invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-  invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+  invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
   invariant |generated| <= |generatedPrefix| + steps
   decreases maxSteps - steps
 {{
@@ -1138,6 +1211,14 @@ while steps < maxSteps
   }}
 }}
 
+// The model never opened a span: emit the opener with the held-back step so the
+// output carries one, as the contract requires.
+if !insideConstrainedOut && "<<" !in generated {{
+  generated, insideConstrainedOut, currentConstrainedOut :=
+    helpers.OpenConstrainedSpan(lm, generated);
+  steps := steps + 1;
+}}
+
 cost := steps;
 ```
 
@@ -1148,6 +1229,9 @@ cost := steps;
 // outside-span action opens a constrained span before returning to ordinary
 // delimiter-triggered behavior. Inside the span, parser validity remains the
 // hard authority.
+// The loop stops one step short of the budget. That held-back step pays for an
+// OpenConstrainedSpan at the end if the model never emitted "<<", because the
+// contract requires the output to carry an opener whenever maxSteps > 0.
 // CSD_RATIONALE_END
 // CSD_PROOF_SKETCH_BEGIN
 // parser_validity: Outside the span, the implication is vacuous. The
@@ -1159,22 +1243,31 @@ cost := steps;
 // progress: UnconstrainedStep, OpenConstrainedSpan, CloseConstrainedSpan, and
 //   ConstrainedStep each consume one step and append at most one token, so
 //   |generated| <= |generatedPrefix| + steps is preserved.
+// span_tie: every state change goes through a helper that carries
+//   Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+//   forward -- the constrained append, the close, the rollback helpers, and
+//   OpenConstrainedSpan across the appended "<<". Free tokens appended outside a
+//   span preserve the tie because the sampler cannot emit delimiter text there
+//   except the exact opener, and that is the case that flips the flag. Nothing
+//   writes `generated` by hand while a span is open and nothing clears the
+//   inside flag directly, so the tie holds on every path to the return.
 // CSD_PROOF_SKETCH_END
 generated := generatedPrefix;
 insideConstrainedOut := insideConstrained;
 currentConstrainedOut := currentConstrained;
 cost := 0;
+if maxSteps == 0 {{ return; }}
 
 var steps: nat := 0;
 var markerArmed: bool := false;
 var markerToken: Token := ":";
 
-while steps < maxSteps
-  invariant 0 <= steps <= maxSteps
+while steps + 1 < maxSteps
+  invariant 0 <= steps && steps + 1 <= maxSteps
   invariant lm.ValidTokensIdsLogits()
   invariant !insideConstrainedOut ==> currentConstrainedOut == []
   invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-  invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+  invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
   invariant |generated| <= |generatedPrefix| + steps
   decreases maxSteps - steps
 {{
@@ -1227,6 +1320,14 @@ while steps < maxSteps
   }}
 }}
 
+// The model never opened a span: emit the opener with the held-back step so the
+// output carries one, as the contract requires.
+if !insideConstrainedOut && "<<" !in generated {{
+  generated, insideConstrainedOut, currentConstrainedOut :=
+    helpers.OpenConstrainedSpan(lm, generated);
+  steps := steps + 1;
+}}
+
 cost := steps;
 ```
 
@@ -1235,6 +1336,9 @@ cost := steps;
 // Group-aware constrained CSD. Generate freely until "<<" appears, then use
 // caller-supplied token groups as a soft preference while the parser remains
 // the hard validity authority.
+// The loop stops one step short of the budget. That held-back step pays for an
+// OpenConstrainedSpan at the end if the model never emitted "<<", because the
+// contract requires the output to carry an opener whenever maxSteps > 0.
 // CSD_RATIONALE_END
 // CSD_PROOF_SKETCH_BEGIN
 // parser_validity: Outside the span, the implication is vacuous unless next is
@@ -1244,20 +1348,29 @@ cost := steps;
 //   parser-valid next token, and AppendConstrainedToken preserves validity.
 // progress: Every branch appends at most one token and steps grows by 1, so
 //   |generated| <= |generatedPrefix| + steps is preserved.
+// span_tie: every state change goes through a helper that carries
+//   Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+//   forward -- the constrained append, the close, the rollback helpers, and
+//   OpenConstrainedSpan across the appended "<<". Free tokens appended outside a
+//   span preserve the tie because the sampler cannot emit delimiter text there
+//   except the exact opener, and that is the case that flips the flag. Nothing
+//   writes `generated` by hand while a span is open and nothing clears the
+//   inside flag directly, so the tie holds on every path to the return.
 // CSD_PROOF_SKETCH_END
 generated := generatedPrefix;
 insideConstrainedOut := insideConstrained;
 currentConstrainedOut := currentConstrained;
 cost := 0;
+if maxSteps == 0 {{ return; }}
 
 var steps: nat := 0;
 
-while steps < maxSteps
-  invariant 0 <= steps <= maxSteps
+while steps + 1 < maxSteps
+  invariant 0 <= steps && steps + 1 <= maxSteps
   invariant lm.ValidTokensIdsLogits()
   invariant !insideConstrainedOut ==> currentConstrainedOut == []
   invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-  invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+  invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
   invariant |generated| <= |generatedPrefix| + steps
   decreases maxSteps - steps
 {{
@@ -1300,6 +1413,14 @@ while steps < maxSteps
   }}
 }}
 
+// The model never opened a span: emit the opener with the held-back step so the
+// output carries one, as the contract requires.
+if !insideConstrainedOut && "<<" !in generated {{
+  generated, insideConstrainedOut, currentConstrainedOut :=
+    helpers.OpenConstrainedSpan(lm, generated);
+  steps := steps + 1;
+}}
+
 cost := steps;
 ```
 
@@ -1307,6 +1428,9 @@ cost := steps;
 // CSD_RATIONALE_BEGIN
 // Top-candidate constrained CSD. Inside a span, query a small ranked set of
 // parser-valid candidates and append the first non-EOS candidate if available.
+// The loop stops one step short of the budget. That held-back step pays for an
+// OpenConstrainedSpan at the end if the model never emitted "<<", because the
+// contract requires the output to carry an opener whenever maxSteps > 0.
 // CSD_RATIONALE_END
 // CSD_PROOF_SKETCH_BEGIN
 // parser_validity: Enter only via the unconstrained branch when next == "<<",
@@ -1316,20 +1440,29 @@ cost := steps;
 //   preserves validity.
 // progress: Every branch appends at most one token; attempts grows by 1, so
 //   |generated| <= |generatedPrefix| + attempts * stepTokenBudget holds.
+// span_tie: every state change goes through a helper that carries
+//   Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+//   forward -- the constrained append, the close, the rollback helpers, and
+//   OpenConstrainedSpan across the appended "<<". Free tokens appended outside a
+//   span preserve the tie because the sampler cannot emit delimiter text there
+//   except the exact opener, and that is the case that flips the flag. Nothing
+//   writes `generated` by hand while a span is open and nothing clears the
+//   inside flag directly, so the tie holds on every path to the return.
 // CSD_PROOF_SKETCH_END
 generated := generatedPrefix;
 insideConstrainedOut := insideConstrained;
 currentConstrainedOut := currentConstrained;
 cost := 0;
+if maxSteps == 0 {{ return; }}
 
 var attempts: nat := 0;
 
-while attempts < maxSteps
-  invariant 0 <= attempts <= maxSteps
+while attempts + 1 < maxSteps
+  invariant 0 <= attempts && attempts + 1 <= maxSteps
   invariant lm.ValidTokensIdsLogits()
   invariant !insideConstrainedOut ==> currentConstrainedOut == []
   invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-  invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+  invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
   invariant |generated| <= |generatedPrefix| + attempts
   decreases maxSteps - attempts
 {{
@@ -1379,6 +1512,14 @@ while attempts < maxSteps
   }}
 }}
 
+// The model never opened a span: emit the opener with the held-back step so the
+// output carries one, as the contract requires.
+if !insideConstrainedOut && "<<" !in generated {{
+  generated, insideConstrainedOut, currentConstrainedOut :=
+    helpers.OpenConstrainedSpan(lm, generated);
+  attempts := attempts + 1;
+}}
+
 cost := attempts;
 ```
 
@@ -1393,6 +1534,9 @@ cost := attempts;
 // delimiter-triggered strategy does.
 // Multi-token chunking amortizes per-token dispatch overhead across the
 // unconstrained region without starving the prefix.
+// The loop stops one step short of the budget. That held-back step pays for an
+// OpenConstrainedSpan at the end if the model never emitted "<<", because the
+// contract requires the output to carry an opener whenever maxSteps > 0.
 // CSD_RATIONALE_END
 // CSD_PROOF_SKETCH_BEGIN
 // parser_validity: Outside the span, insideConstrainedOut stays false unless
@@ -1406,25 +1550,34 @@ cost := attempts;
 //   steps := steps + stepsUsed, so |new_generated| <= |generatedPrefix| +
 //   steps + stepsUsed = |generatedPrefix| + new_steps. Other branches append
 //   ≤1 token and steps += 1. Linear arithmetic throughout. ✓
+// span_tie: every state change goes through a helper that carries
+//   Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+//   forward -- the constrained append, the close, the rollback helpers, and
+//   OpenConstrainedSpan across the appended "<<". Free tokens appended outside a
+//   span preserve the tie because the sampler cannot emit delimiter text there
+//   except the exact opener, and that is the case that flips the flag. Nothing
+//   writes `generated` by hand while a span is open and nothing clears the
+//   inside flag directly, so the tie holds on every path to the return.
 // CSD_PROOF_SKETCH_END
 generated := generatedPrefix;
 insideConstrainedOut := insideConstrained;
 currentConstrainedOut := currentConstrained;
 cost := 0;
+if maxSteps == 0 {{ return; }}
 
 var steps: nat := 0;
 
-while steps < maxSteps
-  invariant 0 <= steps <= maxSteps
+while steps + 1 < maxSteps
+  invariant 0 <= steps && steps + 1 <= maxSteps
   invariant lm.ValidTokensIdsLogits()
   invariant !insideConstrainedOut ==> currentConstrainedOut == []
   invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-  invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+  invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
   invariant |generated| <= |generatedPrefix| + steps
   decreases maxSteps - steps
 {{
   if !insideConstrainedOut {{
-    var chunkBudget: nat := maxSteps - steps;
+    var chunkBudget: nat := maxSteps - steps - 1;
     if chunkBudget > 32 {{
       chunkBudget := 32;
     }}
@@ -1464,6 +1617,14 @@ while steps < maxSteps
   }}
 }}
 
+// The model never opened a span: emit the opener with the held-back step so the
+// output carries one, as the contract requires.
+if !insideConstrainedOut && "<<" !in generated {{
+  generated, insideConstrainedOut, currentConstrainedOut :=
+    helpers.OpenConstrainedSpan(lm, generated);
+  steps := steps + 1;
+}}
+
 cost := steps;
 ```
 
@@ -1478,6 +1639,9 @@ cost := steps;
 // freely. Inside the span it uses ConstrainedSymbol, passing stepTokenBudget
 // as the per-step token allowance. Close as soon as the parser reports the
 // prefix is complete.
+// The loop stops one step short of the budget. That held-back step pays for an
+// OpenConstrainedSpan at the end if the model never emitted "<<", because the
+// contract requires the output to carry an opener whenever maxSteps > 0.
 // CSD_RATIONALE_END
 // CSD_PROOF_SKETCH_BEGIN
 // parser_validity: Opening a span sets currentConstrainedOut := [], valid by
@@ -1489,20 +1653,29 @@ cost := steps;
 //   decreases. The invariant |generated| <= |generatedPrefix| + steps is
 //   linear: each branch adds at most the consumed token budget to visible
 //   output and advances steps by that budget (or 1 for single-token branches). ✓
+// span_tie: every state change goes through a helper that carries
+//   Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+//   forward -- the constrained append, the close, the rollback helpers, and
+//   OpenConstrainedSpan across the appended "<<". Free tokens appended outside a
+//   span preserve the tie because the sampler cannot emit delimiter text there
+//   except the exact opener, and that is the case that flips the flag. Nothing
+//   writes `generated` by hand while a span is open and nothing clears the
+//   inside flag directly, so the tie holds on every path to the return.
 // CSD_PROOF_SKETCH_END
 generated := generatedPrefix;
 insideConstrainedOut := insideConstrained;
 currentConstrainedOut := currentConstrained;
 cost := 0;
+if maxSteps == 0 {{ return; }}
 
 var steps: nat := 0;
 
-while steps < maxSteps
-  invariant 0 <= steps <= maxSteps
+while steps + 1 < maxSteps
+  invariant 0 <= steps && steps + 1 <= maxSteps
   invariant lm.ValidTokensIdsLogits()
   invariant !insideConstrainedOut ==> currentConstrainedOut == []
   invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-  invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+  invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
   invariant |generated| <= |generatedPrefix| + steps
   decreases maxSteps - steps
 {{
@@ -1529,7 +1702,7 @@ while steps < maxSteps
   }} else {{
     var stablePrefix := generated[..|generated| - |currentConstrainedOut|];
     var constrainedPrompt := prompt + stablePrefix;
-    var symbolBudget: nat := maxSteps - steps;
+    var symbolBudget: nat := maxSteps - steps - 1;
     var symbolGenerated, symbolOut, hitEos, stepsUsed := helpers.ConstrainedSymbolInGenerated(
       lm, parser, constrainedPrompt, generated, currentConstrainedOut, symbolBudget, eosToken
     );
@@ -1542,6 +1715,14 @@ while steps < maxSteps
   }}
 }}
 
+// The model never opened a span: emit the opener with the held-back step so the
+// output carries one, as the contract requires.
+if !insideConstrainedOut && "<<" !in generated {{
+  generated, insideConstrainedOut, currentConstrainedOut :=
+    helpers.OpenConstrainedSpan(lm, generated);
+  steps := steps + 1;
+}}
+
 cost := steps;
 ```
 
@@ -1551,6 +1732,9 @@ cost := steps;
 // valid-continuation count and choose between different constrained decoding
 // strategies based on branch factor. Uses caller-provided keyword groups and
 // penalty tokens for the adaptive phases.
+// The loop stops one step short of the budget. That held-back step pays for an
+// OpenConstrainedSpan at the end if the model never emitted "<<", because the
+// contract requires the output to carry an opener whenever maxSteps > 0.
 // CSD_RATIONALE_END
 // CSD_PROOF_SKETCH_BEGIN
 // parser_validity: CloseConstrainedSpan makes implication vacuous. In the
@@ -1561,11 +1745,20 @@ cost := steps;
 //   tokens. All preserve validity via AppendConstrainedToken.
 // progress: Every branch consumes one step and appends at most one visible
 //   token, so |generated| <= |generatedPrefix| + steps is preserved.
+// span_tie: every state change goes through a helper that carries
+//   Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+//   forward -- the constrained append, the close, the rollback helpers, and
+//   OpenConstrainedSpan across the appended "<<". Free tokens appended outside a
+//   span preserve the tie because the sampler cannot emit delimiter text there
+//   except the exact opener, and that is the case that flips the flag. Nothing
+//   writes `generated` by hand while a span is open and nothing clears the
+//   inside flag directly, so the tie holds on every path to the return.
 // CSD_PROOF_SKETCH_END
 generated := generatedPrefix;
 insideConstrainedOut := insideConstrained;
 currentConstrainedOut := currentConstrained;
 cost := 0;
+if maxSteps == 0 {{ return; }}
 
 var narrowThreshold: nat := 20;
 var steps: nat := 0;
@@ -1573,12 +1766,12 @@ var phase: nat := 0; // 0 = narrow (boost), 1 = penalty phase, 2 = default
 var keywordGroups: seq<seq<Token>> := validTokenGroups; // Caller-provided
 var penaltyTokens: seq<Token> := []; // Caller-provided tokens to penalize
 
-while steps < maxSteps
-  invariant 0 <= steps <= maxSteps
+while steps + 1 < maxSteps
+  invariant 0 <= steps && steps + 1 <= maxSteps
   invariant lm.ValidTokensIdsLogits()
   invariant !insideConstrainedOut ==> currentConstrainedOut == []
   invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-  invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+  invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
   invariant |generated| <= |generatedPrefix| + steps
   invariant phase <= 2
   decreases maxSteps - steps
@@ -1645,6 +1838,14 @@ while steps < maxSteps
   }}
 }}
 
+// The model never opened a span: emit the opener with the held-back step so the
+// output carries one, as the contract requires.
+if !insideConstrainedOut && "<<" !in generated {{
+  generated, insideConstrainedOut, currentConstrainedOut :=
+    helpers.OpenConstrainedSpan(lm, generated);
+  steps := steps + 1;
+}}
+
 cost := steps;
 ```
 
@@ -1655,6 +1856,9 @@ cost := steps;
 // tokens following a caller-provided keyword via ExtractAfterKeyword. At
 // candidate-selection positions, it intersects parser-valid candidates with
 // that context set and boosts the intersection.
+// The loop stops one step short of the budget. That held-back step pays for an
+// OpenConstrainedSpan at the end if the model never emitted "<<", because the
+// contract requires the output to carry an opener whenever maxSteps > 0.
 // CSD_RATIONALE_END
 // CSD_PROOF_SKETCH_BEGIN
 // parser_validity: GroupBoostedConstrainedStep returns either EOS or a
@@ -1664,22 +1868,31 @@ cost := steps;
 //   cannot affect parser_validity.
 // progress: Every branch increments steps by 1 and appends at most one token,
 //   so |generated| <= |generatedPrefix| + steps is preserved throughout.
+// span_tie: every state change goes through a helper that carries
+//   Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+//   forward -- the constrained append, the close, the rollback helpers, and
+//   OpenConstrainedSpan across the appended "<<". Free tokens appended outside a
+//   span preserve the tie because the sampler cannot emit delimiter text there
+//   except the exact opener, and that is the case that flips the flag. Nothing
+//   writes `generated` by hand while a span is open and nothing clears the
+//   inside flag directly, so the tie holds on every path to the return.
 // CSD_PROOF_SKETCH_END
 generated := generatedPrefix;
 insideConstrainedOut := insideConstrained;
 currentConstrainedOut := currentConstrained;
 cost := 0;
+if maxSteps == 0 {{ return; }}
 
 var semanticContext: seq<Token> := [];
 var scopeKeyword: Token := ""; // Caller-provided keyword to track (e.g., "FROM", "=", "(")
 var steps: nat := 0;
 
-while steps < maxSteps
-  invariant 0 <= steps <= maxSteps
+while steps + 1 < maxSteps
+  invariant 0 <= steps && steps + 1 <= maxSteps
   invariant lm.ValidTokensIdsLogits()
   invariant !insideConstrainedOut ==> currentConstrainedOut == []
   invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-  invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+  invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
   invariant |generated| <= |generatedPrefix| + steps
   decreases maxSteps - steps
 {{
@@ -1731,6 +1944,14 @@ while steps < maxSteps
   }}
 }}
 
+// The model never opened a span: emit the opener with the held-back step so the
+// output carries one, as the contract requires.
+if !insideConstrainedOut && "<<" !in generated {{
+  generated, insideConstrainedOut, currentConstrainedOut :=
+    helpers.OpenConstrainedSpan(lm, generated);
+  steps := steps + 1;
+}}
+
 cost := steps;
 ```
 
@@ -1741,6 +1962,9 @@ cost := steps;
 // beyond a local rollback limit before becoming complete, roll back only the
 // constrained suffix to the nearest valid non-dead prefix and continue from
 // that repaired state.
+// The loop stops one step short of the budget. That held-back step pays for an
+// OpenConstrainedSpan at the end if the model never emitted "<<", because the
+// contract requires the output to carry an opener whenever maxSteps > 0.
 // CSD_RATIONALE_END
 // CSD_PROOF_SKETCH_BEGIN
 // parser_validity: Opening a span sets currentConstrainedOut := [], which is
@@ -1752,21 +1976,30 @@ cost := steps;
 //   consume one step and append at most one token. RollbackConstrainedSuffix
 //   shrinks or preserves generated and we still increment steps by 1, so the
 //   output-length bound remains true while the loop metric decreases.
+// span_tie: every state change goes through a helper that carries
+//   Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+//   forward -- the constrained append, the close, the rollback helpers, and
+//   OpenConstrainedSpan across the appended "<<". Free tokens appended outside a
+//   span preserve the tie because the sampler cannot emit delimiter text there
+//   except the exact opener, and that is the case that flips the flag. Nothing
+//   writes `generated` by hand while a span is open and nothing clears the
+//   inside flag directly, so the tie holds on every path to the return.
 // CSD_PROOF_SKETCH_END
 generated := generatedPrefix;
 insideConstrainedOut := insideConstrained;
 currentConstrainedOut := currentConstrained;
 cost := 0;
+if maxSteps == 0 {{ return; }}
 
 var steps: nat := 0;
 var rollbackLimit: nat := 24;
 
-while steps < maxSteps
-  invariant 0 <= steps <= maxSteps
+while steps + 1 < maxSteps
+  invariant 0 <= steps && steps + 1 <= maxSteps
   invariant lm.ValidTokensIdsLogits()
   invariant !insideConstrainedOut ==> currentConstrainedOut == []
   invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-  invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+  invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
   invariant |generated| <= |generatedPrefix| + steps
   decreases maxSteps - steps
 {{
@@ -1815,6 +2048,14 @@ while steps < maxSteps
   }}
 }}
 
+// The model never opened a span: emit the opener with the held-back step so the
+// output carries one, as the contract requires.
+if !insideConstrainedOut && "<<" !in generated {{
+  generated, insideConstrainedOut, currentConstrainedOut :=
+    helpers.OpenConstrainedSpan(lm, generated);
+  steps := steps + 1;
+}}
+
 cost := steps;
 ```
 
@@ -1827,6 +2068,9 @@ cost := steps;
 // tokens once the prefix has begun (using caller-provided boost tokens). The
 // safe helpers filter literal token lists internally, so the strategy does not
 // need separate vocabulary-membership state for those lists.
+// The loop stops one step short of the budget. That held-back step pays for an
+// OpenConstrainedSpan at the end if the model never emitted "<<", because the
+// contract requires the output to carry an opener whenever maxSteps > 0.
 // CSD_RATIONALE_END
 // CSD_PROOF_SKETCH_BEGIN
 // parser_validity: Outside the span the implication is vacuous unless a "<<"
@@ -1837,23 +2081,32 @@ cost := steps;
 // progress: UnconstrainedStep, CloseConstrainedSpan, and each safe constrained
 //   step consume one token-step and append at most one visible token, so
 //   |generated| <= |generatedPrefix| + steps is preserved.
+// span_tie: every state change goes through a helper that carries
+//   Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+//   forward -- the constrained append, the close, the rollback helpers, and
+//   OpenConstrainedSpan across the appended "<<". Free tokens appended outside a
+//   span preserve the tie because the sampler cannot emit delimiter text there
+//   except the exact opener, and that is the case that flips the flag. Nothing
+//   writes `generated` by hand while a span is open and nothing clears the
+//   inside flag directly, so the tie holds on every path to the return.
 // CSD_PROOF_SKETCH_END
 generated := generatedPrefix;
 insideConstrainedOut := insideConstrained;
 currentConstrainedOut := currentConstrained;
 cost := 0;
+if maxSteps == 0 {{ return; }}
 
 var steps: nat := 0;
 var minPrefixLength: nat := 2; // Minimum constrained prefix length before switching to boost mode
 var penaltyTokens: seq<Token> := []; // Caller-provided tokens to penalize (e.g., early terminators like ">>")
 var boostTokens: seq<Token> := []; // Caller-provided tokens to boost (e.g., operators)
 
-while steps < maxSteps
-  invariant 0 <= steps <= maxSteps
+while steps + 1 < maxSteps
+  invariant 0 <= steps && steps + 1 <= maxSteps
   invariant lm.ValidTokensIdsLogits()
   invariant !insideConstrainedOut ==> currentConstrainedOut == []
   invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-  invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+  invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
   invariant |generated| <= |generatedPrefix| + steps
   decreases maxSteps - steps
 {{
@@ -1905,6 +2158,14 @@ while steps < maxSteps
   }}
 }}
 
+// The model never opened a span: emit the opener with the held-back step so the
+// output carries one, as the contract requires.
+if !insideConstrainedOut && "<<" !in generated {{
+  generated, insideConstrainedOut, currentConstrainedOut :=
+    helpers.OpenConstrainedSpan(lm, generated);
+  steps := steps + 1;
+}}
+
 cost := steps;
 ```
 
@@ -1917,6 +2178,9 @@ cost := steps;
 // identifier-like tokens are not grounded in the prompt context. Phase 3 calls
 // CloseSpanWithinBudget on the remaining budget to bring the span to a completable
 // state and emit the closing ">>". Per-phase budgets keep the length/cost bounds.
+// The loop stops one step short of the budget. That held-back step pays for an
+// OpenConstrainedSpan at the end if the model never emitted "<<", because the
+// contract requires the output to carry an opener whenever maxSteps > 0.
 // CSD_RATIONALE_END
 // CSD_PROOF_SKETCH_BEGIN
 // parser_validity: Phase 1 sets insideConstrainedOut true only on next == "<<",
@@ -1935,20 +2199,29 @@ cost := steps;
 //   |generatedPrefix| + maxSteps, and we set steps := maxSteps.
 // progress: maxSteps > 0 ==> Phase 1 takes a step (cost > 0), or the span was open
 //   on entry and Phase 3 flips insideConstrainedOut.
+// span_tie: every state change goes through a helper that carries
+//   Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+//   forward -- the constrained append, the close, the rollback helpers, and
+//   OpenConstrainedSpan across the appended "<<". Free tokens appended outside a
+//   span preserve the tie because the sampler cannot emit delimiter text there
+//   except the exact opener, and that is the case that flips the flag. Nothing
+//   writes `generated` by hand while a span is open and nothing clears the
+//   inside flag directly, so the tie holds on every path to the return.
 // CSD_PROOF_SKETCH_END
 generated := generatedPrefix;
 insideConstrainedOut := insideConstrained;
 currentConstrainedOut := currentConstrained;
 cost := 0;
+if maxSteps == 0 {{ return; }}
 
 var steps: nat := 0;
 
-while steps < maxSteps && !insideConstrainedOut
-  invariant 0 <= steps <= maxSteps
+while steps + 1 < maxSteps && !insideConstrainedOut
+  invariant 0 <= steps && steps + 1 <= maxSteps
   invariant lm.ValidTokensIdsLogits()
   invariant !insideConstrainedOut ==> currentConstrainedOut == []
   invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-  invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+  invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
   invariant |generated| <= |generatedPrefix| + steps
   decreases maxSteps - steps
 {{
@@ -1964,8 +2237,8 @@ while steps < maxSteps && !insideConstrainedOut
   }}
 }}
 
-if insideConstrainedOut && steps < maxSteps {{
-  var rem := maxSteps - steps;
+if insideConstrainedOut && steps + 1 < maxSteps {{
+  var rem := maxSteps - steps - 1;
   var fillBudget := rem / 2;
   if fillBudget >= 4 {{
     var perUnit := fillBudget / 4;
@@ -1976,21 +2249,30 @@ if insideConstrainedOut && steps < maxSteps {{
     var filled := helpers.RegenerateUnitOnGroundingFailure(
       lm, parser, prompt + stable, currentConstrainedOut, eosToken, perUnit, 3, perUnit
     );
+    ReplaceTied(parser, generated, currentConstrainedOut, filled);
     generated := stable + filled;
     currentConstrainedOut := filled;
     steps := steps + 4 * perUnit;
   }}
 }}
 
-if insideConstrainedOut && steps < maxSteps {{
-  var closeBudget := maxSteps - steps;
+if insideConstrainedOut && steps + 1 < maxSteps {{
+  var closeBudget := maxSteps - steps - 1;
   var cg, ci, cc := helpers.CloseSpanWithinBudget(
     lm, parser, prompt, generated, currentConstrainedOut, eosToken, closeBudget
   );
   generated := cg;
   insideConstrainedOut := ci;
   currentConstrainedOut := cc;
-  steps := maxSteps;
+  steps := maxSteps - 1;
+}}
+
+// The model never opened a span: emit the opener with the held-back step so the
+// output carries one, as the contract requires.
+if !insideConstrainedOut && "<<" !in generated {{
+  generated, insideConstrainedOut, currentConstrainedOut :=
+    helpers.OpenConstrainedSpan(lm, generated);
+  steps := steps + 1;
 }}
 
 cost := steps;
@@ -2002,6 +2284,9 @@ cost := steps;
 // a visible span. Phase 2 calls CloseSpanWithinBudget on the entire remaining
 // budget to advance the span to a completable state and emit the closing ">>",
 // leaving the span open only if no completable state is reachable within budget.
+// The loop stops one step short of the budget. That held-back step pays for an
+// OpenConstrainedSpan at the end if the model never emitted "<<", because the
+// contract requires the output to carry an opener whenever maxSteps > 0.
 // CSD_RATIONALE_END
 // CSD_PROOF_SKETCH_BEGIN
 // parser_validity: Phase 1 flips insideConstrainedOut true only on next == "<<",
@@ -2014,20 +2299,29 @@ cost := steps;
 //   |generated| <= |generatedPrefix| + maxSteps, and we set steps := maxSteps.
 // progress: maxSteps > 0 ==> Phase 1 takes a step (cost > 0), or the span was open
 //   on entry and Phase 2 flips insideConstrainedOut.
+// span_tie: every state change goes through a helper that carries
+//   Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
+//   forward -- the constrained append, the close, the rollback helpers, and
+//   OpenConstrainedSpan across the appended "<<". Free tokens appended outside a
+//   span preserve the tie because the sampler cannot emit delimiter text there
+//   except the exact opener, and that is the case that flips the flag. Nothing
+//   writes `generated` by hand while a span is open and nothing clears the
+//   inside flag directly, so the tie holds on every path to the return.
 // CSD_PROOF_SKETCH_END
 generated := generatedPrefix;
 insideConstrainedOut := insideConstrained;
 currentConstrainedOut := currentConstrained;
 cost := 0;
+if maxSteps == 0 {{ return; }}
 
 var steps: nat := 0;
 
-while steps < maxSteps && !insideConstrainedOut
-  invariant 0 <= steps <= maxSteps
+while steps + 1 < maxSteps && !insideConstrainedOut
+  invariant 0 <= steps && steps + 1 <= maxSteps
   invariant lm.ValidTokensIdsLogits()
   invariant !insideConstrainedOut ==> currentConstrainedOut == []
   invariant insideConstrainedOut ==> parser.IsValidPrefix(currentConstrainedOut)
-  invariant insideConstrainedOut ==> |currentConstrainedOut| <= |generated|
+  invariant Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
   invariant |generated| <= |generatedPrefix| + steps
   decreases maxSteps - steps
 {{
@@ -2043,15 +2337,23 @@ while steps < maxSteps && !insideConstrainedOut
   }}
 }}
 
-if insideConstrainedOut && steps < maxSteps {{
-  var closeBudget := maxSteps - steps;
+if insideConstrainedOut && steps + 1 < maxSteps {{
+  var closeBudget := maxSteps - steps - 1;
   var cg, ci, cc := helpers.CloseSpanWithinBudget(
     lm, parser, prompt, generated, currentConstrainedOut, eosToken, closeBudget
   );
   generated := cg;
   insideConstrainedOut := ci;
   currentConstrainedOut := cc;
-  steps := maxSteps;
+  steps := maxSteps - 1;
+}}
+
+// The model never opened a span: emit the opener with the held-back step so the
+// output carries one, as the contract requires.
+if !insideConstrainedOut && "<<" !in generated {{
+  generated, insideConstrainedOut, currentConstrainedOut :=
+    helpers.OpenConstrainedSpan(lm, generated);
+  steps := steps + 1;
 }}
 
 cost := steps;
@@ -2060,27 +2362,36 @@ cost := steps;
 ```dafny
 // CSD_RATIONALE_BEGIN
 // Token-0 grounded constrained CSD. The eval surface is grammar-constrained from
-// the very first token and carries NO visible << >> delimiters, so this strategy
-// never emits "<<". If it is not already inside a constrained span it ENTERS one
-// silently via EnterObservedConstrainedSpan (sets inside=true, current=[], costs 0
-// tokens) instead of opening a visible span. It then GROUNDS the constrained
-// content unit-by-unit with RegenerateUnitOnGroundingFailure, which rewinds and
-// resamples any completed identifier whose tokens are unsupported by the prompt
-// context. Half the remaining step budget goes to grounding; the other half is
-// reserved so CloseSpanWithinBudget can always advance the span to a completable
-// state. Every budget is charged into `steps`, so the length and cost bounds hold.
+// the very first token, so this strategy spends no budget on free text: it is
+// inside the span for the whole run. Runs that start outside open the span with
+// OpenConstrainedSpan, which appends the visible "<<" and costs one step; runs
+// that already start inside (the runtime wrote "<<" as token 0) skip that and
+// emit no second opener. It then GROUNDS the constrained content unit-by-unit
+// with RegenerateUnitOnGroundingFailure, which rewinds and resamples any
+// completed identifier whose tokens are unsupported by the prompt context. Half
+// the remaining step budget goes to grounding; the rest is reserved so
+// CloseSpanWithinBudget can always advance the span to a completable state, and
+// one further step is held back for the caller's closing ">>". Every budget is
+// charged into `steps`, so the length and cost bounds hold.
 // CSD_RATIONALE_END
 // CSD_PROOF_SKETCH_BEGIN
-// parser_validity: EnterObservedConstrainedSpan returns current == [] (valid);
+// parser_validity: OpenConstrainedSpan returns current == [] (valid);
 //   RegenerateUnitOnGroundingFailure returns a valid prefix; CloseSpanWithinBudget
 //   returns either a closed span (current == []) or a valid open prefix. So both
 //   span invariants hold after every phase.
-// length/cost: steps starts at 0. The grounding phase spends fillBudget =
-//   (maxSteps - steps)/2 and raises steps by that amount; |generated| grows by at
-//   most fillBudget because the regenerated unit replaces a suffix of length
-//   |currentConstrainedOut| and RegenerateUnitOnGroundingFailure bounds the result
-//   by |currentConstrainedOut| + fillBudget. The close phase spends the rest
-//   (closeBudget = maxSteps - steps) and sets steps := maxSteps; by
+// span_tie: entry is either the caller's own Tied state (already inside) or
+//   OpenConstrainedSpan, which carries Tied across the appended "<<". The
+//   grounding phase replaces the span content in place and preserves Tied via
+//   the helper's Tied ensures, as does CloseSpanWithinBudget. Nothing here
+//   writes `generated` by hand inside the span, and nothing clears the inside
+//   flag directly, so the tie survives to the return.
+// length/cost: steps starts at 0 and the opener costs at most 1. The grounding
+//   phase spends fillBudget = (maxSteps - steps - 1)/2 and raises steps by that
+//   amount; |generated| grows by at most fillBudget because the regenerated unit
+//   replaces a suffix of length |currentConstrainedOut| and
+//   RegenerateUnitOnGroundingFailure bounds the result by
+//   |currentConstrainedOut| + fillBudget. The close phase spends the rest
+//   (closeBudget = maxSteps - steps - 1) and sets steps := maxSteps - 1; by
 //   CloseSpanWithinBudget's |generatedOut| <= |generated| + closeBudget we get
 //   |generated| <= |generatedPrefix| + maxSteps. cost := steps <= maxSteps.
 // CSD_PROOF_SKETCH_END
@@ -2088,28 +2399,30 @@ generated := generatedPrefix;
 insideConstrainedOut := insideConstrained;
 currentConstrainedOut := currentConstrained;
 cost := 0;
+if maxSteps == 0 {{ return; }}
 
 var steps: nat := 0;
 
-// (1) Enter a constrained span with NO visible "<<" if not already inside.
+// (1) Make sure we are inside a span. A run that already starts inside must not
+// emit a second "<<", so this only fires when we start outside.
 if !insideConstrainedOut {{
   generated, insideConstrainedOut, currentConstrainedOut :=
-    helpers.EnterObservedConstrainedSpan(lm, generated);
+    helpers.OpenConstrainedSpan(lm, generated);
+  steps := steps + 1;
 }}
 assert insideConstrainedOut;
 assert parser.IsValidPrefix(currentConstrainedOut);
-assert |currentConstrainedOut| <= |generated|;
 assert |generated| <= |generatedPrefix| + steps;
 
 // (2) Ground the constrained content unit-by-unit on half the remaining budget.
-if steps < maxSteps {{
-  var rem: nat := maxSteps - steps;
+if steps + 1 < maxSteps {{
+  var rem: nat := maxSteps - steps - 1;
   var fillBudget: nat := rem / 2;
   if fillBudget >= 1 {{
-    assert |currentConstrainedOut| <= |generated|;
     var stable := generated[..|generated| - |currentConstrainedOut|];
     var filled := helpers.RegenerateUnitOnGroundingFailure(
       lm, parser, prompt + stable, currentConstrainedOut, eosToken, fillBudget, 3, fillBudget);
+    ReplaceTied(parser, generated, currentConstrainedOut, filled);
     generated := stable + filled;
     currentConstrainedOut := filled;
     steps := steps + fillBudget;
@@ -2118,20 +2431,28 @@ if steps < maxSteps {{
 }}
 assert insideConstrainedOut;
 assert parser.IsValidPrefix(currentConstrainedOut);
-assert |currentConstrainedOut| <= |generated|;
+assert Tied(parser, generated, insideConstrainedOut, currentConstrainedOut);
 assert |generated| <= |generatedPrefix| + steps;
-assert steps <= maxSteps;
 
-// (3) Advance the span to a completable state on the reserved budget.
-if steps < maxSteps {{
-  var closeBudget: nat := maxSteps - steps;
+// (3) Advance the span to a completable state on the reserved budget, keeping one
+// step back for the caller's closing ">>".
+if steps + 1 < maxSteps {{
+  var closeBudget: nat := maxSteps - steps - 1;
   generated, insideConstrainedOut, currentConstrainedOut :=
     helpers.CloseSpanWithinBudget(
       lm, parser, prompt, generated, currentConstrainedOut, eosToken, closeBudget);
-  steps := maxSteps;
+  steps := maxSteps - 1;
 }}
 assert |generated| <= |generatedPrefix| + steps;
 assert steps <= maxSteps;
+
+// A closed span leaves no trace of its opener in the proof state, so re-check at
+// runtime that the output carries one and use the held-back step if it does not.
+if !insideConstrainedOut && "<<" !in generated {{
+  generated, insideConstrainedOut, currentConstrainedOut :=
+    helpers.OpenConstrainedSpan(lm, generated);
+  steps := steps + 1;
+}}
 
 cost := steps;
 ```
@@ -2348,20 +2669,27 @@ def _build_decoding_surface_block(force_open_span: bool) -> str:
     if force_open_span:
         return (
             "## Decoding surface\n\n"
-            "This run starts inside a span the runtime already opened: the "
-            "output already contains a visible `<<` and you are inside the "
-            "span. Call `CloseConstrainedSpan` to append `>>` and leave the "
-            "span once its content is complete. If you are not inside a span, "
-            "open one with `OpenConstrainedSpan`, which appends a literal "
-            "`<<`. Do not write logic that waits for a `<<` to arrive; the "
-            "opening `<<` is already there.\n\n"
+            "This run starts inside a span the runtime already opened: "
+            "`generatedPrefix` is exactly `[\"<<\"]` and `insideConstrained` "
+            "is true. Do not emit another `<<`, and do not write logic that "
+            "waits for a `<<` to arrive: the opening `<<` is already there. "
+            "Close the span "
+            "with `CloseConstrainedSpan` or `CloseSpanIfComplete` once its "
+            "content is complete. You may also return with the finished span "
+            "still open: the caller holds one step back and writes the closing "
+            "`>>` itself.\n\n"
         )
     return (
         "## Decoding surface\n\n"
-        "This run starts outside the constrained region. Enter constrained "
-        "mode by calling `OpenConstrainedSpan`, which appends a literal "
-        "`<<` to the output. Call `CloseConstrainedSpan` to append `>>` and "
-        "exit constrained mode.\n\n"
+        "This run starts outside the constrained region, with an empty "
+        "output. Enter constrained mode by calling `OpenConstrainedSpan`, "
+        "which appends a literal `<<`, or let the model sample `<<` in free "
+        "text and follow it with `EnterObservedConstrainedSpan`. Close with "
+        "`CloseConstrainedSpan` or `CloseSpanIfComplete`; you may also return "
+        "with a finished span still open, because the caller holds one step "
+        "back and writes the closing `>>` itself. Your output must contain at "
+        "least one `<<` whenever `maxSteps > 0`, so hold a step back and open "
+        "a span before returning if the model never emitted one.\n\n"
     )
 
 
@@ -2385,7 +2713,11 @@ def _build_verified_examples_block(allowed_helpers: list[str] | None) -> str:
             kept_chunks.append(chunk)
 
     if kept_chunks:
-        return "\n\n".join(kept_chunks).strip()
+        # The examples live inside a format string, so their Dafny braces are
+        # doubled in the source. They are substituted in rather than formatted,
+        # so undouble them here or the model reads `{{` as Dafny.
+        rendered = "\n\n".join(kept_chunks).strip()
+        return rendered.replace("{{", "{").replace("}}", "}")
     return (
         "// No verified examples are compatible with the active helper-call "
         "contract for this attempt."
