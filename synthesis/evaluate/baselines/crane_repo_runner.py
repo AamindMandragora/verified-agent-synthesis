@@ -141,7 +141,7 @@ def run_crane_repo_baseline(args: argparse.Namespace, dataset: str) -> int:
     if dataset == "gsm_symbolic":
         split_file = getattr(args, "gsm_split_file", None)
         if split_file:
-            split_name = getattr(args, "gsm_split_name", "eval")
+            split_name = getattr(args, "gsm_split_name", "test")
             with open(split_file) as f:
                 manifest = json.load(f)
             key = f"{split_name}_indices"
