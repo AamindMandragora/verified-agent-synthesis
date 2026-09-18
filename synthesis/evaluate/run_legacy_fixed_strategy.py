@@ -1024,7 +1024,10 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
         ),
     )
     _configure_fixed_eval_runtime(eval_runtime, args, dataset)
-    examples = logic.load_dataset_sample(eval_runtime)
+    examples, _slice_metrics = _slice_eval_examples(
+        logic.load_dataset_sample(eval_runtime),
+        args,
+    )
 
     device = _legacy_local_cuda_device(args.device)
     base_gsm_grammar = ""
@@ -1548,7 +1551,10 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
         ),
     )
     _configure_fixed_eval_runtime(eval_runtime, args, dataset)
-    examples = logic.load_dataset_sample(eval_runtime)
+    examples, _slice_metrics = _slice_eval_examples(
+        logic.load_dataset_sample(eval_runtime),
+        args,
+    )
 
     device = _legacy_local_cuda_device(args.device)
 
@@ -1863,7 +1869,10 @@ def run_unconstrained_spider_adapter(args: argparse.Namespace) -> int:
         spider_split_name=args.spider_split_name,
     )
     _configure_fixed_eval_runtime(eval_runtime, args, "spider")
-    examples = logic.load_dataset_sample(eval_runtime)
+    examples, _slice_metrics = _slice_eval_examples(
+        logic.load_dataset_sample(eval_runtime),
+        args,
+    )
 
     device = _legacy_local_cuda_device(args.device)
 
@@ -2050,7 +2059,10 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
         ),
     )
     _configure_fixed_eval_runtime(eval_runtime, args, dataset)
-    examples = logic.load_dataset_sample(eval_runtime)
+    examples, _slice_metrics = _slice_eval_examples(
+        logic.load_dataset_sample(eval_runtime),
+        args,
+    )
 
     device = _legacy_local_cuda_device(args.device)
     base_gsm_grammar_text = ""
