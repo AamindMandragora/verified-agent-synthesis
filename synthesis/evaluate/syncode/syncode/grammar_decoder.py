@@ -36,6 +36,10 @@ class SyncodeLogitsProcessor(LogitsProcessor):
         start_symbol = None):
 
         self.tokenizer = tokenizer
+        # Every id that ends a sequence for this model. The mask store only ever
+        # admitted tokenizer.eos_token_id, and only through one narrow lookup path,
+        # so EOS was masked out at almost every complete parse.
+        self.eos_token_ids = {i for i in [getattr(tokenizer, 'eos_token_id', None)] if i is not None}
         self.grammar = grammar
         self.logger = logger
         self.dev_mode = dev_mode
@@ -176,6 +180,12 @@ class SyncodeLogitsProcessor(LogitsProcessor):
                 continue  # Skip altering the scores for this batch
         
             accept_mask = self.dfa_mask_store.get_accept_mask(r, logger=self.logger)
+
+            # EOS is legal exactly when the generated prefix is already a complete
+            # sentence of the grammar ($END reachable). r.function_end carries that.
+            for eos_id in self.eos_token_ids:
+                if eos_id < len(accept_mask):
+                    accept_mask[eos_id] = bool(r.function_end)
 
             if DEBUG: 
                 self._log_current_status(partial_code, r)
