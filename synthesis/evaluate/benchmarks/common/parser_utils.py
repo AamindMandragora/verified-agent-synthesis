@@ -213,6 +213,9 @@ def create_lark_dafny_parser(
         llguidance_mask_store = SmilesLlguidanceMaskStore(grammar_text, tokenizer)
     _span_opener = constrained_span_opener
     _use_forbidden_filter = apply_forbidden_token_filter
+    # Ring-balance applies exactly when the grammar defines ring closures (SMILES).
+    # Both metaDecode and GCD load the same grammar file, so this is framework-uniform.
+    _enforce_ring_balance = "RING_CLOSURE" in grammar_text
 
     class SyncodeDafnyParser(VerifiedDecoderAgent.Parser):
         """Parser using syncode's DFA mask store for fast token validity checks."""
@@ -366,6 +369,14 @@ def create_lark_dafny_parser(
             """Check if text is a complete valid parse."""
             if not text:
                 return False
+            if _enforce_ring_balance:
+                from synthesis.evaluate.benchmarks.common.delimiter_hygiene import (
+                    ring_balance_allows_stop,
+                )
+                # An unclosed ring is grammar-complete but never a valid molecule;
+                # forbid stopping until the ring closes. Grammar cannot express this.
+                if not ring_balance_allows_stop(text):
+                    return False
             cached = self._complete_cache.get(text)
             if cached is not None:
                 return cached

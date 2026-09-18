@@ -167,3 +167,55 @@ def apply_closer_rule(accept_mask, tokens_with_gt, content_text: str):
     out = accept_mask.clone()
     out[banned] = False
     return out
+
+
+def ring_labels_open(content_text: str) -> set:
+    """Ring bond labels still open in `content_text`, by odd/even parity.
+
+    A SMILES ring bond is written by the same label appearing twice: a single
+    digit (`C1CC1`) or `%` plus two digits for labels 10..99 (`C%12CC%12`). A
+    label is open iff it has appeared an odd number of times so far. Digits
+    inside `[...]` are isotopes/charges, not ring bonds, so they are skipped.
+
+    The grammar is a context-free over-approximation and cannot enforce this
+    balance; the mask layer uses this to forbid stopping while a ring is open.
+    """
+    counts: dict[str, int] = {}
+    bracket_depth = 0
+    i = 0
+    n = len(content_text)
+    while i < n:
+        ch = content_text[i]
+        if ch == "[":
+            bracket_depth += 1
+            i += 1
+            continue
+        if ch == "]":
+            if bracket_depth > 0:
+                bracket_depth -= 1
+            i += 1
+            continue
+        if bracket_depth > 0:
+            i += 1
+            continue
+        if ch == "%" and len(content_text[i + 1 : i + 3]) == 2 and content_text[i + 1 : i + 3].isdigit():
+            label = content_text[i + 1 : i + 3]
+            counts[label] = counts.get(label, 0) + 1
+            i += 3
+            continue
+        if ch.isdigit():
+            counts[ch] = counts.get(ch, 0) + 1
+            i += 1
+            continue
+        i += 1
+    return {label for label, c in counts.items() if c % 2 == 1}
+
+
+def ring_balance_allows_stop(content_text: str) -> bool:
+    """True when no ring label is open, so the span may end here.
+
+    Grammar-constrained decoders call this before allowing EOS or marking a
+    parse complete: an unclosed ring (`C1CC`) is grammar-valid but never a
+    valid molecule, so stopping there is forbidden until the ring closes.
+    """
+    return not ring_labels_open(content_text)
