@@ -13,3 +13,11 @@ def test_syntax_verdict_is_the_contract_verdict_not_the_segment_verdict():
 def test_contract_sees_span_content_without_the_delimiters():
     assert eval_logic._span_content_for_scoring("<<SELECT 1>>") == "SELECT 1"
     assert eval_logic._span_content_for_scoring("SELECT 1") == "SELECT 1"
+
+
+def test_only_a_closed_span_is_an_answer():
+    assert eval_logic._span_content_for_scoring("<<SELECT 1>> trailing free text") == "SELECT 1"
+    assert eval_logic._span_content_for_scoring("<<SELECT 1>> <<SELECT 2>>") == "SELECT 2"
+    assert eval_logic._span_content_for_scoring("<<SELECT 1") == ""
+    assert eval_logic._span_content_for_scoring("<<SELECT 1>> <<SELECT 2") == "SELECT 1"
+    assert eval_logic._span_content_for_scoring("") == ""

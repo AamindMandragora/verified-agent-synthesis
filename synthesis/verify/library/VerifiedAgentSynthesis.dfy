@@ -471,6 +471,39 @@ module VerifiedDecoderAgent {
     assert (g + [t])[..|g + [t]| - 1] == g;
   }
 
+  // Some step of the walk over g goes from inside a span to outside: a span was closed,
+  // and (by SpanStep) it closed on a complete parse.
+  ghost predicate HasClosedSpan(parser: Parser, g: Prefix)
+  {
+    exists i :: 0 <= i < |g| && SpanStateOf(parser, g[..i]).Inside? && SpanStateOf(parser, g[..i + 1]) == Outside
+  }
+
+  // A walk that ends Outside and contains an opener closed a span: "<<" moves Outside to
+  // Inside, Bad is absorbing, and only a close moves Inside back to Outside.
+  lemma OutsideWithOpenerHasClosedSpan(parser: Parser, g: Prefix)
+    requires SpanStateOf(parser, g) == Outside
+    requires "<<" in g
+    ensures HasClosedSpan(parser, g)
+    decreases |g|
+  {
+    var n := |g| - 1;
+    var pre := g[..n];
+    assert g == pre + [g[n]];
+    SpanStateAppend(parser, pre, g[n]);
+    var st := SpanStateOf(parser, pre);
+    if st.Inside? {
+      assert g[..n + 1] == g;
+    } else if st == Outside {
+      assert g[n] != "<<";
+      assert "<<" in pre;
+      OutsideWithOpenerHasClosedSpan(parser, pre);
+      var i :| 0 <= i < |pre| && SpanStateOf(parser, pre[..i]).Inside? && SpanStateOf(parser, pre[..i + 1]) == Outside;
+      assert pre[..i] == g[..i] && pre[..i + 1] == g[..i + 1];
+    } else {
+      assert SpanStateOf(parser, g) == Bad;
+    }
+  }
+
   // Walking `hist + ["<<"] + cur` for valid `cur`: still inside with content `cur`,
   // unless `cur` itself ends in `>>`, in which case the span has closed.
   lemma InsideRun(parser: Parser, hist: Prefix, cur: Prefix)

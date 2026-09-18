@@ -44,6 +44,10 @@ module GeneratedCSD {
     // delimiter text, and an open last span is a valid prefix equal to currentConstrainedOut.
     ensures Tied(parser, generated, insideConstrainedOut, currentConstrainedOut)
     ensures maxSteps > 0 ==> "<<" in generated
+    // The scored answer exists: whenever the decoder exits outside a span it has closed one,
+    // and by Tied that span is a complete parse. The only exit without a closed span is
+    // inside a span whose prefix is still incomplete (budget ran out), covered below.
+    ensures maxSteps >= 2 && !insideConstrainedOut ==> HasClosedSpan(parser, generated)
     ensures cost <= maxSteps
     // A finished span is never left open: one step of the budget is held back for the closer.
     ensures maxSteps >= 2 && insideConstrainedOut ==> !parser.IsCompletePrefix(currentConstrainedOut)
@@ -67,6 +71,9 @@ module GeneratedCSD {
       assert forall t :: t in old_generated ==> t in generated;
     }
     if maxSteps > 0 && cost <= 0 { cost := 1; }  // guarantee progress postcondition
+    if maxSteps >= 2 && !insideConstrainedOut {
+      OutsideWithOpenerHasClosedSpan(parser, generated);
+    }
   }
 
   // Holds the synthesized strategy. Same signature and preconditions as MyCSDStrategy

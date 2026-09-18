@@ -134,9 +134,18 @@ def _active_removed_terminal_token_count(evaluator: Any) -> int:
 
 
 def _span_content_for_scoring(scored_output: str) -> str:
-    """The content of the last `<< >>` span, verbatim, or the whole text if there is none."""
-    spans = walk_spans(scored_output or "").spans
-    return spans[-1].content if spans else (scored_output or "")
+    """The content of the last closed `<< >>` span, verbatim.
+
+    An opened but never-closed span is not an answer (it scores as empty), the same rule
+    GSM and SMILES apply. Only an output with no delimiter at all, i.e. a legacy
+    unconstrained baseline, is scored whole.
+    """
+    text = scored_output or ""
+    spans = walk_spans(text).spans
+    if not spans:
+        return text
+    closed = [span for span in spans if span.closed]
+    return closed[-1].content if closed else ""
 
 
 def extract_actual(evaluator: Any, scored_output: str, example: dict[str, Any]) -> tuple[str | None, str, dict[str, Any] | None]:

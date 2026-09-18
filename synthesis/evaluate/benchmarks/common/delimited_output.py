@@ -47,29 +47,3 @@ def extract_last_delimited_span(
     else:
         span = span.strip()
     return (span or None), True
-
-
-def extract_sql_scored_output(scored_output: str) -> tuple[str | None, str]:
-    """
-    Extract a SQL answer from model output.
-
-    Prefer the last ``<< >>`` span; otherwise use the first paragraph fallback
-    used for unconstrained legacy strategies.
-    """
-    if not scored_output:
-        return None, "none"
-
-    span, found = extract_last_delimited_span(
-        scored_output,
-        normalize_whitespace=True,
-        strip_semicolon=True,
-    )
-    if found:
-        return span, "last_visible_span"
-
-    raw = scored_output.split("\n\n")[0]
-    cleaned = normalize_inline_text(
-        raw.replace("<<", " ").replace(">>", " "),
-        strip_semicolon=True,
-    )
-    return (cleaned or None), ("raw_text_fallback" if cleaned else "none")
