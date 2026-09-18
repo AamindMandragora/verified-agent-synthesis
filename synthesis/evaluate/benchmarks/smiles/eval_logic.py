@@ -88,6 +88,24 @@ def build_dynamic_parser(evaluator: Any, env: dict[str, Any], example: dict[str,
     return parser_factory(env["lm"]._Tokens)
 
 
+def _span_content_for_scoring(scored_output: str) -> str:
+    """The last closed `<< >>` span, verbatim.
+
+    An opened but never-closed span is not an answer (scores as empty), the same rule
+    Spider and GSM apply. Only an output with no delimiter at all, i.e. a legacy
+    unconstrained baseline, is scored whole. Found by the 2026-09-18 audit: the old
+    `span if found else scored_output` scored the whole raw completion whenever the
+    budget ran out inside a span.
+    """
+    from synthesis.evaluate.benchmarks.common.delimited_output import extract_last_delimited_span
+
+    text = scored_output or ""
+    span, found = extract_last_delimited_span(text)
+    if found:
+        return span or ""
+    return "" if "<<" in text else text
+
+
 def extract_actual(
     evaluator: Any,
     scored_output: str,
@@ -100,10 +118,7 @@ def extract_actual(
     grammar_text = example.get("grammar_text", "")
     prompt_exemplars = example.get("prompt_exemplars", [])
 
-    from synthesis.evaluate.benchmarks.common.delimited_output import extract_last_delimited_span
-
-    span, found = extract_last_delimited_span(scored_output)
-    candidate = span if found else scored_output
+    candidate = _span_content_for_scoring(scored_output)
 
     smiles_eval = evaluate_smiles_output(
         class_name,

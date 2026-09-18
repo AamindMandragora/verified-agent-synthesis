@@ -326,7 +326,6 @@ module VerifiedDecoderAgent {
 
   class Parser {
     predicate {:extern} {:axiom} IsValidPrefix(prefix: Prefix)
-      ensures forall k: nat :: 0 <= k < |prefix| - 1 ==> IsValidPrefix(prefix[k..])
 
     predicate {:extern} {:axiom} IsCompletePrefix(prefix: Prefix)
       ensures IsValidPrefix(prefix)
