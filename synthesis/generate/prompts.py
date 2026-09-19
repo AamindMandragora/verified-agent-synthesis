@@ -356,7 +356,7 @@ consume token budget by themselves.
 - `helpers.CloseConstrainedSpan(lm, parser, generated, currentConstrained)`
   Role: exit a complete constrained span.
   Mechanics: requires `parser.IsCompletePrefix(currentConstrained)`, appends
-  visible `">>"` unless already emitted by the constrained grammar, exits
+  visible `">>"`, exits
   constrained mode, and clears `currentOut`.
   Cost: +1 token-step for the close action.
   Control profile: direct delimiter/state control gated by parser completeness.
@@ -364,8 +364,7 @@ consume token budget by themselves.
 - `helpers.CloseSpanIfComplete(lm, parser, generated, currentConstrained)`
   Role: close the constrained span only if it already holds a complete parse.
   Mechanics: checks `parser.IsCompletePrefix(currentConstrained)` internally; when
-  complete it delegates to `CloseConstrainedSpan` (appends `">>"` unless already
-  present, exits constrained mode, clears `currentOut`) and returns `closed == true`;
+  complete it delegates to `CloseConstrainedSpan` (appends `">>"`, exits constrained mode, clears `currentOut`) and returns `closed == true`;
   when not yet complete it leaves state unchanged and returns `closed == false`.
   Cost: +1 token-step when it closes; +0 when it leaves the span open.
   Control profile: completeness-gated close that needs no caller-side proof of completeness; safe to call speculatively each step (no-op until the span parses) and branch on `closed`.

@@ -428,9 +428,8 @@ module VerifiedDecoderAgent {
     case Bad => Bad
     case Outside => if t == "<<" then Inside([]) else if DelimFree(t) then Outside else Bad
     case Inside(c) =>
-      if t == ">>" && parser.IsCompletePrefix(c) && !RenderedEndsWith(c, ">>") then Outside
+      if t == ">>" && parser.IsCompletePrefix(c) then Outside
       else if !parser.IsValidPrefix(c + [t]) then Bad
-      else if RenderedEndsWith(c + [t], ">>") then Outside
       else Inside(c + [t])
   }
 
@@ -457,16 +456,15 @@ module VerifiedDecoderAgent {
   }
 
   // Assumptions about the grammar side, made true by the Python parser wrapper:
-  // a valid prefix stays valid when shortened, and once content ends in `>>`
-  // it is complete and nothing can follow it.
+  // a valid prefix stays valid when shortened, and span content never ends in
+  // `>>` (the prefix check refuses any text containing the closer).
   lemma {:axiom} ValidPrefixesAreClosed(parser: Parser, p: Prefix, k: nat)
     requires parser.IsValidPrefix(p) && k <= |p|
     ensures parser.IsValidPrefix(p[..k])
 
-  lemma {:axiom} CloserIsTerminal(parser: Parser, p: Prefix)
-    requires parser.IsValidPrefix(p) && RenderedEndsWith(p, ">>")
-    ensures parser.IsCompletePrefix(p)
-    ensures forall t: Token :: !parser.IsValidPrefix(p + [t])
+  lemma {:axiom} ContentNeverEndsWithCloser(parser: Parser, p: Prefix)
+    requires parser.IsValidPrefix(p)
+    ensures !RenderedEndsWith(p, ">>")
 
   lemma SpanStateAppend(parser: Parser, g: Prefix, t: Token)
     ensures SpanStateOf(parser, g + [t]) == SpanStep(parser, SpanStateOf(parser, g), t)
@@ -507,35 +505,42 @@ module VerifiedDecoderAgent {
     }
   }
 
-  // Walking `hist + ["<<"] + cur` for valid `cur`: still inside with content `cur`,
-  // unless `cur` itself ends in `>>`, in which case the span has closed.
+  // Content that ends with the closer token renders to text ending in `>>`, which
+  // valid content never does; so appending `>>` to content never stays valid.
+  lemma CloserTokenKeepsContentInvalid(parser: Parser, init: Prefix, t: Token)
+    requires parser.IsValidPrefix(init + [t])
+    ensures t != ">>"
+  {
+    if t == ">>" {
+      ContentNeverEndsWithCloser(parser, init + [t]);
+      RenderAppend(init, t);
+      var r := RenderPrefix(init);
+      assert (r + ">>")[|r + ">>"| - 2..] == ">>";
+    }
+  }
+
+  // Walking `hist + ["<<"] + cur` for valid `cur`: still inside with content `cur`.
   lemma InsideRun(parser: Parser, hist: Prefix, cur: Prefix)
     requires SpanStateOf(parser, hist) == Outside
     requires parser.IsValidPrefix(cur)
-    ensures SpanStateOf(parser, hist + ["<<"] + cur) ==
-            (if RenderedEndsWith(cur, ">>") then Outside else Inside(cur))
+    ensures SpanStateOf(parser, hist + ["<<"] + cur) == Inside(cur)
     decreases |cur|
   {
     if |cur| == 0 {
-      SpanStateAppend(parser, hist, "<<");
+      assert cur == [];
       assert hist + ["<<"] + cur == hist + ["<<"];
-      assert RenderPrefix(cur) == "";
+      SpanStateAppend(parser, hist, "<<");
     } else {
       var init := cur[..|cur| - 1];
       var t := cur[|cur| - 1];
+      assert cur == init + [t];
       ValidPrefixesAreClosed(parser, cur, |cur| - 1);
       InsideRun(parser, hist, init);
-      assert cur == init + [t];
-      if RenderedEndsWith(init, ">>") {
-        CloserIsTerminal(parser, init);
-        assert false;
-      }
-      assert hist + ["<<"] + cur == (hist + ["<<"] + init) + [t];
-      SpanStateAppend(parser, hist + ["<<"] + init, t);
-      if t == ">>" && parser.IsCompletePrefix(init) {
-        // explicit-closer reading and content reading agree: both give Outside
-        assert RenderedEndsWith(cur, ">>") by { RenderAppend(init, t); }
-      }
+      CloserTokenKeepsContentInvalid(parser, init, t);
+      var before := hist + ["<<"] + init;
+      assert hist + ["<<"] + cur == before + [t];
+      SpanStateAppend(parser, before, t);
+      assert SpanStep(parser, Inside(init), t) == Inside(init + [t]);
     }
   }
 
@@ -565,15 +570,12 @@ module VerifiedDecoderAgent {
   lemma CloseTied(parser: Parser, g: Prefix, cur: Prefix)
     requires Tied(parser, g, true, cur)
     requires parser.IsCompletePrefix(cur)
-    ensures RenderedEndsWith(cur, ">>") ==> Tied(parser, g, false, [])
-    ensures !RenderedEndsWith(cur, ">>") ==> Tied(parser, g + [">>"], false, [])
+    ensures Tied(parser, g + [">>"], false, [])
   {
     var hist := g[..|g| - |cur| - 1];
     InsideRun(parser, hist, cur);
     assert g == hist + ["<<"] + cur;
-    if !RenderedEndsWith(cur, ">>") {
-      SpanStateAppend(parser, g, ">>");
-    }
+    SpanStateAppend(parser, g, ">>");
   }
 
   lemma AppendTied(parser: Parser, g: Prefix, cur: Prefix, t: Token)
@@ -884,21 +886,14 @@ module VerifiedDecoderAgent {
       requires parser.IsCompletePrefix(currentConstrained)
       requires ">>" in lm.Tokens
       ensures lm.ValidTokensIdsLogits()
-      ensures RenderedEndsWith(currentConstrained, ">>") ==>
-              generatedOut == generated
-      ensures !RenderedEndsWith(currentConstrained, ">>") ==>
-              generatedOut == generated + [">>"]
+      ensures generatedOut == generated + [">>"]
       ensures !insideOut
       ensures currentOut == []
       ensures cost == old(cost) + 1
       ensures Tied(parser, generated, true, currentConstrained) ==> Tied(parser, generatedOut, false, [])
     {
       if Tied(parser, generated, true, currentConstrained) { CloseTied(parser, generated, currentConstrained); }
-      if RenderedEndsWith(currentConstrained, ">>") {
-        generatedOut := generated;
-      } else {
-        generatedOut := generated + [">>"];
-      }
+      generatedOut := generated + [">>"];
       insideOut := false;
       currentOut := [];
       cost := cost + 1;
