@@ -5,11 +5,14 @@ smiles: first_term rest*
 first_term: atom branch* RING_CLOSURE*
 rest: BOND? (atom branch* RING_CLOSURE* | RING_CLOSURE)
 branch: "(" BOND? smiles ")"
-atom: SIMPLE_ATOM | atom_spec
-atom_spec: "[" ISOTOPE? bracket_atom_symbol CHIRAL_CLASS? H_COUNT? CHARGE? CLASS? "]"
-bracket_atom_symbol: "se" | "as" | AROMATIC_SYMBOL | ELEMENT_SYMBOL | WILDCARD
+atom: SIMPLE_ATOM | BRACKET_ATOM
 
 //Terminals
+// One terminal for the whole bracket atom. The syncode lexer splits text into terminals without
+// asking the parser what is possible here (SynCode paper, section 2 lexer assumption), so the
+// pieces inside [...] must not be separate terminals that overlap with the ones outside
+// (C, 1, +, -, : all did). Same language as before; checked on 8.3M strings.
+BRACKET_ATOM: "[" ISOTOPE? ("se" | "as" | AROMATIC_SYMBOL | ELEMENT_SYMBOL | WILDCARD) CHIRAL_CLASS? H_COUNT? CHARGE? CLASS? "]"
 SIMPLE_ATOM: ORGANIC_SYMBOL | AROMATIC_SYMBOL | WILDCARD | GROUP_SYMBOL
 BOND: "-" | "=" | "#" | "$" | ":" | "/" | "\\" | "."
 ORGANIC_SYMBOL: "Br" | "Cl" | "N" | "O" | "P" | "S" | "F" | "I" | "B" | "C"

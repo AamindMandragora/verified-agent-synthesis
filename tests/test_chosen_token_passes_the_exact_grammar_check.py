@@ -149,3 +149,22 @@ def test_real_parser_single_token_answer_is_exact_even_though_the_mask_offers_th
     assert parser.ValidNextToken(prefix, "C")
     assert not parser.GroupHasValidMember(prefix, ["IE"])
     assert parser.GroupHasValidMember(prefix, ["IE", "C"])
+
+
+# --------------------------------------------------------------------------
+# The parser check must agree with the grammar on bracket atoms
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("molecule", ["C[C]C", "C[13C]C", "C[N+]C", "C[NH3+]", "OC[C@H](N)C"])
+def test_bracket_atoms_are_valid_at_every_step(molecule):
+    """Before the bracket atom became one terminal, each of these was rejected partway."""
+    parser = _real_smiles_parser()
+    rejected = [molecule[:k] for k in range(1, len(molecule) + 1) if not parser.is_valid_prefix(molecule[:k])]
+    assert rejected == []
+    assert parser.is_complete(molecule)
+
+
+@pytest.mark.parametrize("text", ["[1(1", "C[CC", "[BB", "[B(B", "SCIE"])
+def test_text_the_grammar_cannot_complete_is_not_a_valid_prefix(text):
+    """The first four were accepted by the parser check before the grammar change."""
+    assert not _real_smiles_parser().is_valid_prefix(text)
