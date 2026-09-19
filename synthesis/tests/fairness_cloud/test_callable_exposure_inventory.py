@@ -33,7 +33,7 @@ INTERNAL_LM = {
     "FirstUngroundedIdentifierTokenIdx",  # internal signal used by bounded grounding repair
 }
 PUBLIC_PARSER = {
-    "IsValidPrefix", "IsCompletePrefix", "ValidNextTokenCount", "IsDeadPrefix",
+    "IsValidPrefix", "IsCompletePrefix", "ValidNextTokenCountUpTo", "IsDeadPrefix",
     "ValidNextToken", "ValidNextTokens", "ParseG",
 }
 INTERNAL_PARSER = {

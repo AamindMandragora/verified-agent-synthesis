@@ -633,7 +633,7 @@ class SynthesisPipeline:
         "IsValidPrefix",
         "IsCompletePrefix",
         "IsDeadPrefix",
-        "ValidNextTokenCount",
+        "ValidNextTokenCountUpTo",
         "ValidNextToken",
         "ValidNextTokens",
         "ParseG",

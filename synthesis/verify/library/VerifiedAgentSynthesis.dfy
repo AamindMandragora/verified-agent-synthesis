@@ -279,7 +279,7 @@ module VerifiedDecoderAgent {
       // "stop before writing anything" hole: earlier this method force-allowed
       // eosToken unconditionally, so a strategy could halt on its very first
       // token before appending anything to the answer.
-      ensures !(parser.IsCompletePrefix(prefix) || parser.ValidNextTokenCount(prefix) == 0) ==> IsMasked(eosToken)
+      ensures !(parser.IsCompletePrefix(prefix) || parser.ValidNextTokenCountUpTo(prefix, 1) == 0) ==> IsMasked(eosToken)
 
     method {:extern} {:axiom} BoostValidNextAndEos(parser: Parser, prefix: Prefix, amount: real, eosToken: Token)
       modifies this.Logits
@@ -330,13 +330,17 @@ module VerifiedDecoderAgent {
     predicate {:extern} {:axiom} IsCompletePrefix(prefix: Prefix)
       ensures IsValidPrefix(prefix)
 
-    function {:extern} {:axiom} ValidNextTokenCount(prefix: Prefix): nat
+    // How many tokens can come next, counted up to `cap` and no further. The host
+    // confirms each candidate with the exact grammar check, which is too slow to
+    // run over the whole vocabulary, so callers ask only as far as they compare.
+    function {:extern} {:axiom} ValidNextTokenCountUpTo(prefix: Prefix, cap: nat): nat
       requires IsValidPrefix(prefix)
-      ensures ValidNextTokenCount(prefix) == |ValidNextTokens(prefix)|
+      ensures ValidNextTokenCountUpTo(prefix, cap) ==
+        if |ValidNextTokens(prefix)| < cap then |ValidNextTokens(prefix)| else cap
 
     predicate IsDeadPrefix(prefix: Prefix)
     {
-      !IsCompletePrefix(prefix) && ValidNextTokenCount(prefix) == 0
+      !IsCompletePrefix(prefix) && ValidNextTokenCountUpTo(prefix, 1) == 0
     }
 
     predicate {:extern} {:axiom} ValidNextToken(prefix: Prefix, token: Token)
@@ -1067,7 +1071,7 @@ module VerifiedDecoderAgent {
       ensures next in lm.Tokens
       ensures (next == eosToken) || (parser.ValidNextToken(generated, next))
       ensures (next != eosToken) ==> (forall t: Token :: t in parser.ValidNextTokens(generated + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(generated) || parser.ValidNextTokenCount(generated) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(generated) || parser.ValidNextTokenCountUpTo(generated, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + generated);
@@ -1201,7 +1205,7 @@ module VerifiedDecoderAgent {
       ensures (next == eosToken) || (parser.ValidNextToken(constrainedPrefix, next))
       ensures (next != eosToken) ==> parser.IsValidPrefix(constrainedPrefix + [next])
       ensures (next != eosToken) ==> (forall t: Token :: t in parser.ValidNextTokens(constrainedPrefix + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCount(constrainedPrefix) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCountUpTo(constrainedPrefix, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + constrainedPrefix);
@@ -1234,12 +1238,12 @@ module VerifiedDecoderAgent {
       ensures (next == eosToken) || (parser.ValidNextToken(constrainedPrefix, next))
       ensures (next != eosToken) ==> parser.IsValidPrefix(constrainedPrefix + [next])
       ensures (next != eosToken) ==> (forall t: Token :: t in parser.ValidNextTokens(constrainedPrefix + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCount(constrainedPrefix) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCountUpTo(constrainedPrefix, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + constrainedPrefix);
       if |groups| > 0 {
-        var validCount := parser.ValidNextTokenCount(constrainedPrefix);
+        var validCount := parser.ValidNextTokenCountUpTo(constrainedPrefix, narrowThreshold + 1);
         if validCount <= narrowThreshold {
           BoostValidGroups(lm, parser, constrainedPrefix, groups, boostAmount);
         }
@@ -1273,12 +1277,12 @@ module VerifiedDecoderAgent {
       ensures (next == eosToken) || (parser.ValidNextToken(constrainedPrefix, next))
       ensures (next != eosToken) ==> parser.IsValidPrefix(constrainedPrefix + [next])
       ensures (next != eosToken) ==> (forall t: Token :: t in parser.ValidNextTokens(constrainedPrefix + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCount(constrainedPrefix) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCountUpTo(constrainedPrefix, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + constrainedPrefix);
       if |boostGroups| > 0 {
-        var validCount := parser.ValidNextTokenCount(constrainedPrefix);
+        var validCount := parser.ValidNextTokenCountUpTo(constrainedPrefix, narrowThreshold + 1);
         if validCount <= narrowThreshold {
           BoostValidGroups(lm, parser, constrainedPrefix, boostGroups, boostAmount);
         }
@@ -1310,7 +1314,7 @@ module VerifiedDecoderAgent {
       ensures next in lm.Tokens
       ensures (next == eosToken) || (parser.ValidNextToken(constrainedPrefix, next))
       ensures (next != eosToken) ==> (forall t: Token :: t in parser.ValidNextTokens(constrainedPrefix + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCount(constrainedPrefix) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCountUpTo(constrainedPrefix, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + constrainedPrefix);
@@ -1341,7 +1345,7 @@ module VerifiedDecoderAgent {
       ensures next in lm.Tokens
       ensures (next == eosToken) || (parser.ValidNextToken(constrainedPrefix, next))
       ensures (next != eosToken) ==> (forall t: Token :: t in parser.ValidNextTokens(constrainedPrefix + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCount(constrainedPrefix) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCountUpTo(constrainedPrefix, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + constrainedPrefix);
@@ -1371,7 +1375,7 @@ module VerifiedDecoderAgent {
       ensures next in lm.Tokens
       ensures (next == eosToken) || (parser.ValidNextToken(constrainedPrefix, next))
       ensures (next != eosToken) ==> (forall t: Token :: t in parser.ValidNextTokens(constrainedPrefix + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCount(constrainedPrefix) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCountUpTo(constrainedPrefix, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + constrainedPrefix);
@@ -1401,7 +1405,7 @@ module VerifiedDecoderAgent {
       ensures next in lm.Tokens
       ensures (next == eosToken) || (parser.ValidNextToken(constrainedPrefix, next))
       ensures (next != eosToken) ==> (forall t: Token :: t in parser.ValidNextTokens(constrainedPrefix + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCount(constrainedPrefix) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCountUpTo(constrainedPrefix, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + constrainedPrefix);
@@ -2022,9 +2026,9 @@ module VerifiedDecoderAgent {
 
     method DeadEndDetection(parser: Parser, prefix: Prefix, minValidCount: nat) returns (isNarrow: bool)
       requires parser.IsValidPrefix(prefix)
-      ensures isNarrow <==> parser.ValidNextTokenCount(prefix) < minValidCount
+      ensures isNarrow <==> parser.ValidNextTokenCountUpTo(prefix, minValidCount) < minValidCount
     {
-      var validCount := parser.ValidNextTokenCount(prefix);
+      var validCount := parser.ValidNextTokenCountUpTo(prefix, minValidCount);
       isNarrow := validCount < minValidCount;
     }
 
@@ -2041,7 +2045,7 @@ module VerifiedDecoderAgent {
       ensures next in lm.Tokens
       ensures isValid <==> (next == eosToken || parser.IsValidPrefix(constrainedPrefix + [next]))
       ensures isValid && next != eosToken ==> (forall t: Token :: t in parser.ValidNextTokens(constrainedPrefix + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCount(constrainedPrefix) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCountUpTo(constrainedPrefix, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + constrainedPrefix);
@@ -2053,7 +2057,7 @@ module VerifiedDecoderAgent {
       // that case, reject the premature stop and fall back to a masked,
       // grammar-constrained draw -- same fallback MaskValidNextAndEos already
       // uses to keep eosToken itself masked until stopping is legal.
-      if softNext == eosToken && !(parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCount(constrainedPrefix) == 0) {
+      if softNext == eosToken && !(parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCountUpTo(constrainedPrefix, 1) == 0) {
         lm.MaskValidNextAndEos(parser, constrainedPrefix, eosToken);
         next := lm.ChooseNextToken();
         if next != eosToken {
@@ -2085,7 +2089,7 @@ module VerifiedDecoderAgent {
       ensures next in lm.Tokens
       ensures (next == eosToken) || parser.IsValidPrefix(constrainedPrefix + [next])
       ensures (next != eosToken) ==> (forall t: Token :: t in parser.ValidNextTokens(constrainedPrefix + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCount(constrainedPrefix) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCountUpTo(constrainedPrefix, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + constrainedPrefix);
@@ -2096,7 +2100,7 @@ module VerifiedDecoderAgent {
       // stopping is actually legal (prefix complete, or a dead end). A
       // premature eosToken -- or any grammar-invalid non-eos token -- falls
       // back to the masked, grammar-constrained draw below.
-      var stopAllowed := parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCount(constrainedPrefix) == 0;
+      var stopAllowed := parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCountUpTo(constrainedPrefix, 1) == 0;
       if softNext == eosToken && stopAllowed {
         next := softNext;
         usedFallback := false;
@@ -2129,7 +2133,7 @@ module VerifiedDecoderAgent {
       ensures next in lm.Tokens
       ensures (next == eosToken) || parser.IsValidPrefix(constrainedPrefix + [next])
       ensures (next != eosToken) ==> (forall t: Token :: t in parser.ValidNextTokens(constrainedPrefix + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCount(constrainedPrefix) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCountUpTo(constrainedPrefix, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + constrainedPrefix);
@@ -2138,7 +2142,7 @@ module VerifiedDecoderAgent {
       // stopping is actually legal. Otherwise -- even if the model's top
       // pick is eosToken -- fall through to the grammar-constrained branch
       // below, same as an ordinary grammar-invalid top pick.
-      var stopAllowed := parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCount(constrainedPrefix) == 0;
+      var stopAllowed := parser.IsCompletePrefix(constrainedPrefix) || parser.ValidNextTokenCountUpTo(constrainedPrefix, 1) == 0;
       if topToken == eosToken && stopAllowed {
         next := topToken;
         wasConstrained := false;
@@ -2244,11 +2248,14 @@ module VerifiedDecoderAgent {
       }
     }
 
+    // ValidTokenCount stops counting here: 64 means "64 or more".
+    const VALID_TOKEN_COUNT_CAP: nat := 64
+
     method ValidTokenCount(parser: Parser, prefix: Prefix) returns (count: nat)
       requires parser.IsValidPrefix(prefix)
-      ensures count == parser.ValidNextTokenCount(prefix)
+      ensures count == parser.ValidNextTokenCountUpTo(prefix, VALID_TOKEN_COUNT_CAP)
     {
-      count := parser.ValidNextTokenCount(prefix);
+      count := parser.ValidNextTokenCountUpTo(prefix, VALID_TOKEN_COUNT_CAP);
     }
 
     method TopValidCandidates(
@@ -2263,7 +2270,7 @@ module VerifiedDecoderAgent {
       ensures 0 < |candidates| <= maxCandidates
       ensures forall t :: t in candidates ==> t in lm.Tokens
       ensures forall t :: t in candidates ==> t == eosToken || t in parser.ValidNextTokens(prefix)
-      ensures forall t :: t in candidates && t == eosToken ==> (parser.IsCompletePrefix(prefix) || parser.ValidNextTokenCount(prefix) == 0)
+      ensures forall t :: t in candidates && t == eosToken ==> (parser.IsCompletePrefix(prefix) || parser.ValidNextTokenCountUpTo(prefix, 1) == 0)
       ensures forall i, j :: 0 <= i < j < |candidates| ==> candidates[i] != candidates[j]
       ensures cost == old(cost) + 1
     {
@@ -2277,7 +2284,7 @@ module VerifiedDecoderAgent {
       // about eosToken -- straight from MaskValidNextAndEos's own contract,
       // with no separate assumption about the grammar's relationship to
       // eosToken required.
-      var stopAllowed := parser.IsCompletePrefix(prefix) || parser.ValidNextTokenCount(prefix) == 0;
+      var stopAllowed := parser.IsCompletePrefix(prefix) || parser.ValidNextTokenCountUpTo(prefix, 1) == 0;
       lm.MaskValidNextAndEos(parser, prefix, eosToken);
       // ChooseNextToken is trusted to always hand back an unmasked token, so
       // this seeds the pool with one guaranteed-legal candidate up front --
@@ -2402,7 +2409,7 @@ module VerifiedDecoderAgent {
       ensures next in lm.Tokens
       ensures (next == eosToken) || (parser.ValidNextToken(prefix, next))
       ensures (next != eosToken) ==> (forall t: Token :: t in parser.ValidNextTokens(prefix + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(prefix) || parser.ValidNextTokenCount(prefix) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(prefix) || parser.ValidNextTokenCountUpTo(prefix, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + prefix);
@@ -2432,7 +2439,7 @@ module VerifiedDecoderAgent {
       ensures next in lm.Tokens
       ensures (next == eosToken) || (parser.ValidNextToken(prefix, next))
       ensures (next != eosToken) ==> (forall t: Token :: t in parser.ValidNextTokens(prefix + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(prefix) || parser.ValidNextTokenCount(prefix) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(prefix) || parser.ValidNextTokenCountUpTo(prefix, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + prefix);
@@ -2461,7 +2468,7 @@ module VerifiedDecoderAgent {
       ensures next in lm.Tokens
       ensures (next == eosToken) || (parser.ValidNextToken(prefix, next))
       ensures (next != eosToken) ==> (forall t: Token :: t in parser.ValidNextTokens(prefix + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(prefix) || parser.ValidNextTokenCount(prefix) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(prefix) || parser.ValidNextTokenCountUpTo(prefix, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + prefix);
@@ -2491,7 +2498,7 @@ module VerifiedDecoderAgent {
       ensures next in lm.Tokens
       ensures (next == eosToken) || (parser.ValidNextToken(prefix, next))
       ensures (next != eosToken) ==> (forall t: Token :: t in parser.ValidNextTokens(prefix + [next]) ==> t in lm.Tokens)
-      ensures next == eosToken ==> (parser.IsCompletePrefix(prefix) || parser.ValidNextTokenCount(prefix) == 0)
+      ensures next == eosToken ==> (parser.IsCompletePrefix(prefix) || parser.ValidNextTokenCountUpTo(prefix, 1) == 0)
       ensures cost == old(cost) + 1
     {
       lm.GenerateLogits(prompt + prefix);

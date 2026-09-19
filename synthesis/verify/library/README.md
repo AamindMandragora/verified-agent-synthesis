@@ -41,7 +41,7 @@ Types: **`Token`** is `string`; **`Prefix`** is `seq<Token>`; **`Id`** is `nat`;
 ### `Parser` (extern-backed grammar)
 
 - **`IsValidPrefix` / `IsCompletePrefix`** — Prefix is syntactically valid or complete under the grammar.
-- **`ValidNextTokenCount` / `ValidNextToken` / `ValidNextTokens`** — Count or enumerate admissible next tokens at a valid prefix.
+- **`ValidNextTokenCountUpTo` / `ValidNextToken` / `ValidNextTokens`** — Count (exactly, stopping at a cap) or enumerate admissible next tokens at a valid prefix.
 - **`IsDeadPrefix`** — Valid but incomplete prefix with no legal continuations.
 - **`ParseG`** — Run the grammar on a raw string and report success (extern).
 
@@ -81,7 +81,7 @@ Instance field **`cost`** — Accumulated token-step budget; the constructor set
 - **`GroupHasValidMember`** — Whether any token in a group is a valid next token at the prefix (no LM call).
 - **`BoostValidGroups`** — For each group with a valid member, boost all tokens in that group (safe via intersection for vocab).
 - **`GroupBoostedConstrainedStep`** — Forward pass, optional group boosts, then hard mask and choose; +1 cost.
-- **`AdaptiveConstrainedStep`** — Like group-boosted step but boosts only when `ValidNextTokenCount` ≤ threshold; +1 cost.
+- **`AdaptiveConstrainedStep`** — Like group-boosted step but boosts only when at most `narrowThreshold` tokens can come next; +1 cost.
 - **`AdaptiveConstrainedStepWithPenalties`** — Adaptive boosts plus safe penalties before hard mask; +1 cost.
 - **`PenalizedConstrainedStep` / `BoostedConstrainedStep`** — Single-step constrained decode after penalizing or boosting an explicit token list (callers must prove tokens ∈ `lm.Tokens`); +1 cost.
 - **`SafeBoostedConstrainedStep` / `SafePenalizedConstrainedStep`** — Same with non-vocabulary tokens ignored; +1 cost.
@@ -106,7 +106,7 @@ Instance field **`cost`** — Accumulated token-step budget; the constructor set
 **Parser metrics and candidates**
 
 - **`DeadEndDetection`** — True iff valid-next count is strictly below a threshold.
-- **`ValidTokenCount`** — Returns `ValidNextTokenCount` for a prefix.
+- **`ValidTokenCount`** — Returns the exact count of next tokens for a prefix, stopping at 64.
 - **`IsTokenValidNext`** — Boolean `ValidNextToken` for one token.
 - **`TopValidCandidates`** — One forward pass, then up to K highest-logit tokens from valid-next ∪ EOS; +1 cost.
 

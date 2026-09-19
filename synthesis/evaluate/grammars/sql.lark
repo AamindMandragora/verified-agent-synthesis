@@ -97,6 +97,6 @@ STRING: /'[^']*'/
 NUMBER: /-?\d+(\.\d+)?/
 
 %import common.WS_INLINE
-%import common.SQL_COMMENT
 %ignore WS_INLINE
-%ignore SQL_COMMENT
+// No -- comments: a comment swallows the rest of the line, so inside an answer span it
+// can only ever be dead text after a finished query.

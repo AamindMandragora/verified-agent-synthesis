@@ -53,6 +53,9 @@ def print_parser_timings(header: str = "") -> None:
         lines.append(f"  {label:<34} {secs:7.2f}s  ({pct:5.1f}%)  calls={calls:<5} avg={avg_ms:7.2f}ms")
     print("\n".join(lines), flush=True)
 
+import logging
+
+_PARSER_LOG = logging.getLogger("csd.parser")
 _PARSER_COMPONENT_CACHE = {}
 _DFA_MASK_STORE_CACHE = {}
 
@@ -104,7 +107,13 @@ def _get_parser_components(grammar_text: str, start: str, complete_start: str | 
     if cached_components is None:
         grammar = Grammar(grammar_text)
         base_parser = create_base_parser(grammar)
-        lark_parser = Lark(grammar_text, start=start, parser='lalr')
+        # lexer='basic' on both Lark parsers: syncode's own parser is built with the
+        # basic lexer (keywords always win over NAME), so the grammar these parsers
+        # define must be lexed the same way or the two disagree on keyword-named columns.
+        lark_parser = Lark(grammar_text, start=start, parser='lalr', lexer='basic')
+        # Lark.lex() rebuilds its lexer (a slow regex-collision check) on every call
+        # unless one is already attached; the prefix check lexes once per candidate token.
+        lark_parser.lexer = lark_parser._build_lexer()
         # Separate parser for IsCompletePrefix / _is_complete.  The prefix/validity
         # parser above uses the CSD start rule (e.g. gsm csd_start = `any_expr ">>"`,
         # sql csd_start = `sql_stmt EOQ`), which REQUIRES the closing delimiter.  But
@@ -117,7 +126,7 @@ def _get_parser_components(grammar_text: str, start: str, complete_start: str | 
         # changes the generation loop's completeness signal -- it does NOT touch scoring:
         # the syntax-rate metric uses a separate start="syncode" parser (eval_logic) that
         # still requires the literal "<<...>>".
-        complete_lark_parser = Lark(grammar_text, start=complete_rule, parser='lalr')
+        complete_lark_parser = Lark(grammar_text, start=complete_rule, parser='lalr', lexer='basic')
         cached_components = (grammar, base_parser, lark_parser, complete_lark_parser)
         _PARSER_COMPONENT_CACHE[component_key] = cached_components
     return cached_components
@@ -202,7 +211,7 @@ def create_lark_dafny_parser(
     # SMILES/CARS: llguidance at empty prefix only (allows multi-atom BPE like ``CC``).
     # Non-empty prefixes keep Syncode — full-text/piece re-encode into llguidance can
     # shortfall-consume and return n=0, which trips cars.dfy stop
-    # (IsCompletePrefix && ValidNextTokenCount==0) on incomplete rings.
+    # (IsCompletePrefix && no valid next token) on incomplete rings.
     if _backend == "llguidance":
         if tokenizer is None:
             raise ValueError("accept_mask_backend=llguidance requires a tokenizer")
@@ -270,6 +279,11 @@ def create_lark_dafny_parser(
             # Lark parser for the rare IsValidPrefix fallback (keeps the CSD start
             # rule, e.g. csd_start, which requires the closing delimiter).
             self._lark = lark_parser
+            import regex as _regex
+            self._terminal_patterns = {
+                term.name: _regex.compile(term.pattern.to_regexp())
+                for term in lark_parser.terminals
+            }
             # Separate parser for IsCompletePrefix completeness checks: its start rule
             # is the CONTENT rule "start" (any_expr / sql_stmt / smiles) WITHOUT the
             # grammar-masked closer, so span content can be recognized as complete and
@@ -320,16 +334,13 @@ def create_lark_dafny_parser(
             return self._tokens_to_text(prefix) if len(prefix) > 0 else ""
 
         def _is_valid_prefix(self, text: str) -> bool:
-            """CRANE-aligned token validity (IterGen ``_is_valid``).
+            """True iff some string of the grammar starts with ``text``.
 
-            Drive Syncode's IncrementalParser, then:
-              - COMPLETE / MAYBE_COMPLETE remainder -> accept
-              - otherwise accept iff ``dfa_mask_store.is_valid_prefix(r)``
-              - parse exceptions -> reject
-
-            Matches CRANE ``itergen`` opportunistic gating so illegal whole
-            tokens (e.g. ``mx``, ``{``) are not accepted merely because the
-            incremental parser returned without raising.
+            Stateless, on plain Lark. Syncode's incremental parser is not used here: it
+            remembers parser state between calls and gets it wrong when separate words
+            later merge into one long word (acrylate ``O=C(O)C(=C)``), and it forgives a
+            parse error on a finished last word (``SELECT 1 WHERE ``). Measured exact by
+            brute force: saved-results/2026-09-18-span-cheat-audit.md.
             """
             with _parser_timed("is_valid_prefix.total"):
                 if not text:
@@ -341,29 +352,54 @@ def create_lark_dafny_parser(
                 if cached is not None:
                     return cached
                 try:
-                    from syncode.parse_result import RemainderState
-
-                    with _parser_timed("is_valid_prefix.inc_parser"):
-                        r = self._inc_parser.get_acceptable_next_terminals(text)
-                    if r.remainder_state in (
-                        RemainderState.COMPLETE,
-                        RemainderState.MAYBE_COMPLETE,
-                    ):
-                        result = True
-                    elif self._dfa_mask_store is not None:
-                        with _parser_timed("is_valid_prefix.dfa"):
-                            result = bool(self._dfa_mask_store.is_valid_prefix(r))
-                    else:
-                        # No DFA store: cannot apply CRANE's second check; reject
-                        # incomplete remainders rather than over-accepting.
-                        result = False
-                except (self._UnexpectedToken, self._UnexpectedCharacters, self._UnexpectedEOF):
-                    result = False
+                    result = self._prefix_can_be_completed(text)
                 except Exception:
-                    # CRANE ``_is_valid`` returns False on parse exceptions.
+                    _PARSER_LOG.exception("prefix check crashed on %r; treating as invalid", text[-80:])
                     result = False
                 self._valid_prefix_cache[text] = result
                 return result
+
+        def _prefix_can_be_completed(self, text: str) -> bool:
+            """Lex with the same (basic) lexer the grammar is defined under, then:
+            every finished word must be accepted by the parser, and the unfinished end
+            of the text must be able to grow into a word the parser accepts next.
+
+            The unfinished end is read several ways and any may succeed: every word is
+            finished (``SELECT a``), or the last one to three touching words, plus any
+            unlexable tail, are one word still growing (``AND`` -> ``ANDy``; ``3`` ``.``
+            -> ``3.5``).
+            """
+            words, stop = [], None
+            try:
+                for word in self._lark.lex(text):
+                    words.append(word)
+            except self._UnexpectedCharacters as err:
+                stop = err.pos_in_stream
+            tail_start = len(text) if stop is None else stop
+            readings = [(words, text[tail_start:])]
+            glued_from = tail_start
+            for back in range(1, min(3, len(words)) + 1):
+                if words[-back].end_pos != glued_from:
+                    break
+                glued_from = words[-back].start_pos
+                readings.append((words[:-back], text[glued_from:]))
+            for finished, growing in readings:
+                walker = self._lark.parse_interactive("")
+                try:
+                    for word in finished:
+                        walker.feed_token(word)
+                except self._UnexpectedToken:
+                    continue
+                if growing == "" or self._can_grow_into_accepted_word(walker, growing):
+                    return True
+            return False
+
+        def _can_grow_into_accepted_word(self, walker, growing: str) -> bool:
+            for name in walker.accepts():
+                pattern = self._terminal_patterns.get(name)
+                if pattern is not None and pattern.fullmatch(growing, partial=True):
+                    return True
+            return False
 
         def _is_complete(self, text: str) -> bool:
             """Check if text is a complete valid parse."""
@@ -527,16 +563,36 @@ def create_lark_dafny_parser(
                     result = _dafny.SeqWithoutIsStrInference(valid_tokens)
                 return result
 
-        def ValidNextTokenCount(self, prefix):
-            """Dafny interface: Count valid next tokens without materializing them."""
-            with _parser_timed("ValidNextTokenCount.dafny"):
-                current_text = self._structured_text(prefix)
+        def ValidNextTokenCountUpTo(self, prefix, cap):
+            """Dafny interface: how many tokens can come next, counted with the exact check, stopping at ``cap``.
 
-                if current_text and not self._is_valid_prefix(current_text):
+            The fast mask only proposes candidates (it offers tokens the grammar
+            rejects); each one is confirmed by the exact prefix check. Stopping at
+            ``cap`` keeps this affordable: callers only ever compare the count
+            against a small threshold.
+            """
+            with _parser_timed("ValidNextTokenCountUpTo.dafny"):
+                cap = int(cap)
+                current_text = self._structured_text(prefix)
+                if cap == 0 or (current_text and not self._is_valid_prefix(current_text)):
                     return 0
 
                 accept_mask = self._get_accept_mask_for_text(current_text)
-                return int(accept_mask.sum().item())
+                seen, scanned = set(), 0
+                for idx in accept_mask.nonzero().flatten().tolist():
+                    token_str = dafny_seq_to_str(self._token_list[idx])
+                    if not token_str or token_str in seen:
+                        continue
+                    scanned += 1
+                    if self._is_valid_prefix(current_text + token_str):
+                        seen.add(token_str)
+                        if len(seen) >= cap:
+                            break
+                _PARSER_LOG.debug(
+                    "valid-token count: cap=%d found=%d exact checks=%d text tail=%r",
+                    cap, len(seen), scanned, current_text[-40:],
+                )
+                return len(seen)
 
         def ValidNextToken(self, prefix, token):
             """Dafny interface: is this one token offered by the mask AND valid under the exact grammar check."""

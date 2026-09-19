@@ -1,7 +1,7 @@
 """Contract for the prefix-to-text cache in parser_utils.
 
 Every grammar question the decoder asks -- IsValidPrefix, IsCompletePrefix,
-ValidNextTokenCount, ValidNextToken, GroupHasValidMember, about five per decode
+ValidNextTokenCountUpTo, ValidNextToken, GroupHasValidMember, about five per decode
 step -- needs the answer-so-far as plain text, but it is stored as a list of
 token objects. Converting walks every token, so without a cache the same
 conversion is redone about five times per step, and because the answer gets

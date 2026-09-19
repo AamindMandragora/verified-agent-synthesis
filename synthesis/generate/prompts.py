@@ -442,7 +442,7 @@ consume token budget by themselves.
   Role: one parser-valid token choice with group preferences applied only at
   narrower parser states.
   Mechanics: same hard mask as `ConstrainedStep`; group boosts are applied only
-  when `parser.ValidNextTokenCount(currentConstrained) <= narrowThreshold`.
+  when at most `narrowThreshold` tokens can come next (exact grammar check).
   Cost: +1 token-step, including EOS.
   Control profile: hard parser control with conditional soft preference.
 
@@ -542,7 +542,8 @@ consume token budget by themselves.
 
 - `helpers.ValidTokenCount(parser, currentConstrained)`
   Role: inspect parser branching at the current constrained prefix.
-  Mechanics: returns the valid-next-token count; no LM call and no state change.
+  Mechanics: returns the valid-next-token count, counted with the exact grammar
+  check and stopping at 64 (64 means "64 or more"); no LM call and no state change.
   Cost: +0.
   Control profile: parser information only.
 
@@ -813,7 +814,7 @@ Summaries align with `synthesis/verify/library/README.md`; the `.dfy` file state
 - **`lm`:** `GenerateLogits`, `ChooseNextToken`, `ChooseNextTokenUnconstrained`, `GenerateUnconstrainedChunk`,
   `MaskValidNextAndEos`, `BoostValidNextAndEos`, `MaskToken` / `MaskTokens` / `MaskTokensExcept`,
   `IdToToken`, `TokenToId`, logit readers, `IsMasked`, `HasUnmaskedToken`.
-- **`parser`:** `IsValidPrefix`, `IsCompletePrefix`, `IsDeadPrefix`, `ValidNextTokenCount`, `ValidNextToken`,
+- **`parser`:** `IsValidPrefix`, `IsCompletePrefix`, `IsDeadPrefix`, `ValidNextTokenCountUpTo`, `ValidNextToken`,
   `ValidNextTokens`, `ParseG`.
 
 ## Proof sketch discipline
