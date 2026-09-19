@@ -157,8 +157,8 @@ def env(tmp_path_factory):
                     return True
             return False
 
-        def ValidNextTokenCount(self, prefix):
-            return len(self.ValidNextTokens(prefix))
+        def ValidNextTokenCountUpTo(self, prefix, cap):
+            return min(len(self.ValidNextTokens(prefix)), cap)
 
     class Env:
         pass

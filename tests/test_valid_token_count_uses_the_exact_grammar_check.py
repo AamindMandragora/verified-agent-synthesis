@@ -41,3 +41,11 @@ def test_the_count_stops_at_the_cap(acrylates, cap):
 
 def test_the_loose_count_is_gone(acrylates):
     assert not hasattr(acrylates, "ValidNextTokenCount")
+
+
+def test_the_token_list_agrees_with_the_count(acrylates):
+    """The Dafny contract says the count is the length of this list, so the list must be exact too."""
+    listed = acrylates.ValidNextTokens(PREFIX)
+    text = "".join(PREFIX)
+    assert all(acrylates._is_valid_prefix(text + token) for token in listed)
+    assert len(set(listed)) == acrylates.ValidNextTokenCountUpTo(PREFIX, 10 ** 6)

@@ -548,7 +548,7 @@ def create_lark_dafny_parser(
                 return self._is_complete(self._complete_text(prefix))
 
         def ValidNextTokens(self, prefix):
-            """Dafny interface: Get valid next tokens using DFA mask store."""
+            """Dafny interface: every token the mask offers that also passes the exact grammar check."""
             with _parser_timed("ValidNextTokens.total"):
                 with _parser_timed("ValidNextTokens.tokens_to_text"):
                     current_text = self._structured_text(prefix)
@@ -559,7 +559,12 @@ def create_lark_dafny_parser(
                 with _parser_timed("ValidNextTokens.valid_indices"):
                     valid_indices = self._get_valid_token_indices(current_text)
                 with _parser_timed("ValidNextTokens.materialize_dafny_seq"):
-                    valid_tokens = [self._token_list[idx] for idx in valid_indices]
+                    # The mask only proposes; the exact check decides. Slow (one check
+                    # per offered token), and nothing calls this while decoding.
+                    valid_tokens = [
+                        self._token_list[idx] for idx in valid_indices
+                        if self._is_valid_prefix(current_text + dafny_seq_to_str(self._token_list[idx]))
+                    ]
                     result = _dafny.SeqWithoutIsStrInference(valid_tokens)
                 return result
 

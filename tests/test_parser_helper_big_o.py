@@ -38,7 +38,7 @@ class _FakeIncrementalParser:
 class _FakeVerifiedDecoderAgent:
     class Parser:
         def IsDeadPrefix(self, prefix):
-            return (not self.IsCompletePrefix(prefix)) and self.ValidNextTokenCount(prefix) == 0
+            return (not self.IsCompletePrefix(prefix)) and self.ValidNextTokenCountUpTo(prefix, 1) == 0
 
 
 class _FakeDafny:
@@ -115,51 +115,3 @@ def test_complete_prefix_uses_incremental_end_state_before_full_parse(monkeypatc
     assert _FakeIncrementalParser.instances[0].calls == ["C"]
     assert complete_lark.parse_calls == 0
     assert parser.tokens_to_text_calls == 1
-
-
-def test_valid_next_token_count_caches_sum_for_same_prefix(monkeypatch):
-    _install_fake_syncode(monkeypatch)
-    _FakeIncrementalParser.instances.clear()
-    complete_lark = _FakeCompleteLark()
-
-    monkeypatch.setattr(
-        parser_utils,
-        "_get_parser_components",
-        lambda grammar_text, start: (object(), _FakeBaseParser(), object(), complete_lark),
-    )
-    monkeypatch.setattr(parser_utils, "_get_cached_dfa_mask_store", lambda *args: None)
-
-    parser_cls = parser_utils.create_lark_dafny_parser(
-        "start: \"C\"",
-        _FakeVerifiedDecoderAgent,
-        _FakeDafny,
-    )
-
-    class CountingMask:
-        def __init__(self):
-            self.sum_calls = 0
-
-        def sum(self):
-            self.sum_calls += 1
-            return self
-
-        def item(self):
-            return 7
-
-    class CountingParser(parser_cls):
-        def __init__(self, lm_tokens):
-            super().__init__(lm_tokens)
-            self.mask = CountingMask()
-
-        def _is_valid_prefix(self, text):
-            return True
-
-        def _get_accept_mask_for_text(self, current_text):
-            return self.mask
-
-    parser = CountingParser(["C"])
-    prefix = ["C"]
-
-    assert parser.ValidNextTokenCount(prefix) == 7
-    assert parser.ValidNextTokenCount(prefix) == 7
-    assert parser.mask.sum_calls == 1

@@ -85,7 +85,7 @@ def _core_lm_helpers() -> set[str]:
         "IsValidPrefix",
         "IsCompletePrefix",
         "IsDeadPrefix",
-        "ValidNextTokenCount",
+        "ValidNextTokenCountUpTo",
         "ValidNextToken",
         "ValidNextTokens",
         "ParseG",
