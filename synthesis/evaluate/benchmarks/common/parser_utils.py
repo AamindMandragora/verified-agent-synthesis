@@ -539,7 +539,7 @@ def create_lark_dafny_parser(
                 return int(accept_mask.sum().item())
 
         def ValidNextToken(self, prefix, token):
-            """Dafny interface: Check one candidate token against the DFA mask."""
+            """Dafny interface: is this one token offered by the mask AND valid under the exact grammar check."""
             with _parser_timed("ValidNextToken.dafny"):
                 current_text = self._structured_text(prefix)
 
@@ -555,7 +555,11 @@ def create_lark_dafny_parser(
                     return False
 
                 accept_mask = self._get_accept_mask_for_text(current_text)
-                return any(bool(accept_mask[idx]) for idx in indices if idx < len(accept_mask))
+                if not any(bool(accept_mask[idx]) for idx in indices if idx < len(accept_mask)):
+                    return False
+                # The mask is loose (it offers tokens the grammar rejects), so the
+                # answer for one token comes from the exact check.
+                return self._is_valid_prefix(current_text + token_str)
 
         def GroupHasValidMember(self, prefix, group):
             """Dafny interface: bulk DFA-mask check for group membership.
@@ -578,9 +582,10 @@ def create_lark_dafny_parser(
                     indices = str_to_idx.get(token_str)
                     if not indices:
                         continue
-                    for idx in indices:
-                        if idx < accept_len and bool(accept_mask[idx]):
-                            return True
+                    if any(idx < accept_len and bool(accept_mask[idx]) for idx in indices) and (
+                        self._is_valid_prefix(current_text + token_str)
+                    ):
+                        return True
                 return False
 
         def CompletedSchemaSymbolCount(self, prefix):

@@ -37,6 +37,7 @@ from synthesis.evaluate.benchmarks.common.delimiter_hygiene import (
 # OPT-IN diagnostic only; with the env var unset this block is a no-op and behaviour
 # (masks, scoring, decode) is byte-identical to before.
 _HYGIENE_LOG = logging.getLogger("csd.delimiter_hygiene")
+_EXACT_CHECK_LOG = logging.getLogger("csd.exact_grammar_check")
 _GROUNDING_LOG = logging.getLogger("csd.grounding")
 _SPIDER_CONTRACT_LOG = logging.getLogger("csd.spider_output_contract")
 
@@ -1851,6 +1852,7 @@ class _TensorizedLMBase:
         full_logits = full_logits.float().to(self._logits_device)
         self._full_logits = full_logits
         self._logits_tensor = full_logits[self._token_ids_tensor]
+        self._exact_check = None  # fresh logits: no parser mask is in force yet
         self.Logits.update_tensors(self._logits_tensor, self._full_logits)
 
     def _sample_full_token_id(self) -> int:
@@ -1946,12 +1948,47 @@ class _TensorizedLMBase:
 
     def ChooseNextToken(self):
         with _timed("ChooseNextToken"):
-            best_idx = self._select_constrained_index()
+            best_idx = self._select_exactly_valid_index()
             if getattr(self, "_structured_prompt", None) is not None:
                 self._record_generated_token_ids(
                     [int(self._token_ids_tensor[best_idx].item())]
                 )
             return self._Tokens[best_idx]
+
+    def _select_exactly_valid_index(self) -> int:
+        """Pick a token, confirm it with the exact grammar check, pick again if it fails.
+
+        The fast parser mask is loose on purpose (it never blocks a valid token but lets
+        many invalid ones through). This is the syncode library's own rule for closing that
+        gap: check the one picked token with the real parser. With no parser mask in force
+        there is no prefix to check against, so the pick stands. If every offered token
+        fails, the step stops (end-of-turn) rather than emit a token the grammar rejects.
+        """
+        pending = getattr(self, "_exact_check", None)
+        idx = self._select_constrained_index()
+        if pending is None:
+            return idx
+        parser, prefix, eos_token = pending
+        eos_indices = set(self._token_indices_for_token(eos_token))
+        rejected = 0
+        while idx not in eos_indices:
+            if self._logits_tensor[idx].item() <= -1e8:
+                _EXACT_CHECK_LOG.warning(
+                    "exact check: all %d offered tokens rejected at prefix length %d; stopping",
+                    rejected, len(prefix),
+                )
+                return min(eos_indices) if eos_indices else idx
+            token = self._Tokens[idx]
+            if parser.ValidNextToken(prefix, token):
+                break
+            rejected += 1
+            self.MaskToken(token)
+            idx = self._select_constrained_index()
+        if rejected:
+            _EXACT_CHECK_LOG.info(
+                "exact check: rejected %d offered token(s) at prefix length %d", rejected, len(prefix)
+            )
+        return idx
 
     def _select_constrained_index(self) -> int:
         """Pick an index into the masked constrained-subset logits.
@@ -2135,6 +2172,7 @@ class _TensorizedLMBase:
                     projected[ids[sm]] = True
                     self._full_logits.masked_fill_(~projected, -1e9)
             self._logits_dirty = True
+            self._exact_check = (parser, prefix, eosToken)
             self.Logits.update_tensors(self._logits_tensor, self._full_logits)
 
     def BoostValidNextAndEos(self, parser, prefix, amount, eosToken):
