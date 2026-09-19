@@ -143,7 +143,9 @@ from synthesis.evaluate.metrics import choose_denominator_basis
 from synthesis.run_constants import VLLM_ENFORCE_EAGER
 
 
-class PerExampleTimeout(Exception):
+# BaseException, not Exception: the parser helpers and IterGen's decoder catch Exception,
+# and the timer fires only once, so a swallowed timeout would let the example run on.
+class PerExampleTimeout(BaseException):
     """Raised when a single evaluation example exceeds its runtime budget."""
 
 
@@ -2711,7 +2713,7 @@ class Evaluator:
             # None into an aborted evaluation run.
             raise
 
-        except Exception as e:
+        except (Exception, PerExampleTimeout) as e:
             if self.dataset_name == "spider" and isinstance(
                 e, (SpiderPromptRenderError, SpiderEvidenceContractError)
             ):
