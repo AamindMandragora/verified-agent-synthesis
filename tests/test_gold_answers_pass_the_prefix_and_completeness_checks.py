@@ -25,11 +25,14 @@ accept mask, which this file does not exercise), so the parser is built with
     closer, splice in "&gt;&gt;") must not un-reject a text: rejection is one-way, and any
     text containing "&gt;&gt;" is rejected outright (the span closer is never content).
 
-Not every gold answer is inside the grammar's language -- e.g. 213 of the 1,034 Spider
-dev gold queries use double-quoted strings the grammar refuses (see the SQL AGENTS.md /
-2026-09-18 span-cheat-audit notes). Coverage is measured here, not hidden: properties
-(a)-(c) run only on the subset each grammar's plain-Lark full parse actually accepts,
-and a regression test pins the reject count so silent grammar drift shows up.
+Not every gold answer is inside the grammar's language -- e.g. 119 of the 1,034 Spider
+dev gold queries end with a literal ";" in the raw gold file (EOQ punctuation, not part
+of the "start" content rule this test checks) or hit an unrelated grammar gap. Coverage
+is measured here, not hidden: properties (a)-(c) run only on the subset each grammar's
+plain-Lark full parse actually accepts, and a regression test pins the reject count so
+silent grammar drift shows up. (Double-quoted string literals -- 213 of the 1,034 golds --
+were the largest cause of rejects until the 2026-09-20 grammar fix added double-quote
+support to sql.lark's STRING terminal; see span-contract-fix-20260917.)
 
 Run on focal (csd conda env has lark/regex/rdkit; no GPU, no tokenizer, no model load):
 
@@ -354,13 +357,14 @@ def spider_gold_split(spider_plain_lark, spider_gold_queries):
     return _split_by_grammar_coverage(spider_plain_lark, spider_gold_queries)
 
 
-# Measured 2026-09-20 against the official 1,034-row Spider dev_gold.sql: 308
-# gold queries are outside sql.lark's language. 213 of those use double-quoted
-# string literals the grammar refuses (matches the 2026-09-18 span-cheat-audit
-# note); the remainder end with a literal ";" in the raw gold file, which is
-# EOQ punctuation (csd_start), not part of the "start" content rule this test
-# checks. A regression test below fails if the reject count grows.
-SPIDER_MAX_KNOWN_REJECTS = 308
+# Measured 2026-09-20 against the official 1,034-row Spider dev_gold.sql, after the
+# same-day fix adding double-quoted string literal support to sql.lark's STRING
+# terminal (span-contract-fix-20260917): 119 gold queries are outside sql.lark's
+# language (was 308 before that fix; double-quoted literals alone accounted for 213
+# of the old rejects). Of the remaining 119, most end with a literal ";" in the raw
+# gold file, which is EOQ punctuation (csd_start), not part of the "start" content
+# rule this test checks. A regression test below fails if the reject count grows.
+SPIDER_MAX_KNOWN_REJECTS = 119
 
 
 def test_spider_gold_coverage_is_reported_and_does_not_regress(spider_gold_queries, spider_gold_split):

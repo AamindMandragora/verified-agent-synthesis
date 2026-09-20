@@ -161,6 +161,35 @@ def test_line_comment_newline_bare_sql_is_accepted_and_preserved():
     assert aux["output_rejection_reason"] is None
 
 
+def test_double_quoted_string_containing_a_semicolon_is_not_split_as_two_statements():
+    # _outside_spans / _single_statement only tracked single-quote string state before
+    # the 2026-09-20 double-quote grammar fix, so a ";" inside a double-quoted literal
+    # (now valid SQL per sql.lark) was mistaken for the end of one statement and the
+    # start of another. The semicolon here belongs to the string value, not the query.
+    result = _validate_bare_sql(
+        'SELECT name FROM singer WHERE note = "a; b"',
+        parser=_real_parser(),
+    )
+
+    assert result.accepted is True
+    assert result.sql == 'SELECT name FROM singer WHERE note = "a; b"'
+    assert result.rejection_reason is None
+
+
+def test_double_quoted_string_containing_a_marker_word_is_not_treated_as_a_wrapper():
+    # Same bug, via _outside_marker: a double-quoted literal containing "SQL:" (or
+    # any other outside-marker word) was flagged as prompt/wrapper text because the
+    # marker scan did not know it was inside a string.
+    result = _validate_bare_sql(
+        'SELECT name FROM singer WHERE note = "SQL: yes"',
+        parser=_real_parser(),
+    )
+
+    assert result.accepted is True
+    assert result.sql == 'SELECT name FROM singer WHERE note = "SQL: yes"'
+    assert result.rejection_reason is None
+
+
 def test_doubled_quote_and_semicolon_follow_live_parser_support():
     result = _validate_bare_sql(
         "SELECT 'it''s; still' FROM singer",
@@ -171,15 +200,23 @@ def test_doubled_quote_and_semicolon_follow_live_parser_support():
     assert result.rejection_reason == "invalid_or_non_bare_sql"
 
 
-@pytest.mark.parametrize(
-    "output",
-    [
-        "SELECT \"name\" FROM singer",
-        "SELECT name FROM singer /* marker comment */",
-    ],
-)
-def test_unsupported_quoted_identifier_and_block_comment_are_rejected(output):
-    result = _validate_bare_sql(output, parser=_real_parser())
+def test_double_quoted_string_literal_is_accepted_as_a_value_not_an_identifier():
+    # sql.lark's STRING terminal accepts double quotes wherever it accepts single
+    # quotes (2026-09-20 fix for the ~20% of Spider gold queries that write string
+    # literals this way, e.g. WHERE Airline = "JetBlue Airways"). "name" here reads
+    # as a STRING value, not a quoted identifier -- this grammar has no quoted-
+    # identifier syntax, so a double-quoted token is always a string literal.
+    result = _validate_bare_sql('SELECT "name" FROM singer', parser=_real_parser())
+
+    assert result.accepted is True
+    assert result.sql == 'SELECT "name" FROM singer'
+    assert result.rejection_reason is None
+
+
+def test_block_comment_is_rejected():
+    result = _validate_bare_sql(
+        "SELECT name FROM singer /* marker comment */", parser=_real_parser()
+    )
 
     assert result.accepted is False
     assert result.rejection_reason == "invalid_or_non_bare_sql"

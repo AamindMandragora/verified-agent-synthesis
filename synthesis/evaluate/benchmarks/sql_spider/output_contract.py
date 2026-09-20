@@ -96,8 +96,14 @@ _PROSE_SUFFIX_RE = re.compile(
 )
 
 
+_STRING_QUOTE_CHARS = ("'", '"')
+
+
 def _outside_spans(text: str):
-    in_string = False
+    # sql.lark's STRING terminal accepts both quote styles (single and double) with
+    # the same no-escaping-inside rule, so this scan tracks whichever quote char
+    # opened the current string and must not special-case just "'".
+    string_quote: str | None = None
     in_line_comment = False
     index = 0
     while index < len(text):
@@ -106,16 +112,16 @@ def _outside_spans(text: str):
                 in_line_comment = False
             index += 1
             continue
-        if in_string:
-            if text[index] == "'":
-                if index + 1 < len(text) and text[index + 1] == "'":
+        if string_quote is not None:
+            if text[index] == string_quote:
+                if index + 1 < len(text) and text[index + 1] == string_quote:
                     index += 2
                     continue
-                in_string = False
+                string_quote = None
             index += 1
             continue
-        if text[index] == "'":
-            in_string = True
+        if text[index] in _STRING_QUOTE_CHARS:
+            string_quote = text[index]
             index += 1
             continue
         if text.startswith("--", index):
@@ -153,7 +159,7 @@ def _trailing_whitespace_only(text: str) -> bool:
 def _parser_lexical_view(text: str) -> str:
     """Normalize parser-hostile layout without changing the scored candidate."""
     pieces: list[str] = []
-    in_string = False
+    string_quote: str | None = None
     in_line_comment = False
     index = 0
     while index < len(text):
@@ -169,18 +175,18 @@ def _parser_lexical_view(text: str) -> str:
             else:
                 index += 1
             continue
-        if in_string:
+        if string_quote is not None:
             pieces.append(char)
-            if char == "'":
-                if index + 1 < len(text) and text[index + 1] == "'":
-                    pieces.append("'")
+            if char == string_quote:
+                if index + 1 < len(text) and text[index + 1] == string_quote:
+                    pieces.append(string_quote)
                     index += 2
                     continue
-                in_string = False
+                string_quote = None
             index += 1
             continue
-        if char == "'":
-            in_string = True
+        if char in _STRING_QUOTE_CHARS:
+            string_quote = char
             pieces.append(char)
             index += 1
             continue
