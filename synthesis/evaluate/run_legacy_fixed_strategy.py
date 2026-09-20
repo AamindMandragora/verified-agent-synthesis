@@ -497,6 +497,30 @@ def _gcd_gsm_grammar(base_gsm_grammar: str) -> str:
     return base_gsm_grammar.replace(unused_rule, "", 1).replace(body_rule, '\nstart: any_expr ">>"\n', 1)
 
 
+def _spider_generation_prompt(prompt: Any, tokenizer: Any, model_name: str) -> str:
+    """The text a Spider lane sends the model: the task through its chat template.
+
+    Qwen3.5 only ends an answer at the end of an assistant turn. Handed the bare
+    few-shot text, it never wants its end token: measured on Qwen3.5-2B after the
+    complete query " SELECT COUNT( * ) FROM singer", <|im_end|> sits at logit 11.75
+    against 18.25 for ";" and 16.62 for "_in". A grammar-masked lane therefore runs
+    to its token cap (";" is not in the SQL grammar, so "_in" wins) and a free lane
+    invents another "question: ... SQL:" pair. The same task through the chat
+    template with thinking off puts <|im_end|> on top at 19.12.
+
+    IterGen and our own method already render this way, so this is the one call the
+    rest of the lanes share. CARS is not here on purpose: ``ConstrainedModel`` in the
+    cars repo applies the same template with ``enable_thinking=False`` itself, and
+    rendering here too would wrap the prompt twice.
+    """
+    render = getattr(prompt, "render_for_model", None)
+    if render is None:
+        raise TypeError(
+            f"Spider lanes render SpiderPromptParts, got {type(prompt).__name__}"
+        )
+    return render(tokenizer, model_name=model_name)
+
+
 def _gsm_symbolic_completion_to_delimited(
     completion: str,
     example: dict[str, Any],
@@ -1526,7 +1550,7 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
         if dataset == "gsm_symbolic":
             prompt = _render_gsm_chat_prompt(gsm_tokenizer, prompt)
         if dataset == "spider":
-            prompt = str(prompt)
+            prompt = _spider_generation_prompt(prompt, sc.model.tokenizer, args.eval_model)
         gen_started = time.perf_counter()
         gcd_prompt = _gcd_prompt(prompt)
         if not rows:
@@ -2826,6 +2850,7 @@ def run_unconstrained_spider_adapter(args: argparse.Namespace) -> int:
             max_model_len=16384,
             trust_remote_code=True,
         )
+        tokenizer = llm.get_tokenizer()
     else:
         from transformers import AutoModelForCausalLM, AutoTokenizer
         import torch
@@ -2849,9 +2874,11 @@ def run_unconstrained_spider_adapter(args: argparse.Namespace) -> int:
     )
 
     for example in examples:
-        prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "evaluator_default")
-        if not isinstance(prompt, str):
-            prompt = str(prompt)
+        prompt = _spider_generation_prompt(
+            _legacy_benchmark_prompt(logic, eval_runtime, example, "evaluator_default"),
+            tokenizer,
+            args.eval_model,
+        )
         if not rows:
             _log_lane_header(
                 tag,
@@ -3109,7 +3136,7 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
 
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "evaluator_default")
         if dataset == "spider":
-            prompt = str(prompt)
+            prompt = _spider_generation_prompt(prompt, sc.model.tokenizer, args.eval_model)
         prompt = _crane_prompt_for_generation(dataset, prompt)
         if dataset == "smiles":
             import torch as _torch

@@ -509,6 +509,11 @@ def _install_fake_vllm(monkeypatch, text, finish_reason, stop_reason, sampling_s
         def __init__(self, **kwargs):
             pass
 
+        def get_tokenizer(self):
+            from transformers import AutoTokenizer
+
+            return AutoTokenizer.from_pretrained("Qwen/Qwen3.5-2B", trust_remote_code=True)
+
         def generate(self, prompts, sampling_params):
             completion = SimpleNamespace(
                 text=text, token_ids=[1, 2, 3], finish_reason=finish_reason, stop_reason=stop_reason
@@ -583,7 +588,11 @@ def test_unconstrained_spider_logs_no_grammar_stop_reason_and_both_texts(monkeyp
     monkeypatch.setattr(registry, "get_logic", lambda dataset: FakeLogic)
     monkeypatch.setattr(evaluator, "Evaluator", lambda **kwargs: SimpleNamespace())
     monkeypatch.setattr(runner, "_configure_fixed_eval_runtime", lambda *a: None)
-    monkeypatch.setattr(runner, "_legacy_benchmark_prompt", lambda *a: "the spider prompt")
+    from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
+
+    monkeypatch.setattr(
+        runner, "_legacy_benchmark_prompt", lambda *a: SpiderPromptParts("the spider prompt\n")
+    )
     monkeypatch.setattr(runner, "_baseline_row_question", lambda *a: "question")
     monkeypatch.setattr(runner, "_legacy_local_cuda_device", lambda device: "cpu")
     monkeypatch.setattr(runner, "_build_minimal_json", lambda *a, **k: None)
