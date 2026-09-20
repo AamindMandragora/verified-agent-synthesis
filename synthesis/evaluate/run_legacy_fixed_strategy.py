@@ -1905,18 +1905,30 @@ def _log_itergen_forward(
     )
 
 
-def _itergen_backward_and_log(
-    tag: str, iter_gen: Any, *, iteration: int, unit: str, value: Any, reason: str, count: int
+def _itergen_backward_over_the_molecule(
+    tag: str, iter_gen: Any, *, iteration: int, value: Any, reason: str, count: int
 ) -> None:
-    before = _itergen_generated_token_ids(iter_gen)
-    iter_gen.backward(unit)
+    """Back out of the whole molecule, which is the unit the SMILES loop checked.
+
+    backward("smiles") walks to the start of the LAST smiles symbol, and the SMILES
+    grammars close one at the end of every parenthesised branch, so that start sits at
+    the end of the text and nothing is removed: 70 of the 71 backtracks in the
+    2026-09-20 run logged tokens_removed=0 and the loop re-offered the identical string
+    until it ran out of tries. Backing up every generated token lands on char 0 of the
+    generation (see IterGen.backward's "token" branch) and keeps the trace, so the
+    recurrence penalty can push the redraw off the tokens just tried.
+    """
+    before = _itergen_generated_token_ids(iter_gen) or []
+    if not before:
+        return
+    iter_gen.backward("token", num=len(before))
     after = _itergen_generated_token_ids(iter_gen)
     LOGGER.info(
-        "[%s] backward iteration=%d unit=%s units_removed=1 tokens_removed=%s value=%r reason=%s count=%d",
+        "[%s] backward iteration=%d unit=token num=%d tokens_removed=%s value=%r reason=%s count=%d",
         tag,
         iteration,
-        unit,
-        len(before) - len(after) if before is not None and after is not None else "unavailable",
+        len(before),
+        len(before) - len(after) if after is not None else "unavailable",
         _clip(value),
         reason,
         count,
@@ -2301,11 +2313,10 @@ def _itergen_generate_smiles(
             loop_exit = f"backwards_limit({backwards_limit})"
             break
         num_backwards += 1
-        _itergen_backward_and_log(
+        _itergen_backward_over_the_molecule(
             tag,
             iter_gen,
             iteration=iterations,
-            unit="smiles",
             value=cleaned,
             reason=check_reason,
             count=num_backwards,

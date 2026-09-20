@@ -36,6 +36,10 @@ class FakeIterGen:
         self._index = -1
         self.forward_calls = 0
         self.backward_calls: list[str | None] = []
+        # The loop backs out of the whole molecule, so it asks how many tokens it has
+        # generated. One token per character is close enough for a fake.
+        self.start_from = 0
+        self.session_tokens: list[int] = []
 
     def start(self, prompt):
         self._index = -1
@@ -43,7 +47,9 @@ class FakeIterGen:
     def forward(self, unit=None, units=None, num=1, **gen_args):
         self.forward_calls += 1
         self._index = min(self._index + 1, len(self._steps) - 1)
-        return [self._steps[self._index][0]]
+        text = self._steps[self._index][0]
+        self.session_tokens = list(range(len(text)))
+        return [text]
 
     def backward(self, unit=None, num=1):
         self.backward_calls.append(unit)
