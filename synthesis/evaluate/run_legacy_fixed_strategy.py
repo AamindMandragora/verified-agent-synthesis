@@ -1870,6 +1870,17 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
     return 0
 
 
+def _unconstrained_smiles_seed_prompt(base_prompt: str) -> str:
+    """Same expression-only framing GCD uses for SMILES (2026-09-20 baseline repair,
+    item 5) -- the CARS paper's own few-shot files already say "a single SMILES
+    molecule and nothing else", so a chain-of-thought prefix here would have asked
+    for something the paper's own prompt already rules out. GCD and unconstrained
+    now share this one prompt instead of building it two different ways."""
+    from synthesis.evaluate.benchmarks.smiles.eval_logic import format_prompt_expression_only
+
+    return format_prompt_expression_only(None, {"prompt": base_prompt})
+
+
 def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
     """Unconstrained SMILES generation: generate without grammar masking, then score.
 
@@ -1903,11 +1914,6 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
     draw_start = int(getattr(args, "eval_start_index", 0) or 0)
     raw_end = getattr(args, "eval_end_index", None)
     draw_end = n_per_class if raw_end is None else min(int(raw_end), n_per_class)
-    uc_smiles_cot_prefix = (
-        "For each molecule requested below, give brief step-by-step reasoning about the "
-        "constraints, then write the SMILES string.\n\n"
-    )
-
     if args.eval_backend == "vllm":
         from vllm import LLM, SamplingParams
 
@@ -1935,7 +1941,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
         grammar_text = str(task["grammar_text"])
         prompt_exemplars = list(task.get("prompt_exemplars", []))
         seen_per_class[class_name] = set(prompt_exemplars)
-        seed_prompt = uc_smiles_cot_prefix + base_prompt
+        seed_prompt = _unconstrained_smiles_seed_prompt(base_prompt)
         running_prompt = seed_prompt
 
         for _i in range(draw_start, draw_end):
