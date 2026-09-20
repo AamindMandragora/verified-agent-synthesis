@@ -615,6 +615,15 @@ def test_crane_smiles_uses_reasoning_before_a_delimited_constrained_span():
     }
 
 
+_SMILES_PROMPT = (
+    "Generate a molecule. "
+    "Your response must be a single SMILES molecule and nothing else.\n"
+    "Molecule: CCO\n"
+    "Molecule:"
+)
+_CRANE_SMILES_RAW_OUTPUT = "Reasoning about the class. <<C=CC(=O)OCC>> ignored tail"
+
+
 def test_crane_smiles_samples_with_neutral_reasoning_and_scores_only_inner_span(
     monkeypatch,
     tmp_path,
@@ -629,7 +638,7 @@ def test_crane_smiles_samples_with_neutral_reasoning_and_scores_only_inner_span(
         def infer(self, prompt, stop_words=None):
             observed["generation_prompt"] = prompt
             observed["stop_words"] = stop_words
-            return ["Reasoning about the class. <<C=CC(=O)OCC>> ignored tail"]
+            return [_CRANE_SMILES_RAW_OUTPUT]
 
     class FakeEvaluator:
         def __init__(self, **kwargs):
@@ -645,7 +654,7 @@ def test_crane_smiles_samples_with_neutral_reasoning_and_scores_only_inner_span(
                 {
                     "class_name": "acrylates",
                     "grammar_text": "start: /[A-Z0-9=()]+/",
-                    "prompt": "Generate a molecule.\nMolecule:",
+                    "prompt": _SMILES_PROMPT,
                 }
             ]
 
@@ -673,7 +682,7 @@ def test_crane_smiles_samples_with_neutral_reasoning_and_scores_only_inner_span(
     monkeypatch.setattr(registry_module, "get_logic", lambda dataset: FakeLogic())
     monkeypatch.setattr(legacy_runner, "_configure_fixed_eval_runtime", lambda *args: None)
     monkeypatch.setattr(legacy_runner, "_legacy_local_cuda_device", lambda device: "cuda:0")
-    monkeypatch.setattr(legacy_runner, "_legacy_benchmark_prompt", lambda *args: "Generate a molecule.\nMolecule:")
+    monkeypatch.setattr(legacy_runner, "_legacy_benchmark_prompt", lambda *args: _SMILES_PROMPT)
     monkeypatch.setattr(legacy_runner, "_baseline_row_question", lambda *args: "question")
     monkeypatch.setattr(legacy_runner, "_build_minimal_json", lambda rows, *args, **kwargs: written.update(rows=rows))
 
@@ -689,20 +698,26 @@ def test_crane_smiles_samples_with_neutral_reasoning_and_scores_only_inner_span(
     assert legacy_runner._crane_via_adaptive_syncode(args, "smiles") == 0
 
     constructor = observed["constructor_kwargs"]
+    # SMILES is scored on unique molecules, so this lane samples at the settled
+    # SMILES setting (0.8 / top_p 1.0) rather than decoding greedily.
     assert constructor["do_sample"] is True
-    assert constructor["temperature"] == 0.7
+    assert constructor["temperature"] == 0.8
+    assert constructor["top_p"] == 1.0
     assert constructor["start_symbol"] == "<<"
     assert constructor["end_symbol"] == ">>"
     assert constructor["start_inside_constrained"] is False
+    # The prompt asks for reasoning first and shows the example molecule in a span.
     assert observed["generation_prompt"] == (
-        "Generate a molecule.\nMolecule:\n\n"
-        "Think through the requested molecular class, then put only the final SMILES "
-        "between << and >>."
+        "Generate a molecule. "
+        + legacy_runner._CRANE_SMILES_REASON_FIRST
+        + "\nMolecule: <<CCO>>\nReasoning:"
     )
     assert observed["stop_words"] == [">>"]
+    # Only the last span is scored...
     assert observed["extract_input"] == "C=CC(=O)OCC"
     assert observed["syntax_input"] == "C=CC(=O)OCC"
-    assert written["rows"][0]["llm_response"] == "C=CC(=O)OCC"
+    # ...but the saved answer keeps the reasoning.
+    assert written["rows"][0]["llm_response"] == _CRANE_SMILES_RAW_OUTPUT
 
 
 def test_spider_qwen35_prompt_state_is_shared_with_the_csd_entry():

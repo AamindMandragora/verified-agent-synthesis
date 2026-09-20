@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import signal
@@ -15,11 +16,19 @@ from pathlib import Path
 from typing import Any
 
 from synthesis.evaluate.completion_text import completion_for_scoring, strip_prompt_prefix
+from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
 
 
+LOGGER = logging.getLogger(__name__)
 _MAX_PROMPT_CHARS = 50000  # ~12.5K tokens; leaves room for generation within 16384-token context
 _MAX_SUFFIX_CHARS = 45000
 
+
+def _completion_for_dataset(dataset: str, prompt: Any, raw_output: Any) -> str:
+    """Use generated-only text for Spider; preserve legacy stripping elsewhere."""
+    if dataset == "spider":
+        return str(raw_output or "")
+    return completion_for_scoring(prompt, raw_output)
 
 
 def _maybe_seed_parity_rng() -> None:
@@ -165,7 +174,12 @@ def _baseline_row_question(dataset: str, example: dict[str, Any], fallback: str)
     return str(example.get("question") or example.get("prompt") or fallback)
 
 
-def _legacy_benchmark_prompt(logic: Any, evaluator: Any, example: dict[str, Any], profile: str) -> str:
+def _legacy_benchmark_prompt(
+    logic: Any,
+    evaluator: Any,
+    example: dict[str, Any],
+    profile: str,
+) -> str | SpiderPromptParts:
     """User-message text for legacy fixed strategies (not used by metadecode).
 
     profile:
@@ -173,9 +187,9 @@ def _legacy_benchmark_prompt(logic: Any, evaluator: Any, example: dict[str, Any]
       - ``chain_of_thought``: explicit reasoning then answer; used by CRANE adaptive SMILES.
         NOTE: for Spider, ``format_prompt_chain_of_thought`` returns a list[dict] (multi-turn
         chat messages) — do NOT use this profile for Spider; use ``evaluator_default`` instead.
-      - ``evaluator_default``: ``logic.format_prompt``; for Spider this returns the flat
-        few-shot string (the production format) and is the correct profile for all Spider
-        legacy adapters.
+      - ``evaluator_default``: ``logic.format_prompt``; for token-0 Spider this
+        returns shared structured prompt parts. Fixed IterGen renders those parts;
+        other legacy adapters stringify them at their existing raw-text boundary.
     """
     if profile == "evaluator_default":
         return logic.format_prompt(evaluator, example)
@@ -244,17 +258,31 @@ def _gcd_stop_words(dataset: str) -> list[str] | None:
     if dataset == "gsm_symbolic":
         return [">>"]
     if dataset == "spider":
-        return [";", "\n"]
-    if dataset == "smiles":
-        return ["\n"]
+        return [";"]
     return None
 
 
-def _crane_stop_words(dataset: str) -> list[str]:
+def _gcd_generation_kwargs(dataset: str) -> dict[str, Any]:
+    if dataset == "smiles":
+        return {"do_sample": True, "temperature": 0.7}
+    return {"do_sample": False}
+
+
+def _crane_stop_words(dataset: str) -> list[str] | None:
     return [">>"]
 
 
+def _crane_generation_kwargs(dataset: str) -> dict[str, Any]:
+    if dataset == "smiles":
+        # SMILES is scored on unique molecules, so greedy would repeat one string.
+        # 0.8 / top_p 1.0 is the settled setting for the other SMILES baselines.
+        return {"do_sample": True, "temperature": 0.8, "top_p": 1.0}
+    return {"do_sample": False}
+
+
 _CRANE_SMILES_ANSWER_ONLY = "Your response must be a single SMILES molecule and nothing else."
+# No literal "<<" or ">>" here: the model quotes its instructions while reasoning,
+# and a quoted delimiter would open a constrained span early.
 _CRANE_SMILES_REASON_FIRST = (
     "First reason briefly, step by step, about what defines this class of molecule and how "
     "yours differs from the examples. Then write the final molecule on a new line, in exactly "
@@ -263,8 +291,8 @@ _CRANE_SMILES_REASON_FIRST = (
 
 
 def _crane_smiles_prompt(prompt: str) -> str:
-    """CRANE only constrains text after the model writes "<<", so its SMILES prompt asks for
-    reasoning first and shows every example molecule inside a << >> span."""
+    """CRANE only constrains text after the model writes the opening delimiter, so its SMILES
+    prompt asks for reasoning first and shows every example molecule inside a span."""
     if _CRANE_SMILES_ANSWER_ONLY not in prompt:
         raise ValueError("SMILES prompt changed: CRANE prompt rewrite no longer applies")
     body = prompt.replace(_CRANE_SMILES_ANSWER_ONLY, _CRANE_SMILES_REASON_FIRST).rstrip()
@@ -275,8 +303,16 @@ def _crane_smiles_prompt(prompt: str) -> str:
 
 
 def _crane_smiles_span(output: str) -> str:
+    """The scored molecule is the content of the last complete span."""
     spans = re.findall(r"<<(.*?)>>", output, flags=re.DOTALL)
     return spans[-1].strip() if spans else ""
+
+
+def _crane_prompt_for_generation(dataset: str, prompt: str) -> str:
+    if dataset == "smiles":
+        return _crane_smiles_prompt(prompt)
+    return prompt
+
 
 
 def _legacy_gsm_symbolic_grammar_base(repo_root: Path, examples: list[dict[str, Any]]) -> str:
@@ -658,7 +694,7 @@ def _annotate_legacy_rows_with_syntax(
             or ""
         )
         prompt_used = str(row.get("prompt_used") or "")
-        completion = completion_for_scoring(prompt_used or None, output_text)
+        completion = _completion_for_dataset(dataset, prompt_used or None, output_text)
         scored_output = (
             eval_runtime._truncate_gsm_output(completion)
             if dataset == "gsm_symbolic"
@@ -901,6 +937,8 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
             example,
             _cars_prompt_profile(dataset),
         )
+        if dataset == "spider":
+            prompt = str(prompt)
         gen_started = time.perf_counter()
         steps = _cars_sampler_steps(
             cars_model,
@@ -912,7 +950,7 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
         gen_seconds = time.perf_counter() - gen_started
         if dataset == "gsm_symbolic":
             output_text = _cars_normalize_gsm_symbolic_output(output_text)
-        completion = completion_for_scoring(prompt, output_text)
+        completion = _completion_for_dataset(dataset, prompt, output_text)
         scored_output = (
             eval_runtime._truncate_gsm_output(completion)
             if dataset == "gsm_symbolic"
@@ -1030,28 +1068,17 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
         if dataset == "gsm_symbolic":
             return base_gsm_grammar
         if dataset == "spider":
-            sql = (repo_root / "synthesis" / "evaluate" / "grammars" / "sql.lark").read_text()
-            # The start rule must end in a terminator. Without EOQ every finished SELECT
-            # can still be extended, so the grammar never allowed the sequence to end and
-            # greedy decoding ran to the token cap. EOQ is the same end marker the CSD
-            # path uses (csd_start).
-            return sql.replace("start: sql_stmt\n", "start: sql_stmt EOQ\n", 1)
+            return (repo_root / "synthesis" / "evaluate" / "grammars" / "sql.lark").read_text()
         if dataset == "smiles":
-            # Same reason: a molecule is only complete once the end-of-line terminator is
-            # consumed, otherwise "rest*" lets the model extend it forever.
-            return str(example.get("grammar_text", "")).replace(
-                "start: smiles\n", "start: smiles EOM\nEOM: /\\n/\n", 1
-            )
+            return str(example.get("grammar_text", ""))
         raise ValueError(f"Unsupported dataset for GCD adapter: {dataset}")
 
     def _gcd_max_new_tokens() -> int:
-        if dataset == "gsm_symbolic":
-            return min(96, max(32, int(args.eval_max_steps)))
-        if dataset == "smiles":
-            # No 256 cap: every draw hit it (diagnosis 2026-09-13). The lane's
-            # --eval-max-steps (400) is the budget, same as metaDecode's.
-            return max(64, int(args.eval_max_steps))
-        return max(32, int(args.eval_max_steps))
+        return _legacy_fixed_max_new_tokens(
+            dataset,
+            args.eval_max_steps,
+            strategy="gcd",
+        )
 
     def _gcd_prompt(prompt: str) -> str:
         if dataset == "gsm_symbolic":
@@ -1080,12 +1107,9 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
                 parse_output_only=True,
                 log_level=0,
                 max_new_tokens=_gcd_max_new_tokens(),
-                # Greedy on every dataset. For SMILES this means one fixed prompt
-                # repeats the same molecule, so GCD is reported as a known-weak
-                # baseline on unique-valid (decision 2026-09-18).
-                do_sample=False,
                 num_return_sequences=1,
                 opp=False,
+                **_gcd_generation_kwargs(dataset),
             )
         sc = syncode_cache[cache_key]
 
@@ -1095,12 +1119,14 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
                 example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
 
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "expression_only")
+        if dataset == "spider":
+            prompt = str(prompt)
         gen_started = time.perf_counter()
         gcd_prompt = _gcd_prompt(prompt)
         completions = sc.infer(gcd_prompt, stop_words=_gcd_stop_words(dataset))
         gen_seconds = time.perf_counter() - gen_started
         raw_output = _gcd_output(completions[0] if completions else "", example)
-        completion = completion_for_scoring(gcd_prompt, raw_output)
+        completion = _completion_for_dataset(dataset, gcd_prompt, raw_output)
         scored_output = (
             eval_runtime._truncate_gsm_output(completion)
             if dataset == "gsm_symbolic"
@@ -1152,6 +1178,93 @@ def _itergen_add_import_paths(itergen_root: Path) -> None:
             sys.path.insert(0, candidate_str)
 
 
+def _install_itergen_transformers_compat(itergen_cls: type[Any]) -> None:
+    """Keep legacy IterGen generation working with Transformers 5.
+
+    Transformers 5 removed ``_get_logits_warper`` and folds sampling warpers
+    into ``_get_logits_processor``. Greedy generation keeps an identity list;
+    sampling uses Transformers 5's own processor builder.
+    """
+    if getattr(itergen_cls, "_csd_transformers_compat_installed", False):
+        return
+
+    original_start = getattr(itergen_cls, "start", None)
+
+    def _compatible_update_gen_args(self: Any, **gen_args: Any) -> None:
+        self.generation_config.update(**gen_args)
+        # Transformers 5 leaves these unset, while legacy IterGen expects the
+        # Transformers 4 greedy defaults and compares both values as integers.
+        if getattr(self.generation_config, "num_beams", None) is None:
+            self.generation_config.num_beams = 1
+        if getattr(self.generation_config, "num_beam_groups", None) is None:
+            self.generation_config.num_beam_groups = 1
+        get_logits_warper = getattr(self.model, "_get_logits_warper", None)
+        if get_logits_warper is not None:
+            self.logit_warper = get_logits_warper(
+                self.generation_config,
+                device=self.device,
+            )
+            return
+        if self.generation_config.do_sample:
+            get_logits_processor = getattr(self.model, "_get_logits_processor", None)
+            if get_logits_processor is None:
+                raise RuntimeError(
+                    "Legacy IterGen sampling requires Transformers' "
+                    "_get_logits_processor when _get_logits_warper is unavailable."
+                )
+            self.logit_warper = get_logits_processor(
+                generation_config=self.generation_config,
+                input_ids_seq_length=0,
+                encoder_input_ids=None,
+                prefix_allowed_tokens_fn=None,
+                logits_processor=None,
+                device=self.device,
+                model_kwargs={},
+            )
+            LOGGER.info(
+                "[legacy-itergen] using Transformers 5 sampling processors "
+                "device=%s temperature=%s",
+                self.device,
+                getattr(self.generation_config, "temperature", None),
+            )
+            return
+
+        from transformers import LogitsProcessorList
+
+        self.logit_warper = LogitsProcessorList()
+        print(
+            "[legacy-itergen] _get_logits_warper is unavailable; using the "
+            "identity warper for greedy generation.",
+            file=sys.stderr,
+        )
+
+    def _compatible_start(self: Any, *args: Any, **kwargs: Any) -> Any:
+        result = original_start(self, *args, **kwargs)
+        model_config = self.model.config
+        get_text_config = getattr(model_config, "get_text_config", None)
+        text_config = (
+            get_text_config(decoder=True)
+            if get_text_config is not None
+            else model_config
+        )
+        layer_types = getattr(text_config, "layer_types", None) or []
+        if any(layer_type in {"linear_attention", "hybrid"} for layer_type in layer_types):
+            from transformers.cache_utils import DynamicCache
+
+            self.model_kwargs["past_key_values"] = DynamicCache(config=model_config)
+            print(
+                "[legacy-itergen] initialized a config-aware cache for the "
+                "model's linear-attention layers.",
+                file=sys.stderr,
+            )
+        return result
+
+    itergen_cls.update_gen_args = _compatible_update_gen_args
+    if original_start is not None:
+        itergen_cls.start = _compatible_start
+    itergen_cls._csd_transformers_compat_installed = True
+
+
 def _itergen_generate(iter_gen: Any, prompt: Any) -> str:
     iter_gen.start(prompt)
     generated = iter_gen.forward()
@@ -1162,15 +1275,214 @@ def _itergen_generate(iter_gen: Any, prompt: Any) -> str:
     return str(generated)
 
 
+def _itergen_generation_stop_token_ids(iter_gen: Any, tokenizer: Any) -> set[int]:
+    for owner in (iter_gen, tokenizer):
+        value = getattr(owner, "generation_stop_token_ids", None)
+        if value is None:
+            continue
+        if isinstance(value, int):
+            return {int(value)}
+        return {int(item) for item in value}
+    for owner in (iter_gen, tokenizer):
+        value = getattr(owner, "eos_token_id", None)
+        if value is None:
+            continue
+        if hasattr(value, "item"):
+            value = value.item()
+        if isinstance(value, int):
+            return {int(value)}
+        return {int(item) for item in value}
+    return set()
+
+
+def _itergen_generation_token_evidence(iter_gen: Any) -> dict[str, Any] | None:
+    """Capture only generated IterGen IDs, excluding prompt/session prefix IDs."""
+    session_tokens = getattr(iter_gen, "session_tokens", None)
+    start_from = getattr(iter_gen, "start_from", None)
+    tokenizer = getattr(iter_gen, "tokenizer", None)
+    if session_tokens is None or start_from is None or tokenizer is None:
+        return None
+    try:
+        generated_tokens = session_tokens[..., int(start_from):]
+    except (IndexError, TypeError, ValueError):
+        try:
+            generated_tokens = session_tokens[int(start_from):]
+        except (IndexError, TypeError, ValueError):
+            return None
+    if hasattr(generated_tokens, "detach"):
+        generated_tokens = generated_tokens.detach().cpu()
+    if hasattr(generated_tokens, "tolist"):
+        generated_tokens = generated_tokens.tolist()
+    while (
+        isinstance(generated_tokens, list)
+        and len(generated_tokens) == 1
+        and isinstance(generated_tokens[0], list)
+    ):
+        generated_tokens = generated_tokens[0]
+    if not isinstance(generated_tokens, list):
+        return None
+    from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
+        generation_token_evidence,
+    )
+
+    evidence = generation_token_evidence(
+        generated_tokens,
+        tokenizer,
+        terminal_stop_token_ids=_itergen_generation_stop_token_ids(iter_gen, tokenizer),
+    )
+    LOGGER.info(
+        "[legacy-itergen-spider] token-boundary generated_ids=%d removed_terminal_ids=%d",
+        len(evidence["raw_token_ids"]),
+        len(evidence["removed_terminal_token_ids"]),
+    )
+    return evidence
+
+
+def _legacy_fixed_max_new_tokens(
+    dataset: str,
+    eval_max_steps: int,
+    *,
+    strategy: str,
+) -> int:
+    """Honor the campaign budget except for the documented GSM safety cap."""
+    max_steps = int(eval_max_steps)
+    if dataset == "gsm_symbolic":
+        return min(96, max(32, max_steps))
+    if dataset == "smiles":
+        return max(64, max_steps)
+    if dataset == "spider" and strategy == "itergen":
+        return min(512, max(64, max_steps))
+    return max(32, max_steps)
+
+
+def _itergen_generation_kwargs(
+    *,
+    dataset: str,
+    max_tokens: int,
+    max_new_tokens: int,
+) -> dict[str, Any]:
+    """Return dataset-faithful IterGen constructor settings."""
+    kwargs: dict[str, Any] = {
+        "parse_output_only": True,
+        "quantize": False,
+        "max_tokens": max_tokens,
+        "max_new_tokens": max_new_tokens,
+        "num_return_sequences": 1,
+    }
+    if dataset == "smiles":
+        kwargs.update(do_sample=True, temperature=0.7)
+    else:
+        kwargs["do_sample"] = False
+    if dataset == "spider":
+        # The checked-in upstream Spider experiment uses 0.3 for its greedy
+        # iterative search. This discourages immediate token recurrence without
+        # changing the deterministic baseline into sampling.
+        kwargs["recurrence_penalty"] = 0.3
+    return kwargs
+
+
+def _itergen_spider_schema(example: dict[str, Any]) -> dict[str, set[str]]:
+    """Parse the Spider ``db_info`` surface used by the upstream adapter."""
+    schema: dict[str, set[str]] = {}
+    for table in str(example.get("db_info") or "").split("#")[1:]:
+        try:
+            table_name, columns_text = table.split("(", 1)
+        except ValueError:
+            continue
+        columns = columns_text.split(")", 1)[0].split(",")
+        schema[table_name.strip().lower()] = {
+            column.strip().lower() for column in columns if column.strip()
+        }
+    return schema
+
+
+def _itergen_spider_column_exists(schema: dict[str, set[str]], value: str) -> bool:
+    column = value.strip().lower()
+    if column == "*":
+        return True
+    if "." in column:
+        table, column_name = column.split(".", 1)
+        return column_name in schema.get(table, set())
+    return any(column in columns for columns in schema.values())
+
+
+def _itergen_generate_spider(
+    iter_gen: Any,
+    prompt: Any,
+    example: dict[str, Any],
+    *,
+    max_iterations: int = 20,
+    backwards_limit: int = 10,
+) -> str:
+    """Run the checked-in upstream Spider IterGen protocol."""
+    iter_gen.start(prompt)
+    schema = _itergen_spider_schema(example)
+    generated: Any = ""
+    num_backwards = 0
+    iterations = 0
+    LOGGER.info(
+        "[legacy-itergen-spider] start tables=%d max_iterations=%d backwards_limit=%d",
+        len(schema),
+        max_iterations,
+        backwards_limit,
+    )
+    while not iter_gen.finished() and iterations < max_iterations:
+        iterations += 1
+        generated = iter_gen.forward(units=["column_name", "table_name"], num=1)
+
+        column_names = iter_gen.view("column_name")[0]
+        last_column = column_names[-1] if column_names else None
+        if (
+            last_column is not None
+            and not _itergen_spider_column_exists(schema, str(last_column))
+            and num_backwards < backwards_limit
+        ):
+            iter_gen.backward("column_name")
+            num_backwards += 1
+            LOGGER.info(
+                "[legacy-itergen-spider] backtrack unit=column_name value=%r count=%d",
+                last_column,
+                num_backwards,
+            )
+            continue
+
+        table_names = iter_gen.view("table_name")[0]
+        last_table = table_names[-1] if table_names else None
+        if (
+            last_table is not None
+            and str(last_table).strip().lower() not in schema
+            and num_backwards < backwards_limit
+        ):
+            iter_gen.backward("table_name")
+            num_backwards += 1
+            LOGGER.info(
+                "[legacy-itergen-spider] backtrack unit=table_name value=%r count=%d",
+                last_table,
+                num_backwards,
+            )
+
+    if isinstance(generated, list):
+        completion = str(generated[0]) if generated else ""
+    else:
+        completion = str(generated)
+    LOGGER.info(
+        "[legacy-itergen-spider] finish iterations=%d backtracks=%d finished=%s output_chars=%d",
+        iterations,
+        num_backwards,
+        bool(iter_gen.finished()),
+        len(completion),
+    )
+    return completion
+
+
 # Robustness guard, not an evaluation change: greedy (do_sample=False) IterGen can enter a
 # non-terminating regeneration loop on a degenerate example (e.g. an unbounded ``.``-repeated
 # SMILES) and never return from ``forward()``. A per-example wall-clock cap treats such a stuck
 # example as a non-answer (empty completion -> scored incorrect + syntax-invalid), which is exactly
 # how a fair harness handles a baseline that cannot produce an answer in bounded time. It does NOT
 # touch the grammar, grader, or scorer, and applies symmetrically to every method/example.
-# Override with CSD_ITERGEN_PER_EXAMPLE_TIMEOUT_SECONDS. Default 300s: a legitimate capped decode
-# (max_new_tokens 256 for SMILES) finishes in well under a minute on a 9B, so 300s only ever fires
-# on the pathological non-terminating case.
+# Override with CSD_ITERGEN_PER_EXAMPLE_TIMEOUT_SECONDS. Default 300s: a legitimate bounded decode
+# normally finishes well inside the cap, which is reserved for pathological non-terminating cases.
 _ITERGEN_PER_EXAMPLE_TIMEOUT_SECONDS = float(
     os.environ.get("CSD_ITERGEN_PER_EXAMPLE_TIMEOUT_SECONDS", "300")
 )
@@ -1181,15 +1493,24 @@ class _ItergenPerExampleTimeout(BaseException):  # BaseException: IterGen catche
 
 
 def _itergen_generate_with_timeout(
-    iter_gen: Any, prompt: Any, cap_seconds: float
+    iter_gen: Any,
+    prompt: Any,
+    cap_seconds: float,
+    *,
+    spider_example: dict[str, Any] | None = None,
 ) -> tuple[str, bool]:
     """Run ``_itergen_generate`` under a SIGALRM wall-clock cap.
 
     Returns ``(completion, timed_out)``. On timeout returns ``("", True)`` so the caller scores the
     example as a non-answer. A cap of <= 0 disables the guard (unbounded, legacy behaviour).
     """
+    def _generate() -> str:
+        if spider_example is not None:
+            return _itergen_generate_spider(iter_gen, prompt, spider_example)
+        return _itergen_generate(iter_gen, prompt)
+
     if cap_seconds <= 0:
-        return _itergen_generate(iter_gen, prompt), False
+        return _generate(), False
 
     def _handler(signum: int, frame: Any) -> None:
         raise _ItergenPerExampleTimeout()
@@ -1197,7 +1518,7 @@ def _itergen_generate_with_timeout(
     old_handler = signal.signal(signal.SIGALRM, _handler)
     signal.setitimer(signal.ITIMER_REAL, cap_seconds)
     try:
-        return _itergen_generate(iter_gen, prompt), False
+        return _generate(), False
     except _ItergenPerExampleTimeout:
         return "", True
     finally:
@@ -1224,6 +1545,8 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
 
     _itergen_add_import_paths(itergen_root)
     from itergen.main import IterGen
+
+    _install_itergen_transformers_compat(IterGen)
 
     from synthesis.evaluate.evaluator import Evaluator
     from synthesis.evaluate.benchmarks.registry import get_logic
@@ -1269,18 +1592,11 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
             1,
         )
 
-    def _itergen_max_new_tokens() -> int:
-        """Match GCD caps so the incremental parser stack cannot grow with eval_max_steps."""
-        ms = int(args.eval_max_steps)
-        if dataset == "gsm_symbolic":
-            return min(96, max(32, ms))
-        if dataset == "smiles":
-            return max(64, ms)  # see _gcd_max_new_tokens: the 256 cap was hit every draw
-        if dataset == "spider":
-            return min(512, max(64, ms))
-        return max(32, ms)
-
-    _new_tok = _itergen_max_new_tokens()
+    _new_tok = _legacy_fixed_max_new_tokens(
+        dataset,
+        args.eval_max_steps,
+        strategy="itergen",
+    )
 
     def _grammar_for_example(example: dict[str, Any]) -> str:
         if dataset == "gsm_symbolic":
@@ -1308,41 +1624,43 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
                 grammar=grammar_text,
                 model_id=args.eval_model,
                 device=device,
-                parse_output_only=True,
-                quantize=False,
-                max_tokens=_session_ceiling,
-                # SMILES is scored on UNIQUE valid molecules, so greedy decoding would
-                # return the same string for every draw. Sample at the same temperature
-                # the other SMILES baselines use (unconstrained/CARS: 0.8, top_p 1.0).
-                do_sample=(dataset == "smiles"),
-                temperature=0.8 if dataset == "smiles" else 1.0,
-                top_p=1.0,
-                max_new_tokens=_new_tok,
-                num_return_sequences=1,
+                **_itergen_generation_kwargs(
+                    dataset=dataset,
+                    max_tokens=_session_ceiling,
+                    max_new_tokens=_new_tok,
+                ),
             )
         iter_gen = itergen_cache[cache_key]
 
         if dataset == "smiles":
-            # Per-draw seed, same formula the CARS SMILES adapter uses
-            # (_maybe_reseed_parity_example), so draws are different from one another
-            # and reproducible across reruns.
-            import torch as _torch
-
-            # Seed by the GLOBAL draw index: sharded lanes slice the draw stream with
-            # --eval-start-index, so a shard-local index would repeat another shard's draws.
-            _draw_i = int(getattr(args, "eval_start_index", 0) or 0) + _ex_i
-            _torch.manual_seed(int(os.environ.get("CSD_PARITY_SEED", 1234)) + _draw_i * 1_000_003)
             cls = str(example.get("class_name", ""))
             if __import__("os").environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
                 example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
+            import torch as _torch
+
+            # Sampled SMILES draws: seed by the GLOBAL draw index, since sharded lanes
+            # slice the draw stream with --eval-start-index and a shard-local index
+            # would repeat another shard's draws.
+            _draw_i = int(getattr(args, "eval_start_index", 0) or 0) + _ex_i
+            _torch.manual_seed(int(os.environ.get("CSD_PARITY_SEED", 1234)) + _draw_i * 1_000_003)
 
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "expression_only")
         if dataset == "gsm_symbolic":
             prompt = prompt.rstrip() + "<<"
 
+        if dataset == "spider":
+            generation_prompt = prompt.render_for_model(
+                iter_gen.tokenizer,
+                model_name=args.eval_model,
+            )
+        else:
+            generation_prompt = prompt
         gen_started = time.perf_counter()
         raw_completion, _timed_out = _itergen_generate_with_timeout(
-            iter_gen, prompt, _ITERGEN_PER_EXAMPLE_TIMEOUT_SECONDS
+            iter_gen,
+            generation_prompt,
+            _ITERGEN_PER_EXAMPLE_TIMEOUT_SECONDS,
+            spider_example=example if dataset == "spider" else None,
         )
         if _timed_out:
             print(
@@ -1350,42 +1668,76 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
                 f"{_ITERGEN_PER_EXAMPLE_TIMEOUT_SECONDS:g}s on {dataset} example "
                 f"{example.get('class_name', example.get('id', '?'))} -- scoring as non-answer"
             )
+        generation_token_evidence = (
+            _itergen_generation_token_evidence(iter_gen)
+            if dataset == "spider"
+            else None
+        )
+        if (
+            dataset == "spider"
+            and not _timed_out
+            and generation_token_evidence is not None
+        ):
+            raw_completion = generation_token_evidence["decoded_text"]
         if dataset == "gsm_symbolic":
             raw_completion = _gsm_symbolic_completion_to_delimited(
                 raw_completion, example, eval_runtime, logic
             )
         gen_seconds = time.perf_counter() - gen_started
-        completion = completion_for_scoring(prompt, raw_completion)
+        prompt_for_scoring = str(prompt) if dataset == "spider" else prompt
+        completion = _completion_for_dataset(dataset, prompt_for_scoring, raw_completion)
         scored_output = (
             eval_runtime._truncate_gsm_output(completion)
             if dataset == "gsm_symbolic"
             else completion
         )
         expected = logic.expected_answer(eval_runtime, example)
-        actual, _answer_source, aux = logic.extract_actual(eval_runtime, scored_output, example)
-        is_correct = bool(logic.is_correct(eval_runtime, actual, expected, example, aux, scored_output))
-
-        syntax_valid, _segments = eval_runtime._check_syntax_validity(scored_output, example=example)
+        actual, answer_source, aux = logic.extract_actual(eval_runtime, scored_output, example)
         if dataset == "spider":
-            syntax_valid = bool(aux and aux.get("syntax_valid"))  # the Spider output contract's verdict
+            removed_terminal_token_count = len(
+                (generation_token_evidence or {}).get("removed_terminal_token_ids", [])
+            )
+            LOGGER.info(
+                "[spider-output-contract] contract_valid=%s rejection_reason=%s "
+                "raw_chars=%d candidate_chars=%d removed_terminal_token_count=%d",
+                bool(aux and aux.get("output_contract_valid")),
+                aux.get("output_rejection_reason") if aux else None,
+                len(str(scored_output)),
+                len(str(actual or "")),
+                removed_terminal_token_count,
+            )
+            if aux is not None:
+                aux["removed_terminal_token_count"] = removed_terminal_token_count
+        is_correct = bool(logic.is_correct(eval_runtime, actual, expected, example, aux, scored_output))
+        syntax_valid, _segments = eval_runtime._check_syntax_validity(scored_output, example=example)
+        if dataset == "spider" and aux is not None:
+            syntax_valid = bool(aux.get("syntax_valid", aux.get("output_contract_valid", False)))
         if dataset == "smiles":
             syntax_valid = bool(aux and aux.get("syntax_valid"))
             if syntax_valid and actual:
                 cls = str(example.get("class_name", ""))
                 if __import__("os").environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
                     smiles_prompt_suffix[cls] = _cap_suffix(smiles_prompt_suffix.get(cls, "") + f" {actual}\nMolecule:")
-
         question = _baseline_row_question(dataset, example, expected)
-        rows.append(
-            {
-                "question": question,
-                "llm_response": completion,
-                "prompt_used": prompt,
-                "correct": bool(is_correct),
-                "syntax_valid": bool(syntax_valid),
-                "generation_seconds": gen_seconds,
-            }
-        )
+        row_out = {
+            "question": question,
+            "llm_response": completion,
+            "prompt_used": prompt_for_scoring,
+            "correct": bool(is_correct),
+            "syntax_valid": bool(syntax_valid),
+            "generation_seconds": gen_seconds,
+            "timed_out": bool(_timed_out),
+        }
+        if dataset == "spider":
+            row_out.update(
+                actual=actual,
+                answer_source=answer_source,
+                output_contract_valid=(aux.get("output_contract_valid") if aux is not None else None),
+                output_rejection_reason=aux.get("output_rejection_reason") if aux else None,
+                generation_token_evidence=generation_token_evidence,
+                removed_terminal_token_count=removed_terminal_token_count,
+            )
+        rows.append(row_out)
 
     _build_minimal_json(
         rows,
@@ -1589,6 +1941,8 @@ def run_unconstrained_spider_adapter(args: argparse.Namespace) -> int:
 
     for example in examples:
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "evaluator_default")
+        if not isinstance(prompt, str):
+            prompt = str(prompt)
         num_toks: int | None = None
         if args.eval_backend == "vllm":
             from vllm import SamplingParams as _SP
@@ -1668,6 +2022,26 @@ def _crane_delimited_start_grammar(grammar_text: str) -> str:
     return 'start: "<<" crane_body ">>"\n' + wrapped_body
 
 
+def _crane_adaptive_surface(dataset: str, grammar_text: str) -> dict[str, Any]:
+    """Return the adaptive-decoder surface declared by each benchmark."""
+    return {
+        "grammar": _crane_delimited_start_grammar(grammar_text),
+        "start_symbol": "<<",
+        "start_in_grammar": True,
+        "end_symbol": ">>",
+        "end_in_grammar": True,
+        "start_inside_constrained": False,
+    }
+
+
+def _crane_completion_for_scoring(dataset: str, prompt: str, raw_output: str) -> str:
+    """The saved answer. For SMILES this keeps the reasoning; only the scored output
+    is narrowed to the last span (see ``_crane_smiles_span``)."""
+    if dataset == "spider":
+        return str(raw_output or "")
+    return completion_for_scoring(prompt, raw_output)
+
+
 def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
     """Run CRANE-style adaptive constrained decoding via vendored AdaptiveSynCode.
 
@@ -1722,12 +2096,12 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
     device = _legacy_local_cuda_device(args.device)
     base_gsm_grammar_text = ""
     if dataset == "gsm_symbolic":
-        base_gsm_grammar_text = _crane_delimited_start_grammar(
+        base_gsm_grammar_text = (
             _legacy_gsm_symbolic_grammar_base(repo_root, examples)
         )
     spider_grammar_text = ""
     if dataset == "spider":
-        spider_grammar_text = _crane_delimited_start_grammar(
+        spider_grammar_text = (
             (repo_root / "synthesis" / "evaluate" / "grammars" / "sql.lark").read_text()
         )
 
@@ -1737,7 +2111,7 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
         if dataset == "spider":
             return spider_grammar_text
         if dataset == "smiles":
-            return _crane_delimited_start_grammar(str(example.get("grammar_text", "")))
+            return str(example.get("grammar_text", ""))
         raise ValueError(f"Unsupported dataset for AdaptiveSynCode adapter: {dataset}")
 
     syncode_cache: dict[str, Any] = {}
@@ -1745,7 +2119,8 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
     smiles_prompt_suffix: dict[str, str] = {}
 
     for example in examples:
-        grammar_text = _grammar_for_example(example)
+        surface = _crane_adaptive_surface(dataset, _grammar_for_example(example))
+        grammar_text = str(surface["grammar"])
         cache_key = f"{dataset}:{hash(grammar_text)}"
         if cache_key not in syncode_cache:
             syncode_cache[cache_key] = AdaptiveSynCode(
@@ -1756,14 +2131,25 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
                 grammar=grammar_text,
                 parse_output_only=True,
                 log_level=0,
-                start_symbol="<<",
-                end_symbol=">>",
+                start_symbol=surface["start_symbol"],
+                start_in_grammar=surface["start_in_grammar"],
+                end_symbol=surface["end_symbol"],
+                end_in_grammar=surface["end_in_grammar"],
+                start_inside_constrained=surface["start_inside_constrained"],
                 max_new_tokens=max(32, int(args.eval_max_steps)),
-                # SMILES is scored on unique molecules: sample like the other SMILES lanes.
-                do_sample=(dataset == "smiles"),
-                temperature=0.8 if dataset == "smiles" else 1.0,
-                top_p=1.0,
                 num_return_sequences=1,
+                **_crane_generation_kwargs(dataset),
+            )
+            generation_kwargs = _crane_generation_kwargs(dataset)
+            LOGGER.info(
+                "[legacy-crane] initialized decoder dataset=%s model=%s "
+                "do_sample=%s temperature=%s start_symbol=%r end_symbol=%r",
+                dataset,
+                args.eval_model,
+                generation_kwargs["do_sample"],
+                generation_kwargs.get("temperature"),
+                surface["start_symbol"],
+                surface["end_symbol"],
             )
         sc = syncode_cache[cache_key]
 
@@ -1773,17 +2159,27 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
                 example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
 
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "evaluator_default")
+        if dataset == "spider":
+            prompt = str(prompt)
+        prompt = _crane_prompt_for_generation(dataset, prompt)
         if dataset == "smiles":
             import torch as _torch
 
-            prompt = _crane_smiles_prompt(prompt)
+            # Seed by the GLOBAL draw index: sharded lanes slice the draw stream with
+            # --eval-start-index, so a shard-local index would repeat another shard's draws.
             _draw_i = int(getattr(args, "eval_start_index", 0) or 0) + len(rows)
             _torch.manual_seed(int(os.environ.get("CSD_PARITY_SEED", 1234)) + _draw_i * 1_000_003)
         gen_started = time.perf_counter()
         completions = sc.infer(prompt, stop_words=_crane_stop_words(dataset))
         gen_seconds = time.perf_counter() - gen_started
         raw_output = completions[0] if completions else ""
-        completion = completion_for_scoring(prompt, raw_output)
+        completion = _crane_completion_for_scoring(dataset, prompt, raw_output)
+        LOGGER.info(
+            "[legacy-crane] completed example dataset=%s raw_chars=%d scored_chars=%d",
+            dataset,
+            len(raw_output),
+            len(completion),
+        )
         scored_output = (
             eval_runtime._truncate_gsm_output(completion)
             if dataset == "gsm_symbolic"
@@ -1792,6 +2188,12 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
         if dataset == "smiles":
             # Score only the molecule in the last span; the saved answer keeps the reasoning.
             scored_output = _crane_smiles_span(completion)
+            if not scored_output:
+                LOGGER.warning(
+                    "[legacy-crane] SMILES output had no complete constrained span "
+                    "output_chars=%d",
+                    len(completion),
+                )
         expected = logic.expected_answer(eval_runtime, example)
         actual, _answer_source, aux = logic.extract_actual(eval_runtime, scored_output, example)
         is_correct = bool(logic.is_correct(eval_runtime, actual, expected, example, aux, scored_output))
@@ -1967,7 +2369,8 @@ def main() -> None:
     parser.add_argument("--gsm-split-file", type=str, default=None,
                         help="Optional GSM train/eval split manifest JSON")
     parser.add_argument("--gsm-split-name", type=str, choices=["train", "test"], default="test",
-                        help="Which split from --gsm-split-file to use (default: eval)")
+                        help="Which split from --gsm-split-file to use (default: test). "
+                             "GSM's held-out side is named 'test'; the 'eval' alias was removed 2026-07-17.")
     parser.add_argument("--spider-split-file", type=str, default=None,
                         help="Optional Spider train/test split manifest JSON")
     parser.add_argument("--spider-split-name", type=str, choices=["train", "test", "eval"], default="eval",
