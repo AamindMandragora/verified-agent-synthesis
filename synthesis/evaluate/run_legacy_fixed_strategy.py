@@ -1276,23 +1276,36 @@ def _itergen_generate(iter_gen: Any, prompt: Any) -> str:
 
 
 def _itergen_generation_stop_token_ids(iter_gen: Any, tokenizer: Any) -> set[int]:
+    """Every end token the model can stop on, not just the one IterGen kept.
+
+    IterGen's own ``start()`` overwrites ``generation_config.eos_token_id``
+    with the tokenizer's single id (``<|im_end|>`` for Qwen3.5), which drops
+    the model config's own end token (``<|endoftext|>``). Read both straight
+    from the tokenizer and the underlying model's config instead of trusting
+    whatever ``iter_gen`` narrowed it down to, so a completion that ends on
+    either token is recognized.
+    """
     for owner in (iter_gen, tokenizer):
         value = getattr(owner, "generation_stop_token_ids", None)
-        if value is None:
-            continue
-        if isinstance(value, int):
-            return {int(value)}
-        return {int(item) for item in value}
-    for owner in (iter_gen, tokenizer):
-        value = getattr(owner, "eos_token_id", None)
+        if value is not None:
+            if isinstance(value, int):
+                return {int(value)}
+            return {int(item) for item in value}
+
+    ids: set[int] = set()
+    for value in (
+        getattr(tokenizer, "eos_token_id", None),
+        getattr(getattr(getattr(iter_gen, "model", None), "config", None), "eos_token_id", None),
+    ):
         if value is None:
             continue
         if hasattr(value, "item"):
             value = value.item()
-        if isinstance(value, int):
-            return {int(value)}
-        return {int(item) for item in value}
-    return set()
+        if isinstance(value, (list, tuple, set)):
+            ids.update(int(item) for item in value)
+        else:
+            ids.add(int(value))
+    return ids
 
 
 def _itergen_generation_token_evidence(iter_gen: Any) -> dict[str, Any] | None:
@@ -1379,6 +1392,27 @@ def _itergen_generation_kwargs(
         # changing the deterministic baseline into sampling.
         kwargs["recurrence_penalty"] = 0.3
     return kwargs
+
+
+def _itergen_spider_authors_grammar_text() -> str:
+    """IterGen's own SQL grammar (see ``baselines/itergen_authors/README.md``).
+
+    Defines ``column_name`` / ``table_name``, the units ``_itergen_generate_spider``
+    asks ``view()``/``backward()`` for. Our own ``grammars/sql.lark`` names the same
+    concepts ``column_ref`` / ``table_ref``, so passing it here made ``view()``
+    always empty and the back-up step unreachable: the "IterGen" lane was really
+    just one unconstrained decode with no retry.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    grammar_path = (
+        repo_root
+        / "synthesis"
+        / "evaluate"
+        / "baselines"
+        / "itergen_authors"
+        / "sql_grammar.lark"
+    )
+    return grammar_path.read_text()
 
 
 def _itergen_spider_schema(example: dict[str, Any]) -> dict[str, set[str]]:
@@ -1602,7 +1636,9 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
         if dataset == "gsm_symbolic":
             return base_gsm_grammar_text
         if dataset == "spider":
-            return (repo_root / "synthesis" / "evaluate" / "grammars" / "sql.lark").read_text()
+            # The IterGen loop backs up on the units its own grammar names
+            # (column_name/table_name); our grammar names them differently.
+            return _itergen_spider_authors_grammar_text()
         if dataset == "smiles":
             return str(example.get("grammar_text", ""))
         raise ValueError(f"Unsupported dataset for itergen adapter: {dataset}")
