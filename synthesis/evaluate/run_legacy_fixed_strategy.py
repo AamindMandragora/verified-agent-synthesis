@@ -464,9 +464,49 @@ def _crane_smiles_span(output: str) -> str:
     return spans[-1].strip() if spans else ""
 
 
-def _crane_prompt_for_generation(dataset: str, prompt: str) -> str:
+_SPIDER_ANSWER_ONLY = "Only output the SQL quey. "
+_SPIDER_CRANE_HEADER = (
+    "You are an expert in writing SQL queries. You will be presented with a database "
+    "schema and a question about it.\n\n"
+    "Before answering you should reason briefly about which tables, joins and filters "
+    "the question needs. Then, output the SQL query that answers the question, wrapped "
+    "in << >>.\n\n"
+    "You will always respond in the format described below: \n"
+    "Let's think step by step. <reasoning> The final query is <<SQL query>>"
+)
+
+
+def _crane_spider_prompt(prompt: Any) -> Any:
+    """CRANE only starts masking after the model writes "<<", so the Spider prompt has
+    to ask for it. The shared Spider prompt says "Only output the SQL quey.", which both
+    rules out reasoning and never names a delimiter, and the 2026-09-20 trace shows the
+    cost: 10 of 10 answers with spans_opened=0, scored on free text.
+
+    The header mirrors CRANE's own GSM prompt, which names both delimiters outright and
+    shows the response shape. SMILES could avoid the literal delimiters because its
+    few-shot molecules demonstrate the format; Spider carries no few-shot example, so
+    there is nothing else to learn it from. A model that quotes "<<" mid-reasoning opens
+    a span early, which is ordinary CRANE behaviour: the scorer takes the LAST closed
+    span (``_span_content_for_scoring``).
+
+    The db_id, the schema and the question are copied through byte for byte.
+    """
+    task_text = getattr(prompt, "task_text", None)
+    if task_text is None or _SPIDER_ANSWER_ONLY not in task_text:
+        raise ValueError("Spider prompt changed: CRANE prompt rewrite no longer applies")
+    return type(prompt)(
+        _SPIDER_CRANE_HEADER + "\n\n" + task_text.replace(_SPIDER_ANSWER_ONLY, ""),
+        answer_cue="Let's think step by step.",
+        guidance=prompt.guidance,
+        model_name=prompt.model_name,
+    )
+
+
+def _crane_prompt_for_generation(dataset: str, prompt: Any) -> Any:
     if dataset == "smiles":
         return _crane_smiles_prompt(prompt)
+    if dataset == "spider":
+        return _crane_spider_prompt(prompt)
     return prompt
 
 
