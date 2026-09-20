@@ -284,6 +284,58 @@ def test_crane_logs_switches_spans_stop_reason_and_the_audit(monkeypatch, tmp_pa
     assert "unmasked_steps=1" in audit_line and "no_valid_tokens" in audit_line
 
 
+def test_the_crane_audit_line_carries_the_constrained_step_count(monkeypatch, tmp_path, caplog):
+    """masked_steps=0 beside constrained_steps=13 reads as "the constraint did nothing".
+
+    It does not mean that. CRANE runs opportunistic masking: on a constrained step the
+    decoder checks the model's own pick against the grammar and reaches for the mask
+    only when that pick is illegal. masked_steps=0 therefore says every constrained
+    token was already legal. A reader can only see that when both numbers are on the
+    same line, so the audit line carries the constrained count too.
+    """
+    caplog.set_level(logging.INFO, logger=TRACE_LOGGER)
+    audit = ConstraintAudit()
+    trace = {
+        "stop_reason": "stop_word",
+        "generated_tokens": 20,
+        "last_token_id": 99,
+        "constrained_steps": 13,
+        "free_steps": 7,
+        "mode_switches": [],
+    }
+    reply = "Think. <<1 + 1>>"
+
+    def install(monkeypatch, constructor_kwargs, infer_calls, _reply):
+        class FakeAdaptive:
+            def __init__(self, **kwargs):
+                constructor_kwargs.append(kwargs)
+                self.grammar_decoder = SimpleNamespace(constraint_audit=audit)
+                self.model = SimpleNamespace(_stop_token_ids={11}, last_generation_trace=None)
+
+            def infer(self, prompt, stop_words):
+                self.model.last_generation_trace = dict(trace)
+                return [reply]
+
+        package = types.ModuleType("syncode")
+        package.__path__ = []
+        infer_module = types.ModuleType("syncode.infer")
+        infer_module.AdaptiveSynCode = FakeAdaptive
+        monkeypatch.setitem(sys.modules, "syncode", package)
+        monkeypatch.setitem(sys.modules, "syncode.infer", infer_module)
+
+    monkeypatch.setattr(gcd_fixture, "_install_fake_syncode", install)
+    monkeypatch.setattr(
+        runner, "run_gcd_legacy_adapter", lambda args: runner._crane_via_adaptive_syncode(args, "gsm_symbolic")
+    )
+    gcd_fixture._run_gsm_gcd(monkeypatch, tmp_path, reply)
+    messages = _messages(caplog)
+
+    audit_line = _only(messages, "[legacy-crane] constraint-audit example=0")
+    assert "constrained_steps=13" in audit_line
+    assert "masked_steps=0" in audit_line
+    assert "unmasked_steps=0" in audit_line
+
+
 # ---- CARS ----------------------------------------------------------------------
 
 

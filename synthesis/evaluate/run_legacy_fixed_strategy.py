@@ -3226,9 +3226,6 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
                 surface["start_symbol"],
                 surface["end_symbol"],
             )
-            # opp is AdaptiveSynCode's default (True): inside a span the mask is applied
-            # only when the model's own pick breaks the grammar, so masked_steps below
-            # can be smaller than constrained_steps without anything being wrong.
             LOGGER.info(
                 "[legacy-crane] settings dataset=%s opportunistic_masking=True top_p=%s "
                 "max_new_tokens=%d stop_words=%s",
@@ -3282,12 +3279,18 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
                 switch.get("to"),
                 switch.get("token_index"),
             )
-        # Read and logged per example; the decoder built this audit and nothing read it.
+        # constrained_steps sits beside masked_steps on purpose. CRANE runs
+        # AdaptiveSynCode's opportunistic masking, so on a constrained step the decoder
+        # checks the model's own pick against the grammar and reaches for the mask only
+        # when that pick is illegal. masked_steps=0 next to constrained_steps=13 therefore
+        # says all thirteen tokens were already legal, not that nothing was constrained.
+        # Read on its own, masked_steps=0 invites exactly the opposite reading.
         LOGGER.info(
-            "[legacy-crane] constraint-audit example=%d dataset=%s masked_steps=%s unmasked_steps=%s "
-            "unmasked_by_reason=%s",
+            "[legacy-crane] constraint-audit example=%d dataset=%s constrained_steps=%s "
+            "masked_steps=%s unmasked_steps=%s unmasked_by_reason=%s",
             example_index,
             dataset,
+            crane_trace.get("constrained_steps", "unavailable"),
             crane_audit["masked"] if crane_audit else "unavailable",
             crane_audit["unmasked"] if crane_audit else "unavailable",
             crane_audit["by_reason"] if crane_audit else "unavailable",
