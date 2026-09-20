@@ -2466,6 +2466,8 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
                 iter_gen.tokenizer,
                 model_name=args.eval_model,
             )
+        elif dataset == "smiles":
+            generation_prompt = _render_chat_prompt(iter_gen.tokenizer, prompt)
         else:
             generation_prompt = prompt
         if not rows:
@@ -2683,6 +2685,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
             max_model_len=16384,
             trust_remote_code=True,
         )
+        tokenizer = llm.get_tokenizer()
     else:
         from transformers import AutoModelForCausalLM, AutoTokenizer
         import torch
@@ -2719,11 +2722,14 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
             # Built from the prompt this draw actually sends, so the molecules the
             # rolling suffix has added since the seed prompt are excluded too.
             prompt_exemplars = extract_prompt_exemplars(running_prompt, grammar_text)
+            # The rolling prompt stays plain text: it is what the exclusion list and the
+            # next draw's suffix are built from. Only what the model receives is rendered.
+            generation_prompt = _render_chat_prompt(tokenizer, running_prompt)
             if not rows:
                 _log_lane_header(
                     tag,
                     "smiles",
-                    prompt=running_prompt,
+                    prompt=generation_prompt,
                     end_token_ids=(
                         "vllm default end tokens + stop strings ['\\n']"
                         if args.eval_backend == "vllm"
@@ -2741,7 +2747,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
                     stop=_UNCONSTRAINED_SMILES_STOP,
                     seed=draw_seed,
                 )
-                outputs = llm.generate([running_prompt], sp)
+                outputs = llm.generate([generation_prompt], sp)
                 gen_seconds = time.perf_counter() - gen_started
                 completion = outputs[0].outputs[0]
                 gen_text = completion.text
@@ -2749,7 +2755,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
                 stop_reason = _vllm_stop_reason(completion)
             else:
                 torch.manual_seed(draw_seed)
-                inputs = tokenizer(running_prompt, return_tensors="pt").to(model.device)
+                inputs = tokenizer(generation_prompt, return_tensors="pt").to(model.device)
                 gen_started = time.perf_counter()
                 with torch.no_grad():
                     out_ids = model.generate(
@@ -3147,9 +3153,14 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
                 example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
 
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "evaluator_default")
+        # The CRANE rewrite runs BEFORE the chat template so its instruction is part of
+        # the user turn. Rendering first would leave the instruction after the assistant
+        # turn has already opened, where the model reads it as its own output.
+        prompt = _crane_prompt_for_generation(dataset, prompt)
         if dataset == "spider":
             prompt = _spider_generation_prompt(prompt, sc.model.tokenizer, args.eval_model)
-        prompt = _crane_prompt_for_generation(dataset, prompt)
+        if dataset == "smiles":
+            prompt = _render_chat_prompt(sc.model.tokenizer, prompt)
         if dataset == "smiles":
             import torch as _torch
 
