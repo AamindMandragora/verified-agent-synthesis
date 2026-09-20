@@ -122,7 +122,6 @@ def _audit_delta(before: dict[str, Any] | None, after: dict[str, Any] | None) ->
         "unmasked": after["unmasked"] - before["unmasked"],
         "by_reason": by_reason,
     }
-_MAX_PROMPT_CHARS = 50000  # ~12.5K tokens; leaves room for generation within 16384-token context
 _MAX_SUFFIX_CHARS = 45000
 
 
@@ -205,17 +204,6 @@ def _maybe_reseed_parity_example(example_index: int) -> None:
             torch.cuda.manual_seed_all(seed)
     except Exception:
         pass
-
-
-def _truncate_prompt(prompt: str, base_prompt: str) -> str:
-    """Keep *prompt* within ``_MAX_PROMPT_CHARS`` by dropping the oldest appended molecules."""
-    if len(prompt) <= _MAX_PROMPT_CHARS:
-        return prompt
-    suffix = prompt[len(base_prompt):]
-    lines = suffix.split("\n")
-    while len(base_prompt) + len("\n".join(lines)) > _MAX_PROMPT_CHARS and len(lines) > 1:
-        lines.pop(0)
-    return base_prompt + "\n".join(lines)
 
 
 def _cap_suffix(suffix: str) -> str:
@@ -1566,7 +1554,6 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
 
     syncode_cache: dict[str, Any] = {}
     rows: list[dict[str, Any]] = []
-    smiles_prompt_suffix: dict[str, str] = {}
 
     gsm_tokenizer: Any = None
     if dataset == "gsm_symbolic":
@@ -1608,9 +1595,6 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
         sc = syncode_cache[cache_key]
 
         if dataset == "smiles":
-            cls = str(example.get("class_name", ""))
-            if __import__("os").environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
-                example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
             import torch as _torch
 
             _draw_i = int(getattr(args, "eval_start_index", 0) or 0) + len(rows)
@@ -1674,10 +1658,6 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
             syntax_valid = bool(aux and aux.get("syntax_valid"))  # the Spider output contract's verdict
         if dataset == "smiles":
             syntax_valid = bool(aux and aux.get("syntax_valid"))
-            if syntax_valid and actual:
-                cls = str(example.get("class_name", ""))
-                if __import__("os").environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
-                    smiles_prompt_suffix[cls] = _cap_suffix(smiles_prompt_suffix.get(cls, "") + f" {actual}\nMolecule:")
 
         question = _baseline_row_question(dataset, example, expected)
         rows.append(
@@ -2520,7 +2500,6 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
 
     itergen_cache: dict[str, Any] = {}
     rows: list[dict[str, Any]] = []
-    smiles_prompt_suffix: dict[str, str] = {}
     smiles_seen_per_class: dict[str, set[str]] = {}
 
     for _ex_i, example in enumerate(examples):
@@ -2547,9 +2526,6 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
         iter_gen = itergen_cache[cache_key]
 
         if dataset == "smiles":
-            cls = str(example.get("class_name", ""))
-            if __import__("os").environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
-                example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
             import torch as _torch
 
             _draw_i = int(getattr(args, "eval_start_index", 0) or 0) + _ex_i
@@ -2650,10 +2626,6 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
             syntax_valid = bool(aux.get("syntax_valid", aux.get("output_contract_valid", False)))
         if dataset == "smiles":
             syntax_valid = bool(aux and aux.get("syntax_valid"))
-            if syntax_valid and actual:
-                cls = str(example.get("class_name", ""))
-                if __import__("os").environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
-                    smiles_prompt_suffix[cls] = _cap_suffix(smiles_prompt_suffix.get(cls, "") + f" {actual}\nMolecule:")
         question = _baseline_row_question(dataset, example, expected)
         row_out = {
             "question": question,
@@ -2740,10 +2712,12 @@ def _unconstrained_smiles_seed_prompt(base_prompt: str) -> str:
 def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
     """Unconstrained SMILES generation: generate without grammar masking, then score.
 
-    Each sample appends all previously generated valid molecules to the prompt
-    so the model is nudged to produce novel strings (matching the CARS paper
-    protocol).  Sampling gives diversity; greedy would repeat the same
-    molecule every time.
+    Every draw sends the same fixed seed prompt (the CARS authors' own sampling loop,
+    ``cars/cars.py::CARS.get_sample``/``get_samples``, encodes the prompt once and reuses
+    it for every draw -- it does not append accepted molecules back in). Sampling gives
+    diversity; greedy would repeat the same molecule every time. The scorer still
+    excludes every molecule this run has already accepted for the class, tracked in
+    ``seen_per_class`` independently of what is sent to the model.
     """
     from synthesis.evaluate.benchmarks.smiles.dataset import (
         SMILES_CLASSES,
@@ -2809,20 +2783,19 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
         base_prompt = task["prompt"]
         grammar_text = str(task["grammar_text"])
         seed_prompt = _unconstrained_smiles_seed_prompt(base_prompt)
-        running_prompt = seed_prompt
         seen_per_class[class_name] = set(
             extract_prompt_exemplars(seed_prompt, grammar_text)
         )
+        # Every draw sends this same rendered prompt; it never grows across draws.
+        generation_prompt = _render_chat_prompt(tokenizer, seed_prompt)
 
         for _i in range(draw_start, draw_end):
             draw_seed = _smiles_draw_seed(_i)
-            running_prompt = _truncate_prompt(running_prompt, seed_prompt)
-            # Built from the prompt this draw actually sends, so the molecules the
-            # rolling suffix has added since the seed prompt are excluded too.
-            prompt_exemplars = extract_prompt_exemplars(running_prompt, grammar_text)
-            # The rolling prompt stays plain text: it is what the exclusion list and the
-            # next draw's suffix are built from. Only what the model receives is rendered.
-            generation_prompt = _render_chat_prompt(tokenizer, running_prompt)
+            # The dedup set accumulates every molecule this run has accepted so far
+            # (seeded from the prompt's own exemplars), independently of the prompt
+            # text, so scoring still excludes prior draws' molecules even though the
+            # model is never shown them.
+            prompt_exemplars = list(seen_per_class[class_name])
             if not rows:
                 _log_lane_header(
                     tag,
@@ -2902,7 +2875,6 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
             )
             if cleaned and smiles_eval.get("syntax_valid"):
                 seen_per_class[class_name].add(cleaned)
-                running_prompt = running_prompt.rstrip() + f" {cleaned}\nMolecule: "
 
             row_out: dict[str, Any] = {
                 "question": class_name,
@@ -3196,7 +3168,6 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
 
     syncode_cache: dict[str, Any] = {}
     rows: list[dict[str, Any]] = []
-    smiles_prompt_suffix: dict[str, str] = {}
 
     for example in examples:
         surface = _crane_adaptive_surface(dataset, _grammar_for_example(example))
@@ -3240,11 +3211,6 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
                 _crane_stop_words(dataset),
             )
         sc = syncode_cache[cache_key]
-
-        if dataset == "smiles":
-            cls = str(example.get("class_name", ""))
-            if __import__("os").environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
-                example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
 
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "evaluator_default")
         # The CRANE rewrite runs BEFORE the chat template so its instruction is part of
@@ -3351,10 +3317,6 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
             syntax_valid = bool(aux and aux.get("syntax_valid"))  # the Spider output contract's verdict
         if dataset == "smiles":
             syntax_valid = bool(aux and aux.get("syntax_valid"))
-            if syntax_valid and actual:
-                cls = str(example.get("class_name", ""))
-                if __import__("os").environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
-                    smiles_prompt_suffix[cls] = _cap_suffix(smiles_prompt_suffix.get(cls, "") + f" {actual}\nMolecule:")
 
         question = _baseline_row_question(dataset, example, expected)
         rows.append(

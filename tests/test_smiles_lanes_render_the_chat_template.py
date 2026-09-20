@@ -58,10 +58,10 @@ def test_each_smiles_lane_renders_through_the_shared_helper(lane: str) -> None:
     assert "_render_chat_prompt(" in source
 
 
-def test_the_unconstrained_lane_renders_the_rolling_prompt_it_actually_sends() -> None:
+def test_the_unconstrained_lane_renders_the_fixed_seed_prompt_it_actually_sends() -> None:
     source = inspect.getsource(lane_module.run_unconstrained_smiles_adapter)
 
-    assert "_render_chat_prompt(tokenizer, running_prompt)" in source
+    assert "_render_chat_prompt(tokenizer, seed_prompt)" in source
     assert "llm.generate([generation_prompt]" in source
     assert "tokenizer(generation_prompt" in source
 

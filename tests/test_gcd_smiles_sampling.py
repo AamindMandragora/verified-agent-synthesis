@@ -85,7 +85,6 @@ def test_smiles_sampling_reaches_syncode_constructor(monkeypatch, tmp_path: Path
     )
     monkeypatch.setattr(runner, "_baseline_row_question", lambda *args: "question")
     monkeypatch.setattr(runner, "_build_minimal_json", lambda *args, **kwargs: None)
-    monkeypatch.setenv("CSD_SMILES_ROLLING_PROMPT", "0")
 
     args = argparse.Namespace(
         dataset="smiles",

@@ -1,10 +1,14 @@
 """Rolling few-shot prompt for the SMILES generative eval (Fix A, 2026-06-10).
 
 Each successive eval example's prompt grows to include the molecules accepted from
-earlier examples — the SAME diversity mechanism the baseline adapters
-(CARS/GCD/IterGen/CRANE/unconstrained) use in run_legacy_fixed_strategy.py. This gives
-the CSD (compiled-strategy) eval path parity with the baselines on SMILES diversity.
-Kept byte-identical to that path; see tests/test_smiles_rolling_suffix.py.
+earlier examples — the same diversity mechanism the CARS baseline adapter's
+``smiles_prompt_suffix`` uses in run_legacy_fixed_strategy.py. Kept byte-identical to
+that lane's mechanism; see tests/test_smiles_rolling_suffix.py.
+
+As of 2026-09-20 the other baseline lanes (GCD/IterGen/CRANE/unconstrained) no longer
+do this -- each of those now sends the same fixed prompt on every draw (see
+tests/test_smiles_lanes_do_not_feed_molecules_back_into_the_prompt.py). This module's
+parity claim covers CARS only; it is not evidence about the other lanes.
 """
 
 MAX_SUFFIX_CHARS = 45000

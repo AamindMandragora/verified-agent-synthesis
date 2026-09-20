@@ -1,7 +1,14 @@
 """Parity test (Fix A, 2026-06-10): the SMILES rolling-prompt helper used by the CSD
-eval path must be byte-identical in behavior to the baseline rolling prompt in
-run_legacy_fixed_strategy.py, so metaDecode is evaluated under the SAME diversity
-protocol as the CARS/GCD/IterGen/CRANE/unconstrained baselines."""
+eval path must be byte-identical in behavior to the CARS baseline's rolling prompt in
+run_legacy_fixed_strategy.py, so metaDecode is evaluated under the same diversity
+protocol as that lane.
+
+As of 2026-09-20 the GCD/IterGen/CRANE/unconstrained baseline lanes no longer feed
+accepted molecules back into the prompt (see
+tests/test_smiles_lanes_do_not_feed_molecules_back_into_the_prompt.py) -- only CARS
+still does, matching its own lane's ``smiles_prompt_suffix`` mechanism. This test
+file's parity claim is scoped to that CARS lane only; it says nothing about the
+other lanes."""
 from synthesis.evaluate.benchmarks.smiles import rolling_prompt
 from synthesis.evaluate.run_legacy_fixed_strategy import _cap_suffix as baseline_cap
 import synthesis.evaluate.run_legacy_fixed_strategy as legacy
