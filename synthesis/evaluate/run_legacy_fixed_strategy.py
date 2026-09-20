@@ -209,35 +209,23 @@ def _cars_prompt_profile(dataset: str) -> str:
     return "expression_only"
 
 
-_SPIDER_COMPLETION_MARKERS = (
-    r"\bHuman\s*:",
-    r"\bAssistant\s*:",
-    r"\bUser\s*:",
-    r"\bSystem\s*:",
-    r"\bdb_id\s*:",
-    r"\bdb_info\s*:",
-    r"\bquestion\s*:",
-    r"\bSQL\s*:",
-)
-
-
 def _spider_completion_has_clean_boundary(text: str) -> bool:
-    """True once later text would be discarded by Spider SQL cleanup."""
+    """True once a blank line has closed the model's own paragraph.
+
+    This is the ONLY structural stop the unconstrained baseline is allowed at
+    generation time: a blank line is a property of the text itself, not an
+    assumption about what a SQL query looks like. The semicolon / repeated-SELECT /
+    repeated-few-shot-label checks that used to live here were SQL-aware stops --
+    exactly the kind of grammar-driven help an "unconstrained" baseline must not
+    get. That cleanup still happens, just later: uniformly, for every span-free
+    Spider answer, in the scorer (``_span_content_for_scoring`` in
+    ``benchmarks/sql_spider/eval_logic.py``). The model's own end token is what
+    actually stops generation in the normal case; this function only covers the
+    "kept rambling past the answer" case.
+    """
     if not text:
         return False
-    if "\n\n" in text:
-        return True
-    semicolon = text.find(";")
-    if semicolon > 0:
-        return True
-    repeated_select = re.search(r"\s+SelEct\s+", text)
-    if repeated_select and repeated_select.start() > 0:
-        return True
-    for marker in _SPIDER_COMPLETION_MARKERS:
-        match = re.search(marker, text, flags=re.IGNORECASE)
-        if match and match.start() > 0:
-            return True
-    return False
+    return "\n\n" in text
 
 
 def _spider_hf_stopping_criteria(tokenizer: Any, prompt_token_count: int) -> Any:
@@ -2384,6 +2372,25 @@ def run_crane_legacy_adapter(args: argparse.Namespace) -> int:
     return 0
 
 
+def _routes_through_crane_repo(dataset: str, strategy: str) -> bool:
+    """True when ``dataset``/``strategy`` should subprocess the upstream CRANE main.py.
+
+    CRANE main.py only supports gsm_symbolic and FOL -- no Spider support (no
+    prompt_templates/spider.yaml, no generate_spider_with_itergen function). For Spider,
+    fall through to the legacy shared-evaluator adapters which DO support Spider and were
+    the source of the 05-18 baselines.
+
+    "gcd" is excluded even for gsm_symbolic: the CRANE repo has no separate GCD mode, so
+    crane_repo_runner used to implement it as IterGen-with-reasoning-off, which is not
+    what GCD (greedy grammar-constrained decoding) means anywhere else in this codebase.
+    GSM's "gcd" instead falls through to run_gcd_legacy_adapter below, the same
+    SynCode-backed hard-mask path Spider and SMILES GCD already use.
+    """
+    crane_repo_datasets = {"gsm_symbolic"}
+    crane_repo_strategies = {"unconstrained", "crane", "itergen"}
+    return dataset in crane_repo_datasets and strategy in crane_repo_strategies
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run legacy fixed strategy code and export minimal baseline JSON"
@@ -2460,16 +2467,7 @@ def main() -> None:
     _ensure_repo_cache_env()
 
     dataset_normalized = _normalize_dataset(args.dataset)
-    # CRANE main.py only supports gsm_symbolic and FOL — no Spider support
-    # (no prompt_templates/spider.yaml, no generate_spider_with_itergen function).
-    # For Spider, fall through to the legacy shared-evaluator adapters which DO
-    # support Spider and were the source of the 05-18 baselines.
-    crane_repo_datasets = {"gsm_symbolic"}
-    crane_repo_strategies = {"unconstrained", "gcd", "crane", "itergen"}
-    if (
-        dataset_normalized in crane_repo_datasets
-        and args.strategy in crane_repo_strategies
-    ):
+    if _routes_through_crane_repo(dataset_normalized, args.strategy):
         from synthesis.evaluate.baselines.crane_repo_runner import (
             run_crane_repo_baseline,
         )

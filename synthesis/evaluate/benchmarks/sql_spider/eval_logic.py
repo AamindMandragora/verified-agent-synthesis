@@ -134,6 +134,45 @@ def _active_removed_terminal_token_count(evaluator: Any) -> int:
     return len(evidence.get("removed_terminal_token_ids", ()))
 
 
+_SPAN_FREE_ANSWER_END_MARKERS = (
+    r"^\s*Human\s*:",
+    r"^\s*Assistant\s*:",
+    r"^\s*User\s*:",
+    r"^\s*System\s*:",
+    r"^\s*db_id\s*:",
+    r"^\s*db_info\s*:",
+    r"^\s*question\s*:",
+    r"^\s*SQL\s*:",
+)
+
+
+def _span_free_answer_end(text: str) -> str:
+    """Cut a span-free answer where the model's own SQL query actually ends.
+
+    A span-free (unconstrained) answer continues past its query: a semicolon,
+    a second SELECT, or the few-shot format starting over (a repeated "SQL:",
+    "question:", ...). None of this is generation-time behavior any more (see
+    ``_spider_completion_has_clean_boundary`` in run_legacy_fixed_strategy.py) --
+    it is scoring-time cleanup applied uniformly to every span-free answer.
+    """
+    end = len(text)
+    semicolon = text.find(";")
+    if semicolon > 0:
+        end = min(end, semicolon)
+    repeated_select = re.search(r"\s+SelEct\s+", text)
+    if repeated_select and repeated_select.start() > 0:
+        end = min(end, repeated_select.start())
+    for marker in _SPAN_FREE_ANSWER_END_MARKERS:
+        # A line-start anchor, not `_spider_completion_has_clean_boundary`'s old
+        # bare `\b` word boundary: a label like "SQL:" occurring mid-line (e.g.
+        # quoted inside the query itself, `SELECT 'SQL:' FROM t`) is not a
+        # repeated few-shot label and must not be cut.
+        match = re.search(marker, text, flags=re.IGNORECASE | re.MULTILINE)
+        if match and match.start() > 0:
+            end = min(end, match.start())
+    return text[:end].strip()
+
+
 def _span_content_for_scoring(scored_output: str) -> str:
     """The content of the last closed `<< >>` span, verbatim.
 
@@ -151,7 +190,8 @@ def _span_content_for_scoring(scored_output: str) -> str:
         # A span-free baseline continues the few-shot format and opens with "SQL:".
         # The label is not part of the query, and the answer ends at the first blank line:
         # after it the model starts over ("SQL: ..." again) until the budget runs out.
-        return re.sub(r"^sql\s*:\s*", "", text, flags=re.IGNORECASE).split("\n\n", 1)[0].strip()
+        no_label = re.sub(r"^sql\s*:\s*", "", text, flags=re.IGNORECASE).split("\n\n", 1)[0].strip()
+        return _span_free_answer_end(no_label)
     closed = [span for span in spans if span.closed]
     return closed[-1].content if closed else ""
 
