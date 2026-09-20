@@ -16,3 +16,8 @@ def test_unfinished_think_block_means_no_answer():
 def test_outputs_without_a_think_block_are_unchanged():
     assert _span_content_for_scoring("<<SELECT 1>>") == "SELECT 1"
     assert _span_content_for_scoring("SELECT 1") == "SELECT 1"
+
+
+def test_unfinished_think_block_after_an_answer_is_cut_off():
+    out = "<<SELECT a FROM t>>\n<think>wait, maybe <<SELECT b FROM t>>"
+    assert _span_content_for_scoring(out) == "SELECT a FROM t"

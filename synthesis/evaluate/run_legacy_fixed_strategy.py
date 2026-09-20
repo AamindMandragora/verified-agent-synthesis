@@ -257,7 +257,8 @@ def _crane_stop_words(dataset: str) -> list[str]:
 _CRANE_SMILES_ANSWER_ONLY = "Your response must be a single SMILES molecule and nothing else."
 _CRANE_SMILES_REASON_FIRST = (
     "First reason briefly, step by step, about what defines this class of molecule and how "
-    "yours differs from the examples. Then write the final molecule between << and >>."
+    "yours differs from the examples. Then write the final molecule on a new line, in exactly "
+    "the same format as the examples."
 )
 
 

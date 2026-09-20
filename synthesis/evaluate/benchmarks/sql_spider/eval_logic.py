@@ -143,10 +143,9 @@ def _span_content_for_scoring(scored_output: str) -> str:
     """
     # Qwen3.5 opens every answer with a (usually empty) <think>...</think> block. It is
     # reasoning, not the answer: drop it. A block that never closes means the model ran
-    # out of budget while still reasoning, so there is no answer.
-    text = re.sub(r"<think>.*?</think>", "", scored_output or "", flags=re.DOTALL).strip()
-    if text.startswith("<think>"):
-        return ""
+    # out of budget while still reasoning, so everything from there on is dropped too.
+    text = re.sub(r"<think>.*?</think>", "", scored_output or "", flags=re.DOTALL)
+    text = text.split("<think>", 1)[0].strip()
     spans = walk_spans(text).spans
     if not spans:
         return text
