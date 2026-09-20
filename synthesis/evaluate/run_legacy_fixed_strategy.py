@@ -673,7 +673,7 @@ def _annotate_legacy_rows_with_syntax(
                 scored_output,
                 example or {},
             )
-            syntax_valid = bool(actual and re.search(r"\bselect\b", actual, flags=re.IGNORECASE))
+            syntax_valid = bool(aux and aux.get("syntax_valid"))  # the Spider output contract's verdict
         else:
             syntax_valid = bool(
                 logic.example_syntax_pass(all_valid, segments, False, None)
@@ -923,7 +923,7 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
 
         syntax_valid, _segments = eval_runtime._check_syntax_validity(scored_output, example=example)
         if dataset == "spider":
-            syntax_valid = bool(actual and re.search(r"\bselect\b", actual, flags=re.IGNORECASE))
+            syntax_valid = bool(aux and aux.get("syntax_valid"))  # the Spider output contract's verdict
         if dataset == "smiles":
             syntax_valid = bool(aux and aux.get("syntax_valid"))
             if syntax_valid and actual:
@@ -1111,7 +1111,7 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
 
         syntax_valid, _segments = eval_runtime._check_syntax_validity(scored_output, example=example)
         if dataset == "spider":
-            syntax_valid = bool(actual and re.search(r"\bselect\b", actual, flags=re.IGNORECASE))
+            syntax_valid = bool(aux and aux.get("syntax_valid"))  # the Spider output contract's verdict
         if dataset == "smiles":
             syntax_valid = bool(aux and aux.get("syntax_valid"))
             if syntax_valid and actual:
@@ -1366,7 +1366,7 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
 
         syntax_valid, _segments = eval_runtime._check_syntax_validity(scored_output, example=example)
         if dataset == "spider":
-            syntax_valid = bool(actual and re.search(r"\bselect\b", actual, flags=re.IGNORECASE))
+            syntax_valid = bool(aux and aux.get("syntax_valid"))  # the Spider output contract's verdict
         if dataset == "smiles":
             syntax_valid = bool(aux and aux.get("syntax_valid"))
             if syntax_valid and actual:
@@ -1622,7 +1622,7 @@ def run_unconstrained_spider_adapter(args: argparse.Namespace) -> int:
         expected = logic.expected_answer(eval_runtime, example)
         actual, _answer_source, aux = logic.extract_actual(eval_runtime, scored_output, example)
         is_correct = bool(logic.is_correct(eval_runtime, actual, expected, example, aux, scored_output))
-        syntax_valid = bool(actual and re.search(r"\bselect\b", actual, flags=re.IGNORECASE))
+        syntax_valid = bool(aux and aux.get("syntax_valid"))  # the Spider output contract's verdict
 
         question = _baseline_row_question("spider", example, expected)
         row_out: dict[str, Any] = {
@@ -1797,7 +1797,7 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
 
         syntax_valid, _segments = eval_runtime._check_syntax_validity(scored_output, example=example)
         if dataset == "spider":
-            syntax_valid = bool(actual and re.search(r"\bselect\b", actual, flags=re.IGNORECASE))
+            syntax_valid = bool(aux and aux.get("syntax_valid"))  # the Spider output contract's verdict
         if dataset == "smiles":
             syntax_valid = bool(aux and aux.get("syntax_valid"))
             if syntax_valid and actual:
