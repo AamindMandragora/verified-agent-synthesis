@@ -269,7 +269,22 @@ def _gcd_generation_kwargs(dataset: str) -> dict[str, Any]:
 
 
 def _crane_stop_words(dataset: str) -> list[str] | None:
-    return [">>"]
+    """Halting generation the moment ``>>`` appears would stop CRANE after its
+    FIRST span, so the model could never return to free text and open a
+    second one -- exactly the "many spans per answer" behaviour Algorithm 1
+    describes. Spider and SMILES answers can need more than one span (a
+    second query attempt, a second candidate molecule after reasoning about
+    why the first is wrong); GSM's answer is one expression, so stopping
+    there is still faithful. Everywhere else, rely on the model's own end
+    token or the token budget (see ``HuggingFaceModel._stop_token_ids`` /
+    ``_generate`` in syncode's ``language_model.py``), same as an unmasked
+    decode. The scorer already takes the LAST closed span
+    (``_span_content_for_scoring`` for Spider, ``_crane_smiles_span`` for
+    SMILES), so a second span is used once the model can produce one.
+    """
+    if dataset == "gsm_symbolic":
+        return [">>"]
+    return None
 
 
 def _crane_generation_kwargs(dataset: str) -> dict[str, Any]:

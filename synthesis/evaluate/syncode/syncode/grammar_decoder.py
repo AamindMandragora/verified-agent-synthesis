@@ -143,8 +143,12 @@ class SyncodeLogitsProcessor(LogitsProcessor):
             self.logger.log(f"Exception while parsing:\n {e}")
             return False
         
-        if input_ids[0, -1] == self.tokenizer.eos_token_id:
-            # Do not allow the model to generate EOS token until $END in the grammar is reached
+        if int(input_ids[0, -1]) in self.eos_token_ids:
+            # Do not allow the model to generate EOS token until $END in the grammar is reached.
+            # Checked against every end token this model has (self.eos_token_ids), not just
+            # self.tokenizer.eos_token_id: a model with two end tokens (Qwen3.5's <|im_end|>
+            # and <|endoftext|>) previously only had this completeness check applied to the
+            # tokenizer's id, so the other one could be accepted mid-parse.
             return AcceptSequence(['$END']) in r.accept_sequences
         
         if r.remainder_state == RemainderState.COMPLETE or r.remainder_state == RemainderState.MAYBE_COMPLETE:

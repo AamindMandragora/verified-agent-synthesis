@@ -421,10 +421,16 @@ def test_spider_renderer_uses_exact_manifest_model_names(model_name):
 
 
 
-def test_crane_uses_the_closing_delimiter_as_its_stop_word():
-    assert _crane_stop_words("smiles") == [">>"]
+def test_crane_stops_at_the_closing_delimiter_only_for_gsm():
+    """GSM's answer is one expression, so stopping at the first ">>" is still
+    faithful. Spider and SMILES can need a second span (a second query
+    attempt, a second candidate molecule); stopping at the first ">>" made
+    the model unable to ever return to free text and open one, so those two
+    rely on the end token / budget instead (``_crane_stop_words`` returning
+    ``None`` means no extra stop word is added on top of that)."""
     assert _crane_stop_words("gsm_symbolic") == [">>"]
-    assert _crane_stop_words("spider") == [">>"]
+    assert _crane_stop_words("smiles") is None
+    assert _crane_stop_words("spider") is None
 
 
 def test_qwen35_spider_adapter_keeps_raw_prompt_for_scoring_and_evidence(
@@ -712,7 +718,10 @@ def test_crane_smiles_samples_with_neutral_reasoning_and_scores_only_inner_span(
         + legacy_runner._CRANE_SMILES_REASON_FIRST
         + "\nMolecule: <<CCO>>\nReasoning:"
     )
-    assert observed["stop_words"] == [">>"]
+    # No stop word on the first ">>": SMILES can need a second span (another
+    # candidate molecule after reasoning about why the first is wrong), so
+    # generation relies on the end token / budget instead.
+    assert observed["stop_words"] is None
     # Only the last span is scored...
     assert observed["extract_input"] == "C=CC(=O)OCC"
     assert observed["syntax_input"] == "C=CC(=O)OCC"
