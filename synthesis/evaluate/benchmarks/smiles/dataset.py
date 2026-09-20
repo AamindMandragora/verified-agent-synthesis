@@ -51,14 +51,39 @@ def normalize_smiles_classes(
     return selected
 
 
-def extract_prompt_exemplars(prompt: str) -> list[str]:
+def extract_prompt_exemplars(prompt: str, grammar_text: str) -> list[str]:
+    """Every molecule this prompt puts in front of the model.
+
+    A baseline that hands back a molecule the prompt already showed it is repeating the
+    prompt, not answering, so the scorer has to know about all of them. Two sources. The
+    labelled ``Molecule: X`` few-shot lines, and every other whitespace-separated word in
+    the prompt that both the class grammar and RDKit accept as a molecule. The second
+    source exists because the instruction line the harness appends carries a molecule
+    inline, as "(example: CC(=O)OC=C)"; scanning words rather than matching that exact
+    wording keeps the list correct if the wording ever moves.
+
+    Scanning cannot forbid an answer the prompt never showed unless ordinary English in
+    the prompt happens to parse as a molecule. Checked on all three shipped prompts on
+    2026-09-20: the scan adds exactly ``CC(=O)OC=C`` and nothing else.
+    """
+    from synthesis.evaluate.benchmarks.smiles.metrics import grammar_valid, rdkit_valid
+
     exemplars: list[str] = []
+    seen: set[str] = set()
+
+    def _keep(value: str) -> None:
+        if value and value not in seen:
+            seen.add(value)
+            exemplars.append(value)
+
     for line in prompt.splitlines():
         line = line.strip()
         if line.startswith("Molecule:"):
-            value = line.split(":", 1)[1].strip()
-            if value:
-                exemplars.append(value)
+            _keep(line.split(":", 1)[1].strip())
+    for word in prompt.split():
+        for candidate in (word.strip(".,;:!?"), word.strip(".,;:!?()")):
+            if candidate and grammar_valid(candidate, grammar_text) and rdkit_valid(candidate):
+                _keep(candidate)
     return exemplars
 
 
@@ -78,7 +103,7 @@ def get_smiles_task(class_name: str) -> Dict[str, Any]:
         "grammar_path": grammar_path,
         "grammar_text": grammar_text,
         "prompt_path": prompt_path,
-        "prompt_exemplars": extract_prompt_exemplars(prompt),
+        "prompt_exemplars": extract_prompt_exemplars(prompt, grammar_text),
     }
 
 

@@ -276,6 +276,23 @@ def _baseline_row_question(dataset: str, example: dict[str, Any], fallback: str)
     return str(example.get("question") or example.get("prompt") or fallback)
 
 
+def _refresh_smiles_prompt_exemplars(example: dict[str, Any], prompt: Any) -> None:
+    """Rebuild the SMILES exclusion list from the prompt the model is about to see.
+
+    The list built at dataset load only covers the few-shot file. The instruction line
+    the harness appends shows one more molecule inline, and CARS's rolling suffix adds
+    the ones this run already accepted; a baseline that copies any of them back is
+    repeating the prompt. Non-SMILES examples carry no ``grammar_text`` and are left
+    alone.
+    """
+    from synthesis.evaluate.benchmarks.smiles.dataset import extract_prompt_exemplars
+
+    grammar_text = example.get("grammar_text")
+    if not grammar_text or not example.get("class_name") or not isinstance(prompt, str):
+        return
+    example["prompt_exemplars"] = extract_prompt_exemplars(prompt, str(grammar_text))
+
+
 def _legacy_benchmark_prompt(
     logic: Any,
     evaluator: Any,
@@ -294,15 +311,16 @@ def _legacy_benchmark_prompt(
         other legacy adapters stringify them at their existing raw-text boundary.
     """
     if profile == "evaluator_default":
-        return logic.format_prompt(evaluator, example)
-    if profile == "expression_only":
-        return logic.format_prompt_expression_only(evaluator, example)
-    if profile == "chain_of_thought":
+        prompt = logic.format_prompt(evaluator, example)
+    elif profile == "expression_only":
+        prompt = logic.format_prompt_expression_only(evaluator, example)
+    elif profile == "chain_of_thought":
         cot = getattr(logic, "format_prompt_chain_of_thought", None)
-        if callable(cot):
-            return cot(evaluator, example)
-        return logic.format_prompt(evaluator, example)
-    raise ValueError(f"Unknown legacy prompt profile: {profile}")
+        prompt = cot(evaluator, example) if callable(cot) else logic.format_prompt(evaluator, example)
+    else:
+        raise ValueError(f"Unknown legacy prompt profile: {profile}")
+    _refresh_smiles_prompt_exemplars(example, prompt)
+    return prompt
 
 
 def _cars_prompt_profile(dataset: str) -> str:
@@ -2480,7 +2498,11 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
     protocol).  Temperature 0.8 gives diversity; greedy would repeat the same
     molecule every time.
     """
-    from synthesis.evaluate.benchmarks.smiles.dataset import SMILES_CLASSES, get_smiles_task
+    from synthesis.evaluate.benchmarks.smiles.dataset import (
+        SMILES_CLASSES,
+        extract_prompt_exemplars,
+        get_smiles_task,
+    )
     from synthesis.evaluate.benchmarks.smiles.metrics import (
         clean_smiles_output,
         evaluate_smiles_output,
@@ -2537,15 +2559,19 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
         task = get_smiles_task(class_name)
         base_prompt = task["prompt"]
         grammar_text = str(task["grammar_text"])
-        prompt_exemplars = list(task.get("prompt_exemplars", []))
-        seen_per_class[class_name] = set(prompt_exemplars)
         seed_prompt = _unconstrained_smiles_seed_prompt(base_prompt)
         running_prompt = seed_prompt
+        seen_per_class[class_name] = set(
+            extract_prompt_exemplars(seed_prompt, grammar_text)
+        )
 
         for _i in range(draw_start, draw_end):
             # Seed by the global draw index, same formula as the other SMILES baselines.
             draw_seed = int(os.environ.get("CSD_PARITY_SEED", 1234)) + _i * 1_000_003
             running_prompt = _truncate_prompt(running_prompt, seed_prompt)
+            # Built from the prompt this draw actually sends, so the molecules the
+            # rolling suffix has added since the seed prompt are excluded too.
+            prompt_exemplars = extract_prompt_exemplars(running_prompt, grammar_text)
             if not rows:
                 _log_lane_header(
                     tag,
