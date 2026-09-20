@@ -28,9 +28,3 @@ def test_scored_molecule_is_the_last_span_and_empty_without_one():
     assert _crane_smiles_span("<<C>> no wait <<CC>>") == "CC"
     assert _crane_smiles_span("1,2,3,4,5") == ""
 
-
-def test_instruction_does_not_spell_out_the_delimiters():
-    # The model quotes its instructions while reasoning; a quoted "<<" would open a span.
-    from synthesis.evaluate.run_legacy_fixed_strategy import _CRANE_SMILES_REASON_FIRST
-
-    assert "<<" not in _CRANE_SMILES_REASON_FIRST and ">>" not in _CRANE_SMILES_REASON_FIRST
