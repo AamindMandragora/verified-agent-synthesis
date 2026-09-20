@@ -141,12 +141,16 @@ class HuggingFaceModel:
                 if not batch_size == 1:
                     print("WARNING: Opportunistic mode requires batch_size of 1.")
             # Use generate from transformers library for other modes
+            # The hand-written loop above stops on every id in ``_stop_token_ids``; tell
+            # HuggingFace's generate the same set, or a model whose second end token is
+            # not in its generation config keeps emitting that token until the budget
+            # runs out. A caller that names its own end tokens still wins.
             generated_ids = self.model.generate(
                 **inputs, 
                 logits_processor=self.grammar_processor, 
                 stop_strings=stop_words,
                 tokenizer=self.tokenizer,
-                **self.gen_args
+                **{'eos_token_id': sorted(self._stop_token_ids), **self.gen_args}
                 )
         batch_completions = []
 
