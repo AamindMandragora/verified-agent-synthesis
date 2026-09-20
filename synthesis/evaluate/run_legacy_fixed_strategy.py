@@ -2580,6 +2580,16 @@ def _hf_stop_reason(new_ids: Any, *, end_token_ids: Any, max_new_tokens: int, ot
     return f"hf:{other if end['stop_reason'] == 'unknown' else end['stop_reason']}"
 
 
+# One draw is one line. The shared SMILES prompt asks for "exactly one line containing
+# the SMILES molecule" and then leaves a bare "Molecule: " for the model to finish, and
+# GCD, which sends this same prompt, gets one molecule per draw because its grammar ends
+# the generation there. Stopping at a blank line instead let one unconstrained draw write
+# a whole list, and the scorer keeps the text after the last "Molecule:" -- so that draw
+# quietly got one try per line. The 2026-09-20 acrylates trace has a 352-token draw of
+# about fifteen molecules scored on its last one.
+_UNCONSTRAINED_SMILES_STOP = ["\n"]
+
+
 def _unconstrained_smiles_seed_prompt(base_prompt: str) -> str:
     """Same expression-only framing GCD uses for SMILES (2026-09-20 baseline repair,
     item 5) -- the CARS paper's own few-shot files already say "a single SMILES
@@ -2679,7 +2689,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
                     "smiles",
                     prompt=running_prompt,
                     end_token_ids=(
-                        "vllm default end tokens + stop strings ['\\n\\n']"
+                        "vllm default end tokens + stop strings ['\\n']"
                         if args.eval_backend == "vllm"
                         else hf_end_token_ids
                     ),
@@ -2689,7 +2699,12 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
                 from vllm import SamplingParams as _SP
 
                 gen_started = time.perf_counter()
-                sp = _SP(max_tokens=args.eval_max_steps, temperature=0.8, stop=["\n\n"], seed=draw_seed)
+                sp = _SP(
+                    max_tokens=args.eval_max_steps,
+                    temperature=0.8,
+                    stop=_UNCONSTRAINED_SMILES_STOP,
+                    seed=draw_seed,
+                )
                 outputs = llm.generate([running_prompt], sp)
                 gen_seconds = time.perf_counter() - gen_started
                 completion = outputs[0].outputs[0]
@@ -2704,6 +2719,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
                     out_ids = model.generate(
                         **inputs, max_new_tokens=args.eval_max_steps,
                         do_sample=True, temperature=0.8,
+                        stop_strings=_UNCONSTRAINED_SMILES_STOP, tokenizer=tokenizer,
                     )
                 gen_seconds = time.perf_counter() - gen_started
                 new_ids = out_ids[0][inputs["input_ids"].shape[1]:]
