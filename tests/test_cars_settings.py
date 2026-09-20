@@ -197,7 +197,17 @@ def test_smiles_cars_caps_at_10x_target_when_nothing_ever_validates(monkeypatch,
         molecule_sequence=["N=C=O"],
         invalid_molecules={"N=C=O"},
     )
-    # target 1 * cap multiplier 10 = 10 draws, then give up.
+    # target 1 * cap multiplier 10 = 10 draws, then give up. None of them is a
+    # molecule, so the run collected none of the N it was asked for: no scored rows,
+    # and the draws it spent are recorded as metadata instead.
     assert len(FakeCARSRunner.calls) == 10
-    assert len(result["answers"]) == 10
+    assert result["answers"] == []
     assert result["accuracy"] == 0.0
+    assert result["metrics"]["cars_smiles_draws_by_class"]["isocyanates"] == {
+        "target": 1,
+        "draw_cap": 10,
+        "draws": 10,
+        "rejected_draws": 10,
+        "duplicate_draws": 0,
+        "scored_unique_molecules": 0,
+    }

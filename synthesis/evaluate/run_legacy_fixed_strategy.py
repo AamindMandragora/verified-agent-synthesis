@@ -958,6 +958,24 @@ def _cars_max_new_tokens(dataset: str, eval_max_steps: int) -> int:
     return max(32, int(eval_max_steps))
 
 
+def _cars_smiles_draw_verdict(
+    molecule: str, syntax_valid: bool, is_prompt_exemplar: bool, molecules_seen: set[str]
+) -> str:
+    """Whether a CARS SMILES draw earns a scored row: accepted, duplicate or rejected.
+
+    The CARS paper (arXiv 2510.01902, Appendix C) collects N unique in-grammar molecules
+    and reports how many of them belong to the target class. So a draw earns a row by
+    being a molecule at all: non-empty, in-grammar, chemically valid, new, and not one
+    the prompt already showed. Class membership is deliberately not part of that test,
+    because it is what the accuracy over these rows measures; gating entry on it would
+    make every run score 1.0. A repeat is a draw the run spent, not a second answer to
+    average in.
+    """
+    if not molecule or not syntax_valid or is_prompt_exemplar:
+        return "rejected"
+    return "duplicate" if molecule in molecules_seen else "accepted"
+
+
 def _cars_smiles_class_targets(examples: list[dict[str, Any]]) -> dict[str, int]:
     """One draw target per class: however many rows the dataset sample already
     allocated to that class (so sharded lanes keep drawing shard-sized targets)."""
@@ -1138,6 +1156,7 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
 
     rows: list[dict[str, Any]] = []
     smiles_prompt_suffix: dict[str, str] = {}
+    smiles_draw_metrics: dict[str, dict[str, int]] = {}
     grammar_cache: dict[str, Any] = {}
     n_steps = max(1, int(getattr(args, "cars_search_steps", 200)))
     max_new_tokens = _cars_max_new_tokens(dataset, args.eval_max_steps)
@@ -1160,8 +1179,15 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
     if dataset == "spider":
         spider_cars_grammar = (repo_root / "synthesis" / "evaluate" / "grammars" / "sql.lark").read_text()
 
-    def _cars_draw(_ex_i: int, example: dict[str, Any]) -> tuple[str, bool, bool]:
-        """Run one CARS draw for ``example``, append its row, return (actual, syntax_valid, is_correct)."""
+    lane_header_logged = False
+
+    def _cars_draw(_ex_i: int, example: dict[str, Any]) -> tuple[str, bool, bool, dict[str, Any]]:
+        """Run one CARS draw for ``example``; return (actual, syntax_valid, is_correct, row).
+
+        The caller decides whether the row is scored: outside SMILES every draw is one
+        example and every row counts, while SMILES scores unique accepted molecules only.
+        """
+        nonlocal lane_header_logged
         _maybe_reseed_parity_example(_ex_i)
         os.environ["CSD_PARITY_EXAMPLE_INDEX"] = str(_ex_i)
         if dataset == "gsm_symbolic":
@@ -1187,7 +1213,8 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
         )
         if dataset == "spider":
             prompt = str(prompt)
-        if not rows:
+        if not lane_header_logged:
+            lane_header_logged = True
             _log_lane_header(
                 "legacy-cars",
                 dataset,
@@ -1252,33 +1279,34 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
             _clip(raw_cars_text),
             _clip(scored_output),
         )
-        question = _baseline_row_question(dataset, example, expected)
-        rows.append(
-            {
-                "question": question,
-                "llm_response": completion,
-                "prompt_used": prompt,
-                "correct": bool(is_correct),
-                "syntax_valid": bool(syntax_valid),
-                "generation_seconds": gen_seconds,
-            }
-        )
+        row = {
+            "question": _baseline_row_question(dataset, example, expected),
+            "llm_response": completion,
+            "prompt_used": prompt,
+            "correct": bool(is_correct),
+            "syntax_valid": bool(syntax_valid),
+            "generation_seconds": gen_seconds,
+        }
+        return str(actual or ""), bool(syntax_valid), bool(aux and aux.get("is_prompt_exemplar")), row
+
+    def _score_row(row: dict[str, Any]) -> None:
+        rows.append(row)
         _write_cars_partial_json(
             rows,
             args.output_json,
             run_wall_time_seconds=time.perf_counter() - run_started,
             extra_metrics=slice_metrics,
         )
-        return str(actual or ""), bool(syntax_valid), bool(is_correct)
 
     if dataset == "smiles":
-        # CARS paper protocol (arXiv 2510.01902): draw until the target number of
-        # unique in-grammar molecules is reached (prompt exemplars excluded, and
-        # excluding molecules this run already accepted for the same class),
-        # capped at 10x the target so a class that never validates cannot spin
-        # forever. The target per class is however many rows the sliced dataset
-        # sample already allocated to it, so sharded lanes keep drawing
-        # shard-sized targets.
+        # CARS paper protocol (arXiv 2510.01902, Appendix C): draw until the target
+        # number of unique in-grammar molecules is reached (prompt exemplars excluded,
+        # and excluding molecules this run already accepted for the same class), capped
+        # at 10x the target so a class that never validates cannot spin forever. Only
+        # those unique accepted molecules are scored; a repeat or a rejected draw is a
+        # draw the run spent, counted in the metrics below rather than averaged into
+        # accuracy. The target per class is however many rows the sliced dataset sample
+        # already allocated to it, so sharded lanes keep drawing shard-sized targets.
         class_templates: dict[str, dict[str, Any]] = {}
         for ex in examples:
             class_templates.setdefault(str(ex.get("class_name", "")), ex)
@@ -1291,34 +1319,52 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
             accepted_molecules: set[str] = set()
             class_draws = 0
             class_rejected = 0
+            class_duplicates = 0
             for _draw in range(max_draws):
                 if len(accepted_molecules) >= target:
                     break
                 _ex_i += 1
                 class_draws += 1
-                actual, syntax_valid, is_correct = _cars_draw(_ex_i, dict(template))
-                if syntax_valid and is_correct and actual:
+                actual, syntax_valid, is_exemplar, row = _cars_draw(_ex_i, dict(template))
+                verdict = _cars_smiles_draw_verdict(
+                    actual, syntax_valid, is_exemplar, accepted_molecules
+                )
+                if verdict == "accepted":
                     accepted_molecules.add(actual)
+                    _score_row(row)
+                elif verdict == "duplicate":
+                    class_duplicates += 1
                 else:
                     class_rejected += 1
+            smiles_draw_metrics[cls] = {
+                "target": target,
+                "draw_cap": max_draws,
+                "draws": class_draws,
+                "rejected_draws": class_rejected,
+                "duplicate_draws": class_duplicates,
+                "scored_unique_molecules": len(accepted_molecules),
+            }
             LOGGER.info(
                 "[legacy-cars] class=%s dataset=smiles target=%d draw_cap=%d draws=%d rejected=%d "
-                "accepted_unique=%d stop_reason=%s",
+                "duplicates=%d accepted_unique=%d stop_reason=%s",
                 cls,
                 target,
                 max_draws,
                 class_draws,
                 class_rejected,
+                class_duplicates,
                 len(accepted_molecules),
                 "target_reached" if len(accepted_molecules) >= target else "draw_cap_10x",
             )
     else:
         for _ex_i, example in enumerate(examples):
-            _cars_draw(_ex_i, example)
+            _score_row(_cars_draw(_ex_i, example)[3])
+    total_draws = sum(m["draws"] for m in smiles_draw_metrics.values()) or len(rows)
     LOGGER.info(
-        "[legacy-cars] summary dataset=%s draws=%d tries=%d rejected_tries=%d "
+        "[legacy-cars] summary dataset=%s draws=%d scored_rows=%d tries=%d rejected_tries=%d "
         "draws_hitting_try_cap=%d search_steps_cap=%d",
         dataset,
+        total_draws,
         len(rows),
         try_totals["tries"],
         try_totals["rejected_tries"],
@@ -1326,14 +1372,20 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
         n_steps,
     )
 
-    if not rows:
+    if not rows and not smiles_draw_metrics:
         raise RuntimeError("CARS produced no rows; refusing to write an empty baseline JSON")
+    # A SMILES run that drew its whole cap without one molecule surviving the checks has
+    # a real result -- zero of the N it was asked for -- so it writes a JSON scoring 0.0
+    # with the draw counts attached, rather than looking like a crashed run.
 
+    final_metrics = dict(slice_metrics or {})
+    if smiles_draw_metrics:
+        final_metrics["cars_smiles_draws_by_class"] = smiles_draw_metrics
     _build_minimal_json(
         rows,
         args.output_json,
         run_wall_time_seconds=time.perf_counter() - run_started,
-        extra_metrics=slice_metrics,
+        extra_metrics=final_metrics,
     )
     try:
         _cars_partial_json_path(args.output_json).unlink()
