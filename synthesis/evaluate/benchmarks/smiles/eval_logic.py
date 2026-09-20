@@ -138,7 +138,9 @@ def is_correct(
     aux: dict[str, Any] | None,
     scored_output: str,
 ) -> bool:
-    return bool(aux and aux.get("unique_valid_candidate"))
+    from synthesis.evaluate.benchmarks.smiles.metrics import molecule_is_correct
+
+    return molecule_is_correct(aux)
 
 
 def force_open_span() -> bool:

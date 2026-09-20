@@ -2739,6 +2739,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
     from synthesis.evaluate.benchmarks.smiles.metrics import (
         clean_smiles_output,
         evaluate_smiles_output,
+        molecule_is_correct,
     )
 
     run_started = time.perf_counter()
@@ -2892,9 +2893,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
             row_out: dict[str, Any] = {
                 "question": class_name,
                 "llm_response": gen_text,
-                "correct": bool(
-                    is_novel and smiles_eval.get("class_membership")
-                ),
+                "correct": molecule_is_correct(smiles_eval),
                 "syntax_valid": bool(smiles_eval.get("syntax_valid", False)),
                 "generation_seconds": gen_seconds,
             }

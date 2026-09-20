@@ -134,6 +134,19 @@ def evaluate_smiles_output(
     }
 
 
+def molecule_is_correct(smiles_eval: Dict[str, Any] | None) -> bool:
+    """The one rule every SMILES lane scores a row by.
+
+    A row counts only when the molecule is non-empty, parses under the class
+    grammar, is chemically valid, carries the class motif, and is not one of the
+    molecules the prompt already showed. This is what our own method's evaluator
+    has always asked for, so the baselines ask for it too and the numbers sit on
+    one scale. CARS is the exception: its rows are the unique accepted molecules
+    its own paper scores.
+    """
+    return bool(smiles_eval and smiles_eval.get("unique_valid_candidate"))
+
+
 def _morgan_fingerprint(smiles: str):
     if not _rdkit_similarity_available() or not smiles:
         return None
