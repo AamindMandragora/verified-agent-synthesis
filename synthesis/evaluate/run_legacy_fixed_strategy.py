@@ -339,8 +339,18 @@ def _gcd_prompt_profile(dataset: str) -> str:
     return "expression_only"
 
 
-def _render_gsm_chat_prompt(tokenizer: Any, messages: list[dict]) -> str:
-    """Render GSM chat messages exactly as every other GSM lane does (see generation.py)."""
+def _render_chat_prompt(tokenizer: Any, messages: Any) -> str:
+    """Render a lane's task as one chat turn with thinking off, as generation.py does.
+
+    Qwen3.5 only ends an answer at the end of an assistant turn. Handed bare few-shot
+    text it keeps writing, and a grammar-masked lane then runs to its token cap:
+    measured on Qwen3.5-2B after the complete acrylate "CCCCCOC(=O)C=C", the end token
+    sits at logit 14.94 behind "." at 15.69, and mid-molecule at 12.94 behind "(" at
+    19.00. The same task as a chat turn puts the end token on top at 23.12. A plain
+    string is the single user message; a list is already messages.
+    """
+    if isinstance(messages, str):
+        messages = [{"role": "user", "content": messages}]
     try:
         return tokenizer.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
@@ -1548,9 +1558,11 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
 
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, _gcd_prompt_profile(dataset))
         if dataset == "gsm_symbolic":
-            prompt = _render_gsm_chat_prompt(gsm_tokenizer, prompt)
+            prompt = _render_chat_prompt(gsm_tokenizer, prompt)
         if dataset == "spider":
             prompt = _spider_generation_prompt(prompt, sc.model.tokenizer, args.eval_model)
+        if dataset == "smiles":
+            prompt = _render_chat_prompt(sc.model.tokenizer, prompt)
         gen_started = time.perf_counter()
         gcd_prompt = _gcd_prompt(prompt)
         if not rows:

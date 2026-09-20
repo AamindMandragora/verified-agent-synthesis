@@ -25,6 +25,11 @@ def test_smiles_sampling_reaches_syncode_constructor(monkeypatch, tmp_path: Path
     class FakeSyncode:
         def __init__(self, **kwargs):
             constructor_kwargs.append(kwargs)
+            from transformers import AutoTokenizer
+
+            self.model = types.SimpleNamespace(
+                tokenizer=AutoTokenizer.from_pretrained("Qwen/Qwen3.5-2B", trust_remote_code=True)
+            )
 
         def infer(self, prompt, stop_words):
             return ["C=C"]

@@ -55,6 +55,16 @@ def test_the_shared_helper_refuses_already_flattened_text(tokenizer) -> None:
         lane_module._spider_generation_prompt(SpiderPromptParts(TASK).raw_text, tokenizer, MODEL)
 
 
+def test_gcd_renders_the_smiles_task_as_a_chat_turn(tokenizer) -> None:
+    rendered = lane_module._render_chat_prompt(tokenizer, "Molecule: CCCOC(=O)C=C\nMolecule: ")
+
+    assert "<|im_start|>assistant" in rendered
+    assert "</think>" in rendered
+    assert "GCD renders the SMILES prompt" and 'if dataset == "smiles":\n            prompt = _render_chat_prompt(' in inspect.getsource(
+        lane_module.run_gcd_legacy_adapter
+    )
+
+
 @pytest.mark.parametrize("lane", LANES)
 def test_each_spider_lane_uses_the_shared_helper(lane: str) -> None:
     source = inspect.getsource(getattr(lane_module, lane))
