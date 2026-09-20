@@ -1,0 +1,63 @@
+# Reproducible diff of the IterGen-only GSM-Symbolic prompt reword.
+# Applies against a pristine copy of ~/csd-generation-worktrees/CRANE-official-copy
+# (the authors' CRANE repo, kept as a plain copy, not under git).
+# Apply with: patch -p1 -d ~/csd-generation-worktrees/CRANE-official-copy < gsm_itergen_prompt.diff
+# (after adjusting the a/ b/ path prefixes below to your CRANE copy's src/ dir).
+
+--- a/src/prompt_templates/gsm_symbolic.yaml
++++ b/src/prompt_templates/gsm_symbolic.yaml
+@@ -40,6 +40,13 @@
+ 
+       You will always respond in the format described below: 
+       Let's think step by step. <reasoning> The final answer is [[START]]symbolic expression[[END]]
++    gsm-itergen: |
++      Before answering you should reason about the problem (write your reasoning in plain sentences first). Intermediate symbolic expressions generated during reasoning should be wrapped in [[START]] [[END]].
++      
++      Then, output the symbolic expression wrapped in [[START]] [[END]] that answers the question. The expressions must use numbers as well as the variables defined in the question. You are only allowed to use the following operations: +, -, /, //, %, (), and int().
++
++      You will always respond in the format described below: 
++      Let's think step by step. Write out your reasoning here, then finish with: The final answer is [[START]]symbolic expression[[END]]
+ fewshots:
+   std:
+     text:
+@@ -139,7 +146,7 @@
+ 
+       - question: "{p1} has ${m}. {p1} bought {q} {o1} for ${p} each. How much money does {p1} have left?"
+         response: "Let's think step by step. Initially, {p1} had ${m}. {p1} spent [[START]]q * p[[END]] on {q} {o1}. The remaining money is [[START]]m - q * p[[END]]. The final answer is [[START]]m - q * p[[END]]."
+-    gsm:
++    gsm: &gsm_itergen_fewshots
+       - question: "There are {t} trees in the {g}. {g} workers will plant trees in the {g} today. After they are done, there will be {tf} trees. How many trees did the {g} workers plant today?"
+         response: "Let's think step by step. Initially, there are {t} trees. After planting, there are {tf} trees. The number of trees planted is [[START]]tf - t[[END]]. The final answer is [[START]]tf - t[[END]]."
+ 
+@@ -162,4 +169,5 @@
+         response: "Let's think step by step. Initially, {p1} had {gb1} {o1}. After losing {l1} {o1} on {day1}, {p1} had [[START]]gb1 - l1[[END]]. After losing {l2} {o1} on {day2}, the total is [[START]]gb1 - l1 - l2[[END]]. The final answer is [[START]]gb1 - l1 - l2[[END]]."
+ 
+       - question: "{p1} has ${m}. {p1} bought {q} {o1} for ${p} each. How much money does {p1} have left?"
+-        response: "Let's think step by step. Initially, {p1} had ${m}. {p1} spent [[START]]q * p[[END]] on {q} {o1}. The remaining money is [[START]]m - q * p[[END]]. The final answer is [[START]]m - q * p[[END]]."
+\ No newline at end of file
++        response: "Let's think step by step. Initially, {p1} had ${m}. {p1} spent [[START]]q * p[[END]] on {q} {o1}. The remaining money is [[START]]m - q * p[[END]]. The final answer is [[START]]m - q * p[[END]]."
++    gsm-itergen: *gsm_itergen_fewshots
+
+--- a/src/main.py
++++ b/src/main.py
+@@ -491,7 +491,19 @@
+                     instruct_type = "text-gsm"
+                 else:
+                     instruct_type = args.out_grammar if args.out_grammar in {"text", "gsm"} else "gsm"
+-        
++
++        # IterGen-only reword: Qwen3.5 under IterGen copies the authors' literal
++        # "<reasoning>" placeholder into the grammar-constrained answer span
++        # (observed as the completion "<<reasoning>>" on 9/10 GSM-Symbolic
++        # examples). This routes ONLY the itergen lane to a dedicated
++        # cot_instruct/fewshots key ("gsm-itergen") that rewords the placeholder
++        # away while keeping every other sentence and rule, and the
++        # [[START]]/[[END]] markers, unchanged. The crane (adaptive) and
++        # unconstrained (original) lanes are untouched and keep reading the
++        # authors' original "gsm" key byte for byte.
++        if args.do_cot and args.cot_grammar_mode == "itergen":
++            instruct_type = "gsm-itergen"
++
+     prompt_fn = BasePrompter(dataset = args.dataset, do_cot= args.do_cot, instruct_type= instruct_type, num_shots= args.num_shots)
+ 
+     parse_fn = PARSE_MAP[args.dataset][args.out_grammar](dataset = args.dataset, do_cot= args.do_cot,
