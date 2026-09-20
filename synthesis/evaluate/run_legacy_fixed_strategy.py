@@ -2038,6 +2038,53 @@ def _itergen_generate_spider(
     return completion
 
 
+def _itergen_model_ended_the_molecule(iter_gen: Any) -> bool:
+    """True once the model itself ended the molecule.
+
+    ``forward(units=["smiles"], num=1)`` returns as soon as the parser closes one
+    ``smiles`` symbol, and the SMILES grammars close one at the end of every
+    parenthesised branch as well as at the end of the molecule. So a single call normally
+    lands mid-molecule: the 2026-09-20 trace accepted ``C=CC(=O)``, which is a branch
+    close, not an acrylate. An ending is the model's own end token, or the parser closing
+    the grammar's ``start`` symbol.
+
+    Running out of token budget is neither, although ``finished()`` reports it. Treating
+    a capped generation as an ending would accept exactly the kind of cut-off prefix this
+    guards against, so the conservative reading wins: the text is handed back unchecked
+    and the scorer judges it, the same way every other lane treats a capped generation.
+    """
+    if not iter_gen.finished():
+        return False
+    ids = _itergen_generated_token_ids(iter_gen)
+    if not ids:
+        return True
+    budget = getattr(getattr(iter_gen, "generation_config", None), "max_new_tokens", None)
+    if budget is None or len(ids) < int(budget):
+        return True
+    stop_ids = _itergen_generation_stop_token_ids(iter_gen, getattr(iter_gen, "tokenizer", None))
+    return bool(stop_ids) and int(ids[-1]) in stop_ids
+
+
+def _itergen_forward_to_molecule_end(
+    iter_gen: Any, *, tag: str, iteration: int, forward_cap: int
+) -> tuple[str, bool]:
+    """Keep forwarding until the model ends the molecule. Returns the text and whether it
+    did. ``forward_cap`` is the session's remaining token budget, which every call spends
+    at least one of, so it cannot cut short a molecule the budget would have allowed."""
+    completion = ""
+    for _ in range(forward_cap):
+        generated = iter_gen.forward(units=["smiles"], num=1)
+        completion = str(generated[0]) if isinstance(generated, list) and generated else str(generated)
+        _log_itergen_forward(
+            tag, iter_gen, iteration=iteration, units=["smiles"], num=1, completion=completion
+        )
+        if _itergen_model_ended_the_molecule(iter_gen):
+            return completion, True
+        if iter_gen.finished():
+            return completion, False
+    return completion, False
+
+
 def _itergen_generate_smiles(
     iter_gen: Any,
     prompt: Any,
@@ -2047,12 +2094,15 @@ def _itergen_generate_smiles(
     max_iterations: int = 20,
     backwards_limit: int = 10,
 ) -> str:
-    """Per-molecule IterGen loop: forward one molecule, check RDKit validity and
-    uniqueness (not a prompt exemplar, not already accepted this run), backward and
-    retry -- bounded by ``backwards_limit`` -- on failure. Same forward/check/backward
-    shape as ``_itergen_generate_spider``, adapted to SMILES since the IterGen paper
-    has no molecule case study of its own (2026-09-20 baseline repair, item 7; our
-    own adaptation, not something the IterGen authors defined).
+    """Per-molecule IterGen loop: forward until the model ends a molecule, check RDKit
+    validity and uniqueness (not a prompt exemplar, not already accepted this run),
+    backward and retry -- bounded by ``backwards_limit`` -- on failure. Same
+    forward/check/backward shape as ``_itergen_generate_spider``, adapted to SMILES since
+    the IterGen paper has no molecule case study of its own (2026-09-20 baseline repair,
+    item 7; our own adaptation, not something the IterGen authors defined).
+
+    ``max_iterations`` counts molecule attempts, not ``forward()`` calls: one attempt
+    takes as many calls as the grammar's nested ``smiles`` symbols need.
 
     ``seen`` is mutated in place with the accepted molecule, mirroring how the other
     SMILES adapters track already-accepted molecules across a rolling multi-draw run.
@@ -2066,22 +2116,25 @@ def _itergen_generate_smiles(
     iter_gen.start(prompt)
     class_name = str(example.get("class_name", ""))
     grammar_text = str(example.get("grammar_text", ""))
-    generated: Any = ""
+    completion = ""
     num_backwards = 0
     iterations = 0
     loop_exit: str | None = None
+    budget = getattr(getattr(iter_gen, "generation_config", None), "max_new_tokens", None)
+    forward_cap = max(1, int(budget)) if budget else max_iterations
     _log_itergen_start(
         tag,
         iter_gen,
         detail=f"class={class_name} max_iterations={max_iterations} backwards_limit={backwards_limit}",
     )
-    while not iter_gen.finished() and iterations < max_iterations:
+    while iterations < max_iterations:
         iterations += 1
-        generated = iter_gen.forward(units=["smiles"], num=1)
-        completion = str(generated[0]) if isinstance(generated, list) and generated else str(generated)
-        _log_itergen_forward(
-            tag, iter_gen, iteration=iterations, units=["smiles"], num=1, completion=completion
+        completion, model_ended = _itergen_forward_to_molecule_end(
+            iter_gen, tag=tag, iteration=iterations, forward_cap=forward_cap
         )
+        if not model_ended:
+            loop_exit = "budget_ran_out_before_the_model_ended_the_molecule"
+            break
         cleaned = clean_smiles_output(completion)
         smiles_eval = evaluate_smiles_output(
             class_name=class_name,
@@ -2125,10 +2178,6 @@ def _itergen_generate_smiles(
             count=num_backwards,
         )
 
-    if isinstance(generated, list):
-        completion = str(generated[0]) if generated else ""
-    else:
-        completion = str(generated)
     _log_itergen_finish(
         tag,
         iter_gen,
