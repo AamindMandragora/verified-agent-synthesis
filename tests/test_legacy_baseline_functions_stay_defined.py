@@ -44,7 +44,9 @@ REQUIRED_FUNCTION_NAMES = [
     # Added by the 2026-09-20 baseline repair batch (items 1-2): guard these
     # too, so a future whole-file copy cannot silently drop them either.
     "_gcd_prompt_profile",
-    "_render_gsm_chat_prompt",
+    # Renamed on 2026-09-20: the same helper now renders the GSM and the
+    # SMILES task, so it is no longer GSM-only.
+    "_render_chat_prompt",
     "_cars_max_new_tokens",
     "_cars_smiles_class_targets",
     "_unconstrained_smiles_seed_prompt",

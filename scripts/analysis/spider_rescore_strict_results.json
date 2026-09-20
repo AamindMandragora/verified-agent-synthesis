@@ -1,0 +1,144 @@
+{
+  "unconstrained-2b": {
+    "status": "ok",
+    "n": 300,
+    "stored_acc_mean": 0.22,
+    "stored_syn_mean": 0.6466666666666667,
+    "strict_acc": 0.21666666666666667,
+    "strict_syn": 0.5866666666666667,
+    "top_reasons": [
+      [
+        "empty",
+        110
+      ],
+      [
+        "invalid_or_non_bare_sql",
+        14
+      ]
+    ]
+  },
+  "unconstrained-4b": {
+    "status": "ok",
+    "n": 300,
+    "stored_acc_mean": 0.5266666666666666,
+    "stored_syn_mean": 0.9900000000000001,
+    "strict_acc": 0.53,
+    "strict_syn": 0.9833333333333333,
+    "top_reasons": [
+      [
+        "invalid_or_non_bare_sql",
+        5
+      ]
+    ]
+  },
+  "crane-2b": {
+    "status": "ok",
+    "n": 300,
+    "stored_acc_mean": 0.20666666666666667,
+    "stored_syn_mean": 0.6100000000000001,
+    "strict_acc": 0.20666666666666667,
+    "strict_syn": 0.5866666666666667,
+    "top_reasons": [
+      [
+        "empty",
+        118
+      ],
+      [
+        "invalid_or_non_bare_sql",
+        6
+      ]
+    ]
+  },
+  "crane-4b": {
+    "status": "ok",
+    "n": 300,
+    "stored_acc_mean": 0.52,
+    "stored_syn_mean": 0.9933333333333334,
+    "strict_acc": 0.52,
+    "strict_syn": 0.9833333333333333,
+    "top_reasons": [
+      [
+        "invalid_or_non_bare_sql",
+        5
+      ]
+    ]
+  },
+  "gcd-2b": {
+    "status": "ok",
+    "n": 300,
+    "stored_acc_mean": 0.15333333333333332,
+    "stored_syn_mean": 0.5299999999999999,
+    "strict_acc": 0.15333333333333332,
+    "strict_syn": 0.51,
+    "top_reasons": [
+      [
+        "empty",
+        139
+      ],
+      [
+        "invalid_or_non_bare_sql",
+        8
+      ]
+    ]
+  },
+  "gcd-4b": {
+    "status": "ok",
+    "n": 300,
+    "stored_acc_mean": 0.2833333333333333,
+    "stored_syn_mean": 1.0,
+    "strict_acc": 0.2833333333333333,
+    "strict_syn": 0.9633333333333334,
+    "top_reasons": [
+      [
+        "invalid_or_non_bare_sql",
+        11
+      ]
+    ]
+  },
+  "cars-2b": {
+    "status": "ok",
+    "n": 300,
+    "stored_acc_mean": 0.19,
+    "stored_syn_mean": 1.0,
+    "strict_acc": 0.19,
+    "strict_syn": 0.9933333333333333,
+    "top_reasons": [
+      [
+        "invalid_or_non_bare_sql",
+        2
+      ]
+    ]
+  },
+  "cars-4b": {
+    "status": "ok",
+    "n": 300,
+    "stored_acc_mean": 0.42333333333333334,
+    "stored_syn_mean": 1.0,
+    "strict_acc": 0.42333333333333334,
+    "strict_syn": 0.9966666666666667,
+    "top_reasons": [
+      [
+        "invalid_or_non_bare_sql",
+        1
+      ]
+    ]
+  },
+  "itergen-2b": {
+    "status": "missing_lanes",
+    "missing": [
+      "/home/aadivyar/modal-baseline-rerun-20260914/runs/baseline-rerun-20260918-focal/lanes/spider-itergen-q35-2b-s00",
+      "/home/aadivyar/modal-baseline-rerun-20260914/runs/baseline-rerun-20260918-focal/lanes/spider-itergen-q35-2b-s01",
+      "/home/aadivyar/modal-baseline-rerun-20260914/runs/baseline-rerun-20260918-focal/lanes/spider-itergen-q35-2b-s02",
+      "/home/aadivyar/modal-baseline-rerun-20260914/runs/baseline-rerun-20260918-focal/lanes/spider-itergen-q35-2b-s03"
+    ]
+  },
+  "itergen-4b": {
+    "status": "missing_lanes",
+    "missing": [
+      "/home/aadivyar/modal-baseline-rerun-20260914/runs/baseline-rerun-20260918-focal/lanes/spider-itergen-q35-4b-s00",
+      "/home/aadivyar/modal-baseline-rerun-20260914/runs/baseline-rerun-20260918-focal/lanes/spider-itergen-q35-4b-s01",
+      "/home/aadivyar/modal-baseline-rerun-20260914/runs/baseline-rerun-20260918-focal/lanes/spider-itergen-q35-4b-s02",
+      "/home/aadivyar/modal-baseline-rerun-20260914/runs/baseline-rerun-20260918-focal/lanes/spider-itergen-q35-4b-s03"
+    ]
+  }
+}
