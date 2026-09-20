@@ -118,49 +118,6 @@ def evaluate_smiles_output(
     exemplar = is_prompt_exemplar(smiles, prompt_exemplars)
     unique_valid_candidate = bool(smiles and syntax_ok and membership_ok and not exemplar)
     valid_class_membership = bool(syntax_ok and membership_ok)
-    # region agent log
-    try:
-        import json as _json
-        import time as _time
-        import os as _os
-        _cap_path = "/tmp/debug-d7d0bd-smiles-cap.count"
-        _n = 0
-        if _os.path.exists(_cap_path):
-            try:
-                _n = int(open(_cap_path).read().strip() or "0")
-            except Exception:
-                _n = 0
-        if _n < 5:
-            _motifs = CLASS_MOTIFS.get(class_name)
-            open("/tmp/debug-d7d0bd-focal.ndjson", "a").write(
-                _json.dumps(
-                    {
-                        "sessionId": "d7d0bd",
-                        "runId": "pre-fix",
-                        "hypothesisId": "D" if not _motifs else "C",
-                        "location": "metrics.py:evaluate_smiles_output",
-                        "message": "smiles evaluate_smiles_output",
-                        "data": {
-                            "class_name": class_name,
-                            "class_in_motifs": class_name in CLASS_MOTIFS,
-                            "motifs_empty": not bool(_motifs),
-                            "cleaned_smiles": smiles,
-                            "cleaned_len": len(smiles or ""),
-                            "grammar_ok": bool(grammar_ok),
-                            "rdkit_ok": rdkit_ok,
-                            "membership_ok": bool(membership_ok),
-                            "syntax_ok": bool(syntax_ok),
-                        },
-                        "timestamp": int(_time.time() * 1000),
-                    },
-                    default=str,
-                )
-                + "\n"
-            )
-            open(_cap_path, "w").write(str(_n + 1))
-    except Exception:
-        pass
-    # endregion
     return {
         "smiles": smiles,
         "grammar_valid": grammar_ok,
