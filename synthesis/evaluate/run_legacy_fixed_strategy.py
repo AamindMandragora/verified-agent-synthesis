@@ -466,6 +466,18 @@ def _legacy_gsm_symbolic_grammar_base(repo_root: Path, examples: list[dict[str, 
     return build_numeric_only_grammar(base_gsm_grammar)
 
 
+def _gcd_gsm_grammar(base_gsm_grammar: str) -> str:
+    """Grammar for the text GCD writes after the prompt's "<<": the expression, then ">>".
+
+    SynCode parses from the rule named ``start``, so the closing marker has to sit in
+    that rule. Without it ">>" is never allowed and no answer can end.
+    """
+    rewritten = base_gsm_grammar.replace("\nstart: any_expr\n", '\nstart: any_expr ">>"\n', 1)
+    if rewritten == base_gsm_grammar:
+        raise ValueError("gsm.lark no longer has the 'start: any_expr' rule GCD rewrites")
+    return rewritten
+
+
 def _gsm_symbolic_completion_to_delimited(
     completion: str,
     example: dict[str, Any],
@@ -1363,13 +1375,7 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
     device = _legacy_local_cuda_device(args.device)
     base_gsm_grammar = ""
     if dataset == "gsm_symbolic":
-        base_gsm_grammar = _legacy_gsm_symbolic_grammar_base(repo_root, examples)
-        # The prompt already ends with "<<"; constrain the expression body plus closing marker.
-        base_gsm_grammar = base_gsm_grammar.replace(
-            'syncode: "<<" start ">>"',
-            'syncode: start ">>"',
-            1,
-        )
+        base_gsm_grammar = _gcd_gsm_grammar(_legacy_gsm_symbolic_grammar_base(repo_root, examples))
 
     def _grammar_for_example(example: dict[str, Any]) -> str:
         if dataset == "gsm_symbolic":
