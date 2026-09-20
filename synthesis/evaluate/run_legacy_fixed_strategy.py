@@ -437,12 +437,16 @@ def _crane_generation_kwargs(dataset: str) -> dict[str, Any]:
 
 
 _CRANE_SMILES_ANSWER_ONLY = "Your response must be a single SMILES molecule and nothing else."
-# No literal "<<" or ">>" here: the model quotes its instructions while reasoning,
-# and a quoted delimiter would open a constrained span early.
+# The delimiters are named outright, the way the Spider and GSM CRANE prompts name
+# them. CRANE turns the grammar mask on only after the model writes "<<", and an
+# instruction that merely points at the examples did not get the model there: the
+# 2026-09-20 trace opened no span on 10 of 10 4B examples and 7 of 10 2B ones. A model
+# that quotes "<<" mid-reasoning opens a span early, which is ordinary CRANE behaviour:
+# the scorer takes the LAST closed span (``_crane_smiles_span``).
 _CRANE_SMILES_REASON_FIRST = (
     "First reason briefly, step by step, about what defines this class of molecule and how "
-    "yours differs from the examples. Then write the final molecule on a new line, in exactly "
-    "the same format as the examples."
+    "yours differs from the examples. Then write the final molecule on a new line wrapped in "
+    "<< >>, exactly like the examples. Stop after the closing >>."
 )
 
 
