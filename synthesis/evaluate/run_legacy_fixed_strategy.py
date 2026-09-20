@@ -673,7 +673,7 @@ def _annotate_legacy_rows_with_syntax(
                 scored_output,
                 example or {},
             )
-            syntax_valid = bool(aux and aux.get("syntax_valid"))  # the Spider output contract's verdict
+            syntax_valid = bool(_aux and _aux.get("syntax_valid"))  # the Spider output contract's verdict
         else:
             syntax_valid = bool(
                 logic.example_syntax_pass(all_valid, segments, False, None)
