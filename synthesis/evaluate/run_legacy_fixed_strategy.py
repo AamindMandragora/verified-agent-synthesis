@@ -428,6 +428,15 @@ def _crane_stop_words(dataset: str) -> list[str] | None:
     return None
 
 
+def _smiles_draw_seed(global_draw_index: int) -> int:
+    """Seed one SMILES draw from its GLOBAL index in the draw stream.
+
+    Sharded lanes slice that stream with ``--eval-start-index``, so a shard-local
+    index would make two shards replay each other's draws.
+    """
+    return int(os.environ.get("CSD_PARITY_SEED", 1234)) + int(global_draw_index) * 1_000_003
+
+
 def _crane_generation_kwargs(dataset: str) -> dict[str, Any]:
     if dataset == "smiles":
         # SMILES is scored on unique molecules, so greedy would repeat one string.
@@ -1598,6 +1607,10 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
             cls = str(example.get("class_name", ""))
             if __import__("os").environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
                 example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
+            import torch as _torch
+
+            _draw_i = int(getattr(args, "eval_start_index", 0) or 0) + len(rows)
+            _torch.manual_seed(_smiles_draw_seed(_draw_i))
 
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, _gcd_prompt_profile(dataset))
         if dataset == "gsm_symbolic":
@@ -2535,11 +2548,8 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
                 example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
             import torch as _torch
 
-            # Sampled SMILES draws: seed by the GLOBAL draw index, since sharded lanes
-            # slice the draw stream with --eval-start-index and a shard-local index
-            # would repeat another shard's draws.
             _draw_i = int(getattr(args, "eval_start_index", 0) or 0) + _ex_i
-            _torch.manual_seed(int(os.environ.get("CSD_PARITY_SEED", 1234)) + _draw_i * 1_000_003)
+            _torch.manual_seed(_smiles_draw_seed(_draw_i))
 
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "expression_only")
         if dataset == "gsm_symbolic":
@@ -2801,8 +2811,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
         )
 
         for _i in range(draw_start, draw_end):
-            # Seed by the global draw index, same formula as the other SMILES baselines.
-            draw_seed = int(os.environ.get("CSD_PARITY_SEED", 1234)) + _i * 1_000_003
+            draw_seed = _smiles_draw_seed(_i)
             running_prompt = _truncate_prompt(running_prompt, seed_prompt)
             # Built from the prompt this draw actually sends, so the molecules the
             # rolling suffix has added since the seed prompt are excluded too.
@@ -3247,10 +3256,8 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
         if dataset == "smiles":
             import torch as _torch
 
-            # Seed by the GLOBAL draw index: sharded lanes slice the draw stream with
-            # --eval-start-index, so a shard-local index would repeat another shard's draws.
             _draw_i = int(getattr(args, "eval_start_index", 0) or 0) + len(rows)
-            _torch.manual_seed(int(os.environ.get("CSD_PARITY_SEED", 1234)) + _draw_i * 1_000_003)
+            _torch.manual_seed(_smiles_draw_seed(_draw_i))
         example_index = len(rows)
         if not rows:
             _log_lane_header(
