@@ -9,6 +9,7 @@ from syncode.utils.generation import filter_code, fix_indents
 from typing import Callable, Iterable, Union
 from transformers.generation.utils import GenerationMode
 from transformers.generation.configuration_utils import GenerationConfig
+from synthesis.evaluate.benchmarks.common.generation_trace import describe_generation_end
 
 
 class KeywordsStoppingCriteria(StoppingCriteria):
@@ -106,6 +107,9 @@ class HuggingFaceModel:
             self.grammar_decoder.reset(prompt_str)
 
         input_ids_cutoff = inputs.input_ids.size(dim=1)
+        self._mode_switches = []
+        self._constrained_steps = 0
+        self._free_steps = 0
         
         # Get the generation config
         gen_config = GenerationConfig.from_model_config(self.model.config)
@@ -153,6 +157,21 @@ class HuggingFaceModel:
         for i in range(batch_size):
             self.total_tokens += len(generated_ids[i])-input_ids_cutoff+1
             completion = self.tokenizer.decode(generated_ids[i][input_ids_cutoff:len(generated_ids[i])], skip_special_tokens=True)
+            if i == 0:
+                # Read by the baseline harness to log why this call ended and where
+                # the adaptive decoder changed mode; nothing here steers decoding.
+                self.last_generation_trace = {
+                    **describe_generation_end(
+                        generated_token_ids=generated_ids[i][input_ids_cutoff:].tolist(),
+                        stop_token_ids=self._stop_token_ids,
+                        max_new_tokens=self.gen_args.get('max_new_tokens'),
+                        completion=completion,
+                        stop_words=stop_words,
+                    ),
+                    "mode_switches": list(self._mode_switches),
+                    "constrained_steps": self._constrained_steps,
+                    "free_steps": self._free_steps,
+                }
 
             if return_token_ids:
                 batch_completions.append((completion, generated_ids[i], inputs.input_ids))
@@ -349,6 +368,7 @@ class AdaptiveGrammarDecoder(HuggingFaceModel):
         logits_processor = self.model._get_logits_processor(gen_config, token_ids.size(1), token_ids, prefix_allowed_tokens_fn=None, logits_processor=[])
 
         max_tokens = self.gen_args['max_new_tokens']+token_ids.size(1)
+        prompt_token_count = token_ids.size(1)
 
         while True:
             if current_state == ConstrainedMode and self.end_symbol is not None:
@@ -356,6 +376,7 @@ class AdaptiveGrammarDecoder(HuggingFaceModel):
                 if self.end_symbol in structured_gen: 
                     current_state = UnconstrainedMode
                     last_constrained_end = len(token_ids[0]) - 1
+                    self._mode_switches.append({"to": "unconstrained", "token_index": len(token_ids[0]) - prompt_token_count})
 
             try:
                 if past_key_values: # Get the last token if kv is cached for all previous tokens
@@ -374,6 +395,7 @@ class AdaptiveGrammarDecoder(HuggingFaceModel):
             next_token_scores, past_key_values = outputs.logits[:, -1, :], outputs.past_key_values
             
             if current_state == ConstrainedMode and grammar_decoder is not None:
+                self._constrained_steps += 1
                 next_token = self._get_next_token(gen_mode, token_ids, logits_processor, next_token_scores)
                 is_valid = grammar_decoder.is_valid(token_ids, next_token)
 
@@ -382,6 +404,7 @@ class AdaptiveGrammarDecoder(HuggingFaceModel):
                     next_token_scores = grammar_decoder(token_ids, next_token_scores)
                     next_token = self._get_next_token(gen_mode, token_ids, logits_processor, next_token_scores)
             else:
+                self._free_steps += 1
                 next_token = self._get_next_token(gen_mode, token_ids, logits_processor, next_token_scores)
             
             token_ids = torch.cat([token_ids, next_token[:, None]], dim=-1)
@@ -403,7 +426,8 @@ class AdaptiveGrammarDecoder(HuggingFaceModel):
                     current_state = ConstrainedMode
                     start_constrained_from = len(token_ids[0])
                     self.grammar_decoder.reset_adaptive(start_constrained_from)
-                    
+                    self._mode_switches.append({"to": "constrained", "token_index": len(token_ids[0]) - prompt_token_count})
+
 
             # Update attention mask
             attention_mask = torch.cat([attention_mask, torch.ones((attention_mask.size(0), 1), dtype=attention_mask.dtype).to(self.device)], dim=-1)

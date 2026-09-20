@@ -19,7 +19,109 @@ from synthesis.evaluate.completion_text import completion_for_scoring, strip_pro
 from synthesis.evaluate.benchmarks.sql_spider.prompts import SpiderPromptParts
 
 
-LOGGER = logging.getLogger(__name__)
+# One logger for every baseline adapter. Each line opens with the adapter's tag
+# ("[legacy-gcd]", "[legacy-crane]", ...) and names the dataset, so a reader can tell
+# from the log alone whether the step that defines each baseline really ran.
+LOGGER = logging.getLogger("csd.baseline_trace")
+
+_TRACE_TEXT_LIMIT = 300
+
+
+def _configure_trace_logging() -> None:
+    """CSD_TRACE_LOG=1 prints every ``csd.*`` INFO line to stdout.
+
+    Nothing in this harness ever attached a log handler, so without this every
+    ``LOGGER.info`` call is dropped. Lane ``stdout.log`` files capture stdout, so no
+    separate log file is needed. Same on/off convention as ``CSD_GROUNDING_LOG``
+    (model_utils.py), but for the whole ``csd`` logger tree rather than one logger.
+    """
+    if not os.environ.get("CSD_TRACE_LOG"):
+        return
+    csd_logger = logging.getLogger("csd")
+    if any(getattr(handler, "_csd_trace_log", False) for handler in csd_logger.handlers):
+        return
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+    handler._csd_trace_log = True
+    csd_logger.addHandler(handler)
+    csd_logger.setLevel(logging.INFO)
+
+
+def _clip(text: Any, limit: int = _TRACE_TEXT_LIMIT) -> str:
+    text = str(text)
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}...[+{len(text) - limit} chars]"
+
+
+def _token_id_list(value: Any) -> list[int] | str:
+    if value is None:
+        return "unavailable"
+    if isinstance(value, str):
+        return value
+    if hasattr(value, "tolist"):
+        value = value.tolist()
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return sorted(int(item) for item in value)
+    return [int(value)]
+
+
+def _log_lane_header(
+    tag: str,
+    dataset: str,
+    *,
+    prompt: Any,
+    end_token_ids: Any,
+    max_new_tokens: Any,
+) -> None:
+    """Once per lane, for the first example only: the one place a full prompt is logged."""
+    prompt_text = prompt if isinstance(prompt, str) else json.dumps(prompt, default=str)
+    LOGGER.info(
+        "[%s] lane-header dataset=%s end_token_ids=%s max_new_tokens=%s "
+        "first_example_prompt_chars=%d first_example_prompt=\n%s",
+        tag,
+        dataset,
+        _token_id_list(end_token_ids),
+        max_new_tokens,
+        len(prompt_text),
+        prompt_text,
+    )
+
+
+def _syncode_stop_token_ids(sc: Any) -> Any:
+    return getattr(getattr(sc, "model", None), "_stop_token_ids", None)
+
+
+def _syncode_generation_trace(sc: Any) -> dict[str, Any]:
+    """What the vendored decoder recorded about its last call (language_model.py)."""
+    return dict(getattr(getattr(sc, "model", None), "last_generation_trace", None) or {})
+
+
+def _syncode_audit_counts(sc: Any) -> dict[str, Any] | None:
+    audit = getattr(getattr(sc, "grammar_decoder", None), "constraint_audit", None)
+    if audit is None:
+        return None
+    return {
+        "masked": int(audit.total_masked_steps),
+        "unmasked": int(audit.total_unconstrained_steps),
+        "by_reason": dict(audit.counts_by_reason),
+    }
+
+
+def _audit_delta(before: dict[str, Any] | None, after: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The audit counts across a whole run; one example's share is after minus before."""
+    if before is None or after is None:
+        return None
+    by_reason = {
+        reason: count - before["by_reason"].get(reason, 0)
+        for reason, count in after["by_reason"].items()
+        if count - before["by_reason"].get(reason, 0)
+    }
+    return {
+        "masked": after["masked"] - before["masked"],
+        "unmasked": after["unmasked"] - before["unmasked"],
+        "by_reason": by_reason,
+    }
 _MAX_PROMPT_CHARS = 50000  # ~12.5K tokens; leaves room for generation within 16384-token context
 _MAX_SUFFIX_CHARS = 45000
 
@@ -771,7 +873,8 @@ def _load_latest_cars_results(cars_root_dir: Path, class_name: str) -> list[dict
     return []
 
 
-def _load_cars_results_from_log_dir(log_dir: Path) -> list[dict[str, Any]]:
+def _load_cars_results_from_log_dir(log_dir: Path) -> dict[str, list[Any]]:
+    """``steps`` holds one entry per ACCEPTED sample; ``successes`` one bool per try."""
     candidates = sorted(log_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     for candidate in candidates:
         try:
@@ -780,8 +883,12 @@ def _load_cars_results_from_log_dir(log_dir: Path) -> list[dict[str, Any]]:
             continue
         steps = payload.get("steps")
         if isinstance(steps, list):
-            return steps
-    return []
+            successes = payload.get("successes")
+            return {
+                "steps": steps,
+                "successes": successes if isinstance(successes, list) else [True] * len(steps),
+            }
+    return {"steps": [], "successes": []}
 
 
 def _extract_cars_log_dir(stdout: str, cars_root_dir: Path) -> Path | None:
@@ -836,8 +943,11 @@ def _cars_sampler_steps(
     *,
     n_steps: int,
     max_new_tokens: int,
-) -> list[dict[str, Any]]:
-    """Run upstream ``cars.CARS`` multi-step sampling; return logged step dicts."""
+) -> dict[str, list[Any]]:
+    """Run upstream ``cars.CARS`` multi-step sampling; return its logged steps and tries.
+
+    The CARS repo's own log directory is a tempdir deleted on return, so anything a
+    reader needs from it has to be returned here and logged at our call site."""
     from cars.cars import CARS
 
     with tempfile.TemporaryDirectory(prefix="vas_cars_") as log_dir:
@@ -874,6 +984,54 @@ def _cars_normalize_gsm_symbolic_output(raw: str) -> str:
         return raw
     expr = text.splitlines()[0].strip()
     return f"<<{expr}>>" if expr else raw
+
+
+def _cars_draw_stop_reason(*, tries: int, search_steps_cap: int, produced_text: bool) -> str:
+    if produced_text:
+        return "sample_accepted"
+    if tries >= search_steps_cap:
+        return f"try_cap_{search_steps_cap}"
+    return "no_sample"
+
+
+def _cars_log_first_generate_call(cars_model: Any, *, dataset: str) -> None:
+    """Log the sampling settings the CARS library hands to ``generate``, once.
+
+    The library builds its own GenerationConfig inside ``ConstrainedModel._generate``,
+    so the only honest place to read the values is the call itself. The model's own
+    defaults are logged beside them because Transformers can fall back to those for
+    any field the passed config leaves at its default.
+    """
+    hf_model = getattr(cars_model, "model", None)
+    original_generate = getattr(hf_model, "generate", None)
+    if original_generate is None:
+        LOGGER.info("[legacy-cars] sampling dataset=%s unavailable (no HF model on the CARS object)", dataset)
+        return
+    logged: list[bool] = []
+
+    def _generate_and_log_once(*args: Any, **kwargs: Any) -> Any:
+        if not logged:
+            logged.append(True)
+            passed = kwargs.get("generation_config")
+            defaults = getattr(hf_model, "generation_config", None)
+            LOGGER.info(
+                "[legacy-cars] sampling dataset=%s passed_to_generate: temperature=%s top_p=%s top_k=%s "
+                "do_sample=%s max_new_tokens=%s eos_token_id=%s | model_default_temperature=%s "
+                "model_default_top_p=%s model_default_top_k=%s",
+                dataset,
+                getattr(passed, "temperature", "unset"),
+                getattr(passed, "top_p", "unset"),
+                getattr(passed, "top_k", "unset"),
+                getattr(passed, "do_sample", "unset"),
+                getattr(passed, "max_new_tokens", "unset"),
+                getattr(passed, "eos_token_id", "unset"),
+                getattr(defaults, "temperature", "unset"),
+                getattr(defaults, "top_p", "unset"),
+                getattr(defaults, "top_k", "unset"),
+            )
+        return original_generate(*args, **kwargs)
+
+    hf_model.generate = _generate_and_log_once
 
 
 def _cars_set_cached_grammar(
@@ -952,6 +1110,17 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
     grammar_cache: dict[str, Any] = {}
     n_steps = max(1, int(getattr(args, "cars_search_steps", 200)))
     max_new_tokens = _cars_max_new_tokens(dataset, args.eval_max_steps)
+    LOGGER.info(
+        "[legacy-cars] settings dataset=%s model=%s max_new_tokens=%d search_steps_cap=%d "
+        "smiles_draw_cap=10x_target (sampling values: see the '[legacy-cars] sampling' line, "
+        "logged on the first real generate call)",
+        dataset,
+        model_id,
+        max_new_tokens,
+        n_steps,
+    )
+    _cars_log_first_generate_call(cars_model, dataset=dataset)
+    try_totals = {"tries": 0, "rejected_tries": 0, "draws_hitting_try_cap": 0}
 
     gsm_cars_grammar = ""
     if dataset == "gsm_symbolic":
@@ -987,15 +1156,33 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
         )
         if dataset == "spider":
             prompt = str(prompt)
+        if not rows:
+            _log_lane_header(
+                "legacy-cars",
+                dataset,
+                prompt=prompt,
+                end_token_ids=getattr(getattr(cars_model, "tokenizer", None), "eos_token_id", None),
+                max_new_tokens=max_new_tokens,
+            )
         gen_started = time.perf_counter()
-        steps = _cars_sampler_steps(
+        sampler_run = _cars_sampler_steps(
             cars_model,
             prompt,
             n_steps=n_steps,
             max_new_tokens=max_new_tokens,
         )
-        output_text = _cars_completion_from_steps(steps)
+        steps = sampler_run["steps"]
+        raw_cars_text = _cars_completion_from_steps(steps)
+        output_text = raw_cars_text
         gen_seconds = time.perf_counter() - gen_started
+        tries = len(sampler_run["successes"])
+        rejected_tries = sum(1 for ok in sampler_run["successes"] if not ok)
+        draw_stop_reason = _cars_draw_stop_reason(
+            tries=tries, search_steps_cap=n_steps, produced_text=bool(steps)
+        )
+        try_totals["tries"] += tries
+        try_totals["rejected_tries"] += rejected_tries
+        try_totals["draws_hitting_try_cap"] += int(draw_stop_reason.startswith("try_cap"))
         if dataset == "gsm_symbolic":
             output_text = _cars_normalize_gsm_symbolic_output(output_text)
         completion = _completion_for_dataset(dataset, prompt, output_text)
@@ -1018,6 +1205,22 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
                 if os.environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
                     smiles_prompt_suffix[cls] = _cap_suffix(smiles_prompt_suffix.get(cls, "") + f" {actual}\nMolecule:")
 
+        LOGGER.info(
+            "[legacy-cars] draw=%d dataset=%s class=%s tries=%d rejected_tries=%d search_steps_cap=%d "
+            "stop_reason=%s generated_tokens=%s syntax_valid=%s accepted=%s raw=%r scored=%r",
+            _ex_i,
+            dataset,
+            example.get("class_name"),
+            tries,
+            rejected_tries,
+            n_steps,
+            draw_stop_reason,
+            len(steps[-1].get("tokens") or []) if steps else 0,
+            bool(syntax_valid),
+            bool(syntax_valid and is_correct),
+            _clip(raw_cars_text),
+            _clip(scored_output),
+        )
         question = _baseline_row_question(dataset, example, expected)
         rows.append(
             {
@@ -1055,16 +1258,42 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
             target = max(1, target_counts.get(cls, 1))
             max_draws = target * 10
             accepted_molecules: set[str] = set()
+            class_draws = 0
+            class_rejected = 0
             for _draw in range(max_draws):
                 if len(accepted_molecules) >= target:
                     break
                 _ex_i += 1
+                class_draws += 1
                 actual, syntax_valid, is_correct = _cars_draw(_ex_i, dict(template))
                 if syntax_valid and is_correct and actual:
                     accepted_molecules.add(actual)
+                else:
+                    class_rejected += 1
+            LOGGER.info(
+                "[legacy-cars] class=%s dataset=smiles target=%d draw_cap=%d draws=%d rejected=%d "
+                "accepted_unique=%d stop_reason=%s",
+                cls,
+                target,
+                max_draws,
+                class_draws,
+                class_rejected,
+                len(accepted_molecules),
+                "target_reached" if len(accepted_molecules) >= target else "draw_cap_10x",
+            )
     else:
         for _ex_i, example in enumerate(examples):
             _cars_draw(_ex_i, example)
+    LOGGER.info(
+        "[legacy-cars] summary dataset=%s draws=%d tries=%d rejected_tries=%d "
+        "draws_hitting_try_cap=%d search_steps_cap=%d",
+        dataset,
+        len(rows),
+        try_totals["tries"],
+        try_totals["rejected_tries"],
+        try_totals["draws_hitting_try_cap"],
+        n_steps,
+    )
 
     if not rows:
         raise RuntimeError("CARS produced no rows; refusing to write an empty baseline JSON")
@@ -1182,6 +1411,7 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
         grammar_text = _grammar_for_example(example)
         cache_key = f"{dataset}:{hash(grammar_text)}"
         if cache_key not in syncode_cache:
+            gcd_generation_kwargs = _gcd_generation_kwargs(dataset)
             syncode_cache[cache_key] = Syncode(
                 model=args.eval_model,
                 mode="grammar_strict",
@@ -1193,7 +1423,20 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
                 max_new_tokens=_gcd_max_new_tokens(),
                 num_return_sequences=1,
                 opp=False,
-                **_gcd_generation_kwargs(dataset),
+                **gcd_generation_kwargs,
+            )
+            LOGGER.info(
+                "[legacy-gcd] settings dataset=%s model=%s mode=grammar_strict opp=False do_sample=%s "
+                "temperature=%s top_p=%s top_k=%s max_new_tokens=%d stop_words=%s grammar_chars=%d",
+                dataset,
+                args.eval_model,
+                gcd_generation_kwargs.get("do_sample"),
+                gcd_generation_kwargs.get("temperature", "unset"),
+                gcd_generation_kwargs.get("top_p", "unset"),
+                gcd_generation_kwargs.get("top_k", "unset"),
+                _gcd_max_new_tokens(),
+                _gcd_stop_words(dataset),
+                len(grammar_text),
             )
         sc = syncode_cache[cache_key]
 
@@ -1209,8 +1452,39 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
             prompt = str(prompt)
         gen_started = time.perf_counter()
         gcd_prompt = _gcd_prompt(prompt)
+        if not rows:
+            _log_lane_header(
+                "legacy-gcd",
+                dataset,
+                prompt=gcd_prompt,
+                end_token_ids=_syncode_stop_token_ids(sc),
+                max_new_tokens=_gcd_max_new_tokens(),
+            )
+        audit_before = _syncode_audit_counts(sc)
         completions = sc.infer(gcd_prompt, stop_words=_gcd_stop_words(dataset))
         gen_seconds = time.perf_counter() - gen_started
+        gcd_trace = _syncode_generation_trace(sc)
+        gcd_audit = _audit_delta(audit_before, _syncode_audit_counts(sc))
+        generated_tokens = gcd_trace.get("generated_tokens")
+        # GCD's defining claim: the grammar mask touched every generated token.
+        LOGGER.info(
+            "[legacy-gcd] example=%d dataset=%s generated_tokens=%s masked_steps=%s unmasked_steps=%s "
+            "unmasked_by_reason=%s every_token_masked=%s stop_reason=%s last_token_id=%s raw=%r",
+            len(rows),
+            dataset,
+            generated_tokens if generated_tokens is not None else "unavailable",
+            gcd_audit["masked"] if gcd_audit else "unavailable",
+            gcd_audit["unmasked"] if gcd_audit else "unavailable",
+            gcd_audit["by_reason"] if gcd_audit else "unavailable",
+            (
+                gcd_audit["unmasked"] == 0 and gcd_audit["masked"] == generated_tokens
+                if gcd_audit and generated_tokens is not None
+                else "unavailable"
+            ),
+            gcd_trace.get("stop_reason", "unavailable"),
+            gcd_trace.get("last_token_id", "unavailable"),
+            _clip(completions[0] if completions else ""),
+        )
         raw_output = _gcd_output(completions[0] if completions else "", example)
         completion = _completion_for_dataset(dataset, gcd_prompt, raw_output)
         scored_output = (
@@ -1352,13 +1626,15 @@ def _install_itergen_transformers_compat(itergen_cls: type[Any]) -> None:
 
 
 def _itergen_generate(iter_gen: Any, prompt: Any) -> str:
+    """One ``forward()`` to completion: no unit to check, so nothing to back out of."""
+    tag = "legacy-itergen"
     iter_gen.start(prompt)
+    _log_itergen_start(tag, iter_gen, detail="single_forward_no_check_no_backward")
     generated = iter_gen.forward()
-    if isinstance(generated, list):
-        if not generated:
-            return ""
-        return str(generated[0])
-    return str(generated)
+    completion = (str(generated[0]) if generated else "") if isinstance(generated, list) else str(generated)
+    _log_itergen_forward(tag, iter_gen, iteration=1, units=None, num=None, completion=completion)
+    _log_itergen_finish(tag, iter_gen, iterations=1, max_iterations=1, backtracks=0, completion=completion)
+    return completion
 
 
 def _itergen_generation_stop_token_ids(iter_gen: Any, tokenizer: Any) -> set[int]:
@@ -1394,12 +1670,11 @@ def _itergen_generation_stop_token_ids(iter_gen: Any, tokenizer: Any) -> set[int
     return ids
 
 
-def _itergen_generation_token_evidence(iter_gen: Any) -> dict[str, Any] | None:
-    """Capture only generated IterGen IDs, excluding prompt/session prefix IDs."""
+def _itergen_generated_token_ids(iter_gen: Any) -> list[Any] | None:
+    """Generated IterGen IDs only, excluding prompt/session prefix IDs."""
     session_tokens = getattr(iter_gen, "session_tokens", None)
     start_from = getattr(iter_gen, "start_from", None)
-    tokenizer = getattr(iter_gen, "tokenizer", None)
-    if session_tokens is None or start_from is None or tokenizer is None:
+    if session_tokens is None or start_from is None:
         return None
     try:
         generated_tokens = session_tokens[..., int(start_from):]
@@ -1419,6 +1694,113 @@ def _itergen_generation_token_evidence(iter_gen: Any) -> dict[str, Any] | None:
     ):
         generated_tokens = generated_tokens[0]
     if not isinstance(generated_tokens, list):
+        return None
+    return generated_tokens
+
+
+def _itergen_end_reason(iter_gen: Any, *, iterations: int, max_iterations: int) -> str:
+    """Which condition ended the loop: end token, token budget, IterGen's own
+    ``finished()`` (grammar complete or a stop string), or our iteration limit."""
+    ids = _itergen_generated_token_ids(iter_gen) or []
+    stop_ids = _itergen_generation_stop_token_ids(iter_gen, getattr(iter_gen, "tokenizer", None))
+    if ids and int(ids[-1]) in stop_ids:
+        return f"end_token(id={int(ids[-1])})"
+    budget = getattr(getattr(iter_gen, "generation_config", None), "max_new_tokens", None)
+    if budget is not None and len(ids) >= int(budget):
+        return f"token_budget(max_new_tokens={int(budget)})"
+    if bool(iter_gen.finished()):
+        return "itergen_finished(grammar_complete_or_stop_string)"
+    if iterations >= max_iterations:
+        return f"iteration_limit(max_iterations={max_iterations})"
+    return "unknown"
+
+
+def _log_itergen_settings(dataset: str, kwargs: dict[str, Any]) -> None:
+    LOGGER.info(
+        "[legacy-itergen] settings dataset=%s do_sample=%s temperature=%s recurrence_penalty=%s "
+        "max_new_tokens=%s max_tokens=%s",
+        dataset,
+        kwargs.get("do_sample"),
+        kwargs.get("temperature", "unset"),
+        kwargs.get("recurrence_penalty", "unset (IterGen default 1.0 = off)"),
+        kwargs.get("max_new_tokens"),
+        kwargs.get("max_tokens"),
+    )
+
+
+def _log_itergen_start(tag: str, iter_gen: Any, *, detail: str) -> None:
+    LOGGER.info(
+        "[%s] start %s recurrence_penalty=%s itergen_eos_token_id=%s",
+        tag,
+        detail,
+        getattr(iter_gen, "recurrence_penalty", "unavailable"),
+        getattr(getattr(iter_gen, "generation_config", None), "eos_token_id", "unavailable"),
+    )
+
+
+def _log_itergen_forward(
+    tag: str, iter_gen: Any, *, iteration: int, units: Any, num: Any, completion: str
+) -> None:
+    ids = _itergen_generated_token_ids(iter_gen)
+    LOGGER.info(
+        "[%s] forward iteration=%d units=%s num=%s generated_tokens_so_far=%s text=%r",
+        tag,
+        iteration,
+        units,
+        num,
+        len(ids) if ids is not None else "unavailable",
+        _clip(completion),
+    )
+
+
+def _itergen_backward_and_log(
+    tag: str, iter_gen: Any, *, iteration: int, unit: str, value: Any, reason: str, count: int
+) -> None:
+    before = _itergen_generated_token_ids(iter_gen)
+    iter_gen.backward(unit)
+    after = _itergen_generated_token_ids(iter_gen)
+    LOGGER.info(
+        "[%s] backward iteration=%d unit=%s units_removed=1 tokens_removed=%s value=%r reason=%s count=%d",
+        tag,
+        iteration,
+        unit,
+        len(before) - len(after) if before is not None and after is not None else "unavailable",
+        _clip(value),
+        reason,
+        count,
+    )
+
+
+def _log_itergen_finish(
+    tag: str,
+    iter_gen: Any,
+    *,
+    iterations: int,
+    max_iterations: int,
+    backtracks: int,
+    completion: str,
+    end_reason: str | None = None,
+) -> None:
+    ids = _itergen_generated_token_ids(iter_gen)
+    LOGGER.info(
+        "[%s] finish end_reason=%s iterations=%d backtracks=%d finished=%s generated_tokens=%s "
+        "output_chars=%d text=%r",
+        tag,
+        end_reason or _itergen_end_reason(iter_gen, iterations=iterations, max_iterations=max_iterations),
+        iterations,
+        backtracks,
+        bool(iter_gen.finished()),
+        len(ids) if ids is not None else "unavailable",
+        len(completion),
+        _clip(completion),
+    )
+
+
+def _itergen_generation_token_evidence(iter_gen: Any) -> dict[str, Any] | None:
+    """Capture only generated IterGen IDs, excluding prompt/session prefix IDs."""
+    tokenizer = getattr(iter_gen, "tokenizer", None)
+    generated_tokens = _itergen_generated_token_ids(iter_gen)
+    if generated_tokens is None or tokenizer is None:
         return None
     from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
         generation_token_evidence,
@@ -1535,62 +1917,98 @@ def _itergen_generate_spider(
     backwards_limit: int = 10,
 ) -> str:
     """Run the checked-in upstream Spider IterGen protocol."""
+    tag = "legacy-itergen-spider"
     iter_gen.start(prompt)
     schema = _itergen_spider_schema(example)
     generated: Any = ""
     num_backwards = 0
     iterations = 0
-    LOGGER.info(
-        "[legacy-itergen-spider] start tables=%d max_iterations=%d backwards_limit=%d",
-        len(schema),
-        max_iterations,
-        backwards_limit,
+    _log_itergen_start(
+        tag,
+        iter_gen,
+        detail=f"tables={len(schema)} max_iterations={max_iterations} backwards_limit={backwards_limit}",
     )
+
+    def _view_and_check(unit: str, in_schema: Any) -> tuple[Any, bool]:
+        raw_view = iter_gen.view(unit)
+        LOGGER.info("[%s] view iteration=%d unit=%s raw=%s", tag, iterations, unit, _clip(raw_view))
+        names = raw_view[0]
+        last = names[-1] if names else None
+        passed = last is None or bool(in_schema(last))
+        LOGGER.info(
+            "[%s] check iteration=%d unit=%s value=%r passed=%s reason=%s",
+            tag,
+            iterations,
+            unit,
+            last,
+            passed,
+            "no_unit_yet" if last is None else ("in_schema" if passed else "not_in_schema"),
+        )
+        if not passed and num_backwards >= backwards_limit:
+            LOGGER.info(
+                "[%s] backward-skipped iteration=%d unit=%s reason=backwards_limit(%d)",
+                tag,
+                iterations,
+                unit,
+                backwards_limit,
+            )
+        return last, passed
+
     while not iter_gen.finished() and iterations < max_iterations:
         iterations += 1
-        generated = iter_gen.forward(units=["column_name", "table_name"], num=1)
+        units = ["column_name", "table_name"]
+        generated = iter_gen.forward(units=units, num=1)
+        _log_itergen_forward(
+            tag,
+            iter_gen,
+            iteration=iterations,
+            units=units,
+            num=1,
+            completion=str(generated[0]) if isinstance(generated, list) and generated else str(generated),
+        )
 
-        column_names = iter_gen.view("column_name")[0]
-        last_column = column_names[-1] if column_names else None
-        if (
-            last_column is not None
-            and not _itergen_spider_column_exists(schema, str(last_column))
-            and num_backwards < backwards_limit
-        ):
-            iter_gen.backward("column_name")
+        last_column, column_ok = _view_and_check(
+            "column_name", lambda value: _itergen_spider_column_exists(schema, str(value))
+        )
+        if not column_ok and num_backwards < backwards_limit:
             num_backwards += 1
-            LOGGER.info(
-                "[legacy-itergen-spider] backtrack unit=column_name value=%r count=%d",
-                last_column,
-                num_backwards,
+            _itergen_backward_and_log(
+                tag,
+                iter_gen,
+                iteration=iterations,
+                unit="column_name",
+                value=last_column,
+                reason="not_in_schema",
+                count=num_backwards,
             )
             continue
 
-        table_names = iter_gen.view("table_name")[0]
-        last_table = table_names[-1] if table_names else None
-        if (
-            last_table is not None
-            and str(last_table).strip().lower() not in schema
-            and num_backwards < backwards_limit
-        ):
-            iter_gen.backward("table_name")
+        last_table, table_ok = _view_and_check(
+            "table_name", lambda value: str(value).strip().lower() in schema
+        )
+        if not table_ok and num_backwards < backwards_limit:
             num_backwards += 1
-            LOGGER.info(
-                "[legacy-itergen-spider] backtrack unit=table_name value=%r count=%d",
-                last_table,
-                num_backwards,
+            _itergen_backward_and_log(
+                tag,
+                iter_gen,
+                iteration=iterations,
+                unit="table_name",
+                value=last_table,
+                reason="not_in_schema",
+                count=num_backwards,
             )
 
     if isinstance(generated, list):
         completion = str(generated[0]) if generated else ""
     else:
         completion = str(generated)
-    LOGGER.info(
-        "[legacy-itergen-spider] finish iterations=%d backtracks=%d finished=%s output_chars=%d",
-        iterations,
-        num_backwards,
-        bool(iter_gen.finished()),
-        len(completion),
+    _log_itergen_finish(
+        tag,
+        iter_gen,
+        iterations=iterations,
+        max_iterations=max_iterations,
+        backtracks=num_backwards,
+        completion=completion,
     )
     return completion
 
@@ -1619,22 +2037,26 @@ def _itergen_generate_smiles(
         evaluate_smiles_output,
     )
 
+    tag = "legacy-itergen-smiles"
     iter_gen.start(prompt)
     class_name = str(example.get("class_name", ""))
     grammar_text = str(example.get("grammar_text", ""))
     generated: Any = ""
     num_backwards = 0
     iterations = 0
-    LOGGER.info(
-        "[legacy-itergen-smiles] start class=%s max_iterations=%d backwards_limit=%d",
-        class_name,
-        max_iterations,
-        backwards_limit,
+    loop_exit: str | None = None
+    _log_itergen_start(
+        tag,
+        iter_gen,
+        detail=f"class={class_name} max_iterations={max_iterations} backwards_limit={backwards_limit}",
     )
     while not iter_gen.finished() and iterations < max_iterations:
         iterations += 1
         generated = iter_gen.forward(units=["smiles"], num=1)
         completion = str(generated[0]) if isinstance(generated, list) and generated else str(generated)
+        _log_itergen_forward(
+            tag, iter_gen, iteration=iterations, units=["smiles"], num=1, completion=completion
+        )
         cleaned = clean_smiles_output(completion)
         smiles_eval = evaluate_smiles_output(
             class_name=class_name,
@@ -1645,28 +2067,51 @@ def _itergen_generate_smiles(
         )
         accepted = bool(smiles_eval.get("syntax_valid") and cleaned and cleaned not in seen)
         if accepted:
+            check_reason = "valid_and_new"
+        elif not smiles_eval.get("syntax_valid"):
+            check_reason = "invalid_molecule"
+        elif not cleaned:
+            check_reason = "empty_after_cleanup"
+        else:
+            check_reason = "already_seen_or_prompt_exemplar"
+        LOGGER.info(
+            "[%s] check iteration=%d unit=smiles value=%r passed=%s reason=%s",
+            tag,
+            iterations,
+            _clip(cleaned),
+            accepted,
+            check_reason,
+        )
+        if accepted:
             seen.add(cleaned)
+            loop_exit = "molecule_accepted"
             break
         if num_backwards >= backwards_limit:
+            loop_exit = f"backwards_limit({backwards_limit})"
             break
-        iter_gen.backward("smiles")
         num_backwards += 1
-        LOGGER.info(
-            "[legacy-itergen-smiles] backtrack molecule=%r count=%d",
-            cleaned,
-            num_backwards,
+        _itergen_backward_and_log(
+            tag,
+            iter_gen,
+            iteration=iterations,
+            unit="smiles",
+            value=cleaned,
+            reason=check_reason,
+            count=num_backwards,
         )
 
     if isinstance(generated, list):
         completion = str(generated[0]) if generated else ""
     else:
         completion = str(generated)
-    LOGGER.info(
-        "[legacy-itergen-smiles] finish iterations=%d backtracks=%d finished=%s output_chars=%d",
-        iterations,
-        num_backwards,
-        bool(iter_gen.finished()),
-        len(completion),
+    _log_itergen_finish(
+        tag,
+        iter_gen,
+        iterations=iterations,
+        max_iterations=max_iterations,
+        backtracks=num_backwards,
+        completion=completion,
+        end_reason=loop_exit,
     )
     return completion
 
@@ -1824,16 +2269,18 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
             # Do not use ``stop_strings`` here: ``["\\n\\n"]`` fires HuggingFace stopping criteria and ends
             # generation before the LALR parser can reach a complete / EOF-ready state (e.g. GSM expr cut
             # mid-expression). Rely on grammar ``start`` completion + ``max_new_tokens`` instead.
+            itergen_kwargs = _itergen_generation_kwargs(
+                dataset=dataset,
+                max_tokens=_session_ceiling,
+                max_new_tokens=_new_tok,
+            )
             itergen_cache[cache_key] = IterGen(
                 grammar=grammar_text,
                 model_id=args.eval_model,
                 device=device,
-                **_itergen_generation_kwargs(
-                    dataset=dataset,
-                    max_tokens=_session_ceiling,
-                    max_new_tokens=_new_tok,
-                ),
+                **itergen_kwargs,
             )
+            _log_itergen_settings(dataset, itergen_kwargs)
         iter_gen = itergen_cache[cache_key]
 
         if dataset == "smiles":
@@ -1859,6 +2306,14 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
             )
         else:
             generation_prompt = prompt
+        if not rows:
+            _log_lane_header(
+                "legacy-itergen",
+                dataset,
+                prompt=generation_prompt,
+                end_token_ids=_itergen_generation_stop_token_ids(iter_gen, iter_gen.tokenizer),
+                max_new_tokens=_new_tok,
+            )
         gen_started = time.perf_counter()
         if dataset == "smiles":
             _smiles_cls = str(example.get("class_name", ""))
@@ -1876,6 +2331,12 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
             else None,
         )
         if _timed_out:
+            LOGGER.info(
+                "[legacy-itergen] finish end_reason=wall_clock_timeout(%gs) dataset=%s example=%d",
+                _ITERGEN_PER_EXAMPLE_TIMEOUT_SECONDS,
+                dataset,
+                _ex_i,
+            )
             print(
                 f"[itergen] per-example wall-clock timeout after "
                 f"{_ITERGEN_PER_EXAMPLE_TIMEOUT_SECONDS:g}s on {dataset} example "
@@ -1961,6 +2422,38 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
     return 0
 
 
+def _log_unconstrained_no_constraint(tag: str, dataset: str, backend: str) -> None:
+    LOGGER.info(
+        "[%s] constraint dataset=%s backend=%s this code path builds no logits processor and no "
+        "grammar object; generate is called with sampling/stop settings only",
+        tag,
+        dataset,
+        backend,
+    )
+
+
+def _vllm_stop_reason(completion: Any) -> str:
+    """vLLM's own verdict: ``length`` is the budget; ``stop`` carries the stop string,
+    or None when the model's end token ended it."""
+    finish_reason = getattr(completion, "finish_reason", None)
+    if finish_reason == "stop":
+        return f"vllm:stop(stop_reason={getattr(completion, 'stop_reason', None)!r}; None means end token)"
+    return f"vllm:{finish_reason}"
+
+
+def _hf_stop_reason(new_ids: Any, *, end_token_ids: Any, max_new_tokens: int, other: str) -> str:
+    from synthesis.evaluate.benchmarks.common.generation_trace import describe_generation_end
+
+    end = describe_generation_end(
+        generated_token_ids=new_ids.tolist() if hasattr(new_ids, "tolist") else list(new_ids),
+        stop_token_ids=end_token_ids if isinstance(end_token_ids, list) else [],
+        max_new_tokens=max_new_tokens,
+        completion="",
+        stop_words=None,
+    )
+    return f"hf:{other if end['stop_reason'] == 'unknown' else end['stop_reason']}"
+
+
 def _unconstrained_smiles_seed_prompt(base_prompt: str) -> str:
     """Same expression-only framing GCD uses for SMILES (2026-09-20 baseline repair,
     item 5) -- the CARS paper's own few-shot files already say "a single SMILES
@@ -2023,6 +2516,13 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
             args.eval_model, device_map=device, torch_dtype=torch.float16, trust_remote_code=True
         )
 
+    tag = "legacy-unconstrained-smiles"
+    _log_unconstrained_no_constraint(tag, "smiles", args.eval_backend)
+    hf_end_token_ids = (
+        None
+        if args.eval_backend == "vllm"
+        else _token_id_list(getattr(model.generation_config, "eos_token_id", None))
+    )
     rows: list[dict[str, Any]] = []
     seen_per_class: dict[str, set[str]] = {}
 
@@ -2039,6 +2539,18 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
             # Seed by the global draw index, same formula as the other SMILES baselines.
             draw_seed = int(os.environ.get("CSD_PARITY_SEED", 1234)) + _i * 1_000_003
             running_prompt = _truncate_prompt(running_prompt, seed_prompt)
+            if not rows:
+                _log_lane_header(
+                    tag,
+                    "smiles",
+                    prompt=running_prompt,
+                    end_token_ids=(
+                        "vllm default end tokens + stop strings ['\\n\\n']"
+                        if args.eval_backend == "vllm"
+                        else hf_end_token_ids
+                    ),
+                    max_new_tokens=args.eval_max_steps,
+                )
             if args.eval_backend == "vllm":
                 from vllm import SamplingParams as _SP
 
@@ -2049,6 +2561,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
                 completion = outputs[0].outputs[0]
                 gen_text = completion.text
                 num_toks = len(completion.token_ids) if getattr(completion, "token_ids", None) else None
+                stop_reason = _vllm_stop_reason(completion)
             else:
                 torch.manual_seed(draw_seed)
                 inputs = tokenizer(running_prompt, return_tensors="pt").to(model.device)
@@ -2062,6 +2575,12 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
                 new_ids = out_ids[0][inputs["input_ids"].shape[1]:]
                 num_toks = int(new_ids.numel())
                 gen_text = tokenizer.decode(new_ids, skip_special_tokens=True)
+                stop_reason = _hf_stop_reason(
+                    new_ids,
+                    end_token_ids=hf_end_token_ids,
+                    max_new_tokens=args.eval_max_steps,
+                    other="unknown",
+                )
 
             smiles_eval = evaluate_smiles_output(
                 class_name=class_name,
@@ -2075,6 +2594,20 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
                 smiles_eval.get("syntax_valid")
                 and cleaned
                 and cleaned not in seen_per_class[class_name]
+            )
+            # raw = what the model wrote; scored = the molecule the scorer pulled out of it.
+            LOGGER.info(
+                "[%s] class=%s draw=%d dataset=smiles temperature=0.8 stop_reason=%s generated_tokens=%s "
+                "syntax_valid=%s novel=%s raw=%r scored=%r",
+                tag,
+                class_name,
+                _i,
+                stop_reason,
+                num_toks,
+                bool(smiles_eval.get("syntax_valid")),
+                is_novel,
+                _clip(gen_text),
+                _clip(cleaned),
             )
             if cleaned and smiles_eval.get("syntax_valid"):
                 seen_per_class[class_name].add(cleaned)
@@ -2157,11 +2690,30 @@ def run_unconstrained_spider_adapter(args: argparse.Namespace) -> int:
 
     rows: list[dict[str, Any]] = []
     max_new = max(32, int(args.eval_max_steps))
+    tag = "legacy-unconstrained-spider"
+    _log_unconstrained_no_constraint(tag, "spider", args.eval_backend)
+    hf_end_token_ids = (
+        None
+        if args.eval_backend == "vllm"
+        else _token_id_list(getattr(model.generation_config, "eos_token_id", None))
+    )
 
     for example in examples:
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "evaluator_default")
         if not isinstance(prompt, str):
             prompt = str(prompt)
+        if not rows:
+            _log_lane_header(
+                tag,
+                "spider",
+                prompt=prompt,
+                end_token_ids=(
+                    "vllm default end tokens, no stop strings"
+                    if args.eval_backend == "vllm"
+                    else hf_end_token_ids
+                ),
+                max_new_tokens=max_new,
+            )
         num_toks: int | None = None
         if args.eval_backend == "vllm":
             from vllm import SamplingParams as _SP
@@ -2173,6 +2725,7 @@ def run_unconstrained_spider_adapter(args: argparse.Namespace) -> int:
             completion = outputs[0].outputs[0]
             suffix = completion.text
             num_toks = len(completion.token_ids) if getattr(completion, "token_ids", None) else None
+            stop_reason = _vllm_stop_reason(completion)
         else:
             import torch
 
@@ -2191,10 +2744,26 @@ def run_unconstrained_spider_adapter(args: argparse.Namespace) -> int:
             new_ids = out_ids[0][inputs["input_ids"].shape[1]:]
             num_toks = int(new_ids.numel())
             suffix = tokenizer.decode(new_ids, skip_special_tokens=True)
+            stop_reason = _hf_stop_reason(
+                new_ids,
+                end_token_ids=hf_end_token_ids,
+                max_new_tokens=max_new,
+                other="stopping_criteria(clean_boundary)",
+            )
 
         scored_output = suffix
         expected = logic.expected_answer(eval_runtime, example)
         actual, _answer_source, aux = logic.extract_actual(eval_runtime, scored_output, example)
+        # raw = what the model wrote; scored = the query the scorer pulled out of it.
+        LOGGER.info(
+            "[%s] example=%d dataset=spider greedy=True stop_reason=%s generated_tokens=%s raw=%r scored=%r",
+            tag,
+            len(rows),
+            stop_reason,
+            num_toks,
+            _clip(suffix),
+            _clip(actual),
+        )
         is_correct = bool(logic.is_correct(eval_runtime, actual, expected, example, aux, scored_output))
         syntax_valid = bool(aux and aux.get("syntax_valid"))  # the Spider output contract's verdict
 
@@ -2370,6 +2939,17 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
                 surface["start_symbol"],
                 surface["end_symbol"],
             )
+            # opp is AdaptiveSynCode's default (True): inside a span the mask is applied
+            # only when the model's own pick breaks the grammar, so masked_steps below
+            # can be smaller than constrained_steps without anything being wrong.
+            LOGGER.info(
+                "[legacy-crane] settings dataset=%s opportunistic_masking=True top_p=%s "
+                "max_new_tokens=%d stop_words=%s",
+                dataset,
+                generation_kwargs.get("top_p", "unset"),
+                max(32, int(args.eval_max_steps)),
+                _crane_stop_words(dataset),
+            )
         sc = syncode_cache[cache_key]
 
         if dataset == "smiles":
@@ -2388,10 +2968,40 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
             # --eval-start-index, so a shard-local index would repeat another shard's draws.
             _draw_i = int(getattr(args, "eval_start_index", 0) or 0) + len(rows)
             _torch.manual_seed(int(os.environ.get("CSD_PARITY_SEED", 1234)) + _draw_i * 1_000_003)
+        example_index = len(rows)
+        if not rows:
+            _log_lane_header(
+                "legacy-crane",
+                dataset,
+                prompt=prompt,
+                end_token_ids=_syncode_stop_token_ids(sc),
+                max_new_tokens=max(32, int(args.eval_max_steps)),
+            )
+        audit_before = _syncode_audit_counts(sc)
         gen_started = time.perf_counter()
         completions = sc.infer(prompt, stop_words=_crane_stop_words(dataset))
         gen_seconds = time.perf_counter() - gen_started
         raw_output = completions[0] if completions else ""
+        crane_trace = _syncode_generation_trace(sc)
+        crane_audit = _audit_delta(audit_before, _syncode_audit_counts(sc))
+        for switch in crane_trace.get("mode_switches", []):
+            LOGGER.info(
+                "[legacy-crane] switch example=%d dataset=%s to=%s token_index=%s",
+                example_index,
+                dataset,
+                switch.get("to"),
+                switch.get("token_index"),
+            )
+        # Read and logged per example; the decoder built this audit and nothing read it.
+        LOGGER.info(
+            "[legacy-crane] constraint-audit example=%d dataset=%s masked_steps=%s unmasked_steps=%s "
+            "unmasked_by_reason=%s",
+            example_index,
+            dataset,
+            crane_audit["masked"] if crane_audit else "unavailable",
+            crane_audit["unmasked"] if crane_audit else "unavailable",
+            crane_audit["by_reason"] if crane_audit else "unavailable",
+        )
         completion = _crane_completion_for_scoring(dataset, prompt, raw_output)
         LOGGER.info(
             "[legacy-crane] completed example dataset=%s raw_chars=%d scored_chars=%d",
@@ -2416,6 +3026,27 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
         expected = logic.expected_answer(eval_runtime, example)
         actual, _answer_source, aux = logic.extract_actual(eval_runtime, scored_output, example)
         is_correct = bool(logic.is_correct(eval_runtime, actual, expected, example, aux, scored_output))
+        closed_spans = re.findall(r"<<(.*?)>>", str(raw_output), flags=re.DOTALL)
+        # Every scorer takes the LAST closed span (see ``_crane_stop_words``).
+        LOGGER.info(
+            "[legacy-crane] example=%d dataset=%s stop_reason=%s generated_tokens=%s last_token_id=%s "
+            "constrained_steps=%s free_steps=%s switches=%d spans_opened=%d spans_closed=%d "
+            "picked_span=%s picked_text=%r scorer_answer=%r raw=%r",
+            example_index,
+            dataset,
+            crane_trace.get("stop_reason", "unavailable"),
+            crane_trace.get("generated_tokens", "unavailable"),
+            crane_trace.get("last_token_id", "unavailable"),
+            crane_trace.get("constrained_steps", "unavailable"),
+            crane_trace.get("free_steps", "unavailable"),
+            len(crane_trace.get("mode_switches", [])),
+            str(raw_output).count("<<"),
+            len(closed_spans),
+            f"last_closed(index={len(closed_spans) - 1})" if closed_spans else "none",
+            _clip(closed_spans[-1].strip()) if closed_spans else "",
+            _clip(actual),
+            _clip(raw_output),
+        )
 
         syntax_valid, _segments = eval_runtime._check_syntax_validity(scored_output, example=example)
         if dataset == "spider":
@@ -2635,6 +3266,19 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    # CSD_TRACE_LOG=1 turns the baseline trace log on (see _configure_trace_logging).
+    _configure_trace_logging()
+    LOGGER.info(
+        "[legacy-runner] lane strategy=%s dataset=%s model=%s backend=%s eval_max_steps=%s "
+        "start_index=%s end_index=%s",
+        args.strategy,
+        args.dataset,
+        args.eval_model,
+        args.eval_backend,
+        args.eval_max_steps,
+        args.eval_start_index,
+        args.eval_end_index,
+    )
     from synthesis.evaluate.benchmarks.common.model_utils import resolve_vllm_tensor_parallel_size
 
     args.vllm_tensor_parallel_size = resolve_vllm_tensor_parallel_size(args.vllm_tensor_parallel_size)

@@ -39,6 +39,16 @@ class ConstraintAudit:
         self._counts_by_reason: dict[str, int] = {}
         self._detail_samples_by_reason: dict[str, list[str]] = {}
         self._total_unconstrained_steps = 0
+        self._total_masked_steps = 0
+
+    def record_masked_step(self) -> None:
+        """Record one decoding step where the grammar mask WAS applied to the scores.
+
+        Lets a caller check "masked steps == generated tokens" for a decoder that is
+        supposed to mask every token, instead of inferring it from the absence of
+        unconstrained steps.
+        """
+        self._total_masked_steps += 1
 
     def record_unconstrained_step(self, reason: str, detail: str) -> None:
         """Record one decoding step that skipped the grammar constraint.
@@ -54,6 +64,10 @@ class ConstraintAudit:
         samples = self._detail_samples_by_reason.setdefault(reason, [])
         if len(samples) < MAX_DETAIL_SAMPLES_PER_REASON:
             samples.append(detail)
+
+    @property
+    def total_masked_steps(self) -> int:
+        return self._total_masked_steps
 
     @property
     def total_unconstrained_steps(self) -> int:

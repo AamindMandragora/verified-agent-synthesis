@@ -201,6 +201,7 @@ class SyncodeLogitsProcessor(LogitsProcessor):
                     accept_mask = torch.cat((accept_mask, torch.zeros(len(scores[idx]) - len(accept_mask), dtype=torch.bool)))
                     
                 scores[idx] = scores[idx].masked_fill(~accept_mask.to(scores.device), -float("inf"))
+                self.constraint_audit.record_masked_step()
             else: # Otherwise, report the error and mask no tokens
                 self.logger.log('No acceptable tokens for the current partial code!')
                 self._log_current_status(partial_code, r)
