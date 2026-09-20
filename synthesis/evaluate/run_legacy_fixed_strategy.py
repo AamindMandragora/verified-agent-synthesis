@@ -2007,10 +2007,16 @@ def _itergen_generation_kwargs(
         kwargs.update(do_sample=True, temperature=0.7)
     else:
         kwargs["do_sample"] = False
-    if dataset == "spider":
-        # The checked-in upstream Spider experiment uses 0.3 for its greedy
-        # iterative search. This discourages immediate token recurrence without
-        # changing the deterministic baseline into sampling.
+    if dataset in ("spider", "smiles"):
+        # 0.3 is what every IterGen-mode experiment the authors checked in uses
+        # (case_studies/sql/eval_sql.py line 189; the privacy run in README.md).
+        # It is the only thing that makes a redraw after backward() differ from the
+        # draw that was just rejected: backward keeps the trace, and forward scales
+        # the logits of the tokens already tried at that position. Left at the 1.0
+        # default, SMILES backtracking was inert -- 8 of 10 chain-extender examples
+        # burned all ten backtracks on 2026-09-20, several returning the identical
+        # continuation each time. GSM is not here: its lane takes one forward() and
+        # never backtracks, so there is nothing for the penalty to act on.
         kwargs["recurrence_penalty"] = 0.3
     return kwargs
 
