@@ -10,9 +10,8 @@ this "match[es] the CARS paper protocol", but the CARS authors' own sampling loo
 ``__init__`` and reuses the same ``prompt_ids`` for every draw -- no rolling suffix at all.
 
 So for every SMILES lane except CARS, the prompt for draw N must be identical to the
-prompt for draw 1, regardless of what the lane accepted on earlier draws. CARS is
-deliberately excluded: its own lane's rolling suffix is a separate, pre-existing question
-and is untouched here.
+prompt for draw 1, regardless of what the lane accepted on earlier draws. The CARS lane
+is covered by tests/test_cars_smiles_lane_does_not_roll_its_prompt.py.
 """
 
 from __future__ import annotations

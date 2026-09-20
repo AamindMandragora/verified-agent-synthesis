@@ -122,7 +122,6 @@ def _audit_delta(before: dict[str, Any] | None, after: dict[str, Any] | None) ->
         "unmasked": after["unmasked"] - before["unmasked"],
         "by_reason": by_reason,
     }
-_MAX_SUFFIX_CHARS = 45000
 
 
 def _completion_for_dataset(dataset: str, prompt: Any, raw_output: Any) -> str:
@@ -204,16 +203,6 @@ def _maybe_reseed_parity_example(example_index: int) -> None:
             torch.cuda.manual_seed_all(seed)
     except Exception:
         pass
-
-
-def _cap_suffix(suffix: str) -> str:
-    """Drop the oldest appended molecules if suffix exceeds ``_MAX_SUFFIX_CHARS``."""
-    if len(suffix) <= _MAX_SUFFIX_CHARS:
-        return suffix
-    lines = suffix.split("\n")
-    while len("\n".join(lines)) > _MAX_SUFFIX_CHARS and len(lines) > 1:
-        lines.pop(0)
-    return "\n".join(lines)
 
 
 def _ensure_repo_cache_env() -> Path:
@@ -1233,7 +1222,6 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
     cars_model = ConstrainedModel(model_id, None, torch_dtype=torch.bfloat16)
 
     rows: list[dict[str, Any]] = []
-    smiles_prompt_suffix: dict[str, str] = {}
     smiles_draw_metrics: dict[str, dict[str, int]] = {}
     grammar_cache: dict[str, Any] = {}
     n_steps = max(1, int(getattr(args, "cars_search_steps", 200)))
@@ -1277,11 +1265,6 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
         else:
             raise ValueError(f"Unsupported dataset for CARS adapter: {dataset}")
         _cars_set_cached_grammar(cars_model, grammar_text, grammar_cache)
-
-        if dataset == "smiles":
-            cls = str(example.get("class_name", ""))
-            if os.environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
-                example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
 
         prompt = _legacy_benchmark_prompt(
             logic,
@@ -1336,10 +1319,6 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
             syntax_valid = bool(aux and aux.get("syntax_valid"))  # the Spider output contract's verdict
         if dataset == "smiles":
             syntax_valid = bool(aux and aux.get("syntax_valid"))
-            if syntax_valid and actual:
-                cls = str(example.get("class_name", ""))
-                if os.environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
-                    smiles_prompt_suffix[cls] = _cap_suffix(smiles_prompt_suffix.get(cls, "") + f" {actual}\nMolecule:")
 
         LOGGER.info(
             "[legacy-cars] draw=%d dataset=%s class=%s tries=%d rejected_tries=%d search_steps_cap=%d "

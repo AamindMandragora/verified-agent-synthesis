@@ -140,7 +140,6 @@ def _run_cars_smiles(monkeypatch, tmp_path, examples, molecule_sequence, invalid
     )
     monkeypatch.setattr(runner, "_baseline_row_question", lambda *a: "question")
     monkeypatch.setenv("CARS_REPO_DIR", str(tmp_path))
-    monkeypatch.setenv("CSD_SMILES_ROLLING_PROMPT", "0")
 
     args = argparse.Namespace(
         dataset="smiles",
