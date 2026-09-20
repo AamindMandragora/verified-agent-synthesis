@@ -458,7 +458,7 @@ def test_smiles_itergen_logs_the_failed_check_and_the_backward(caplog):
     checks = [m for m in messages if f"{tag} check" in m]
     assert "passed=False" in checks[0] and "reason=" in checks[0]
     assert "passed=True" in checks[1]
-    assert "unit=smiles" in _only(messages, f"{tag} backward")
+    assert "unit=token" in _only(messages, f"{tag} backward")
     assert "end_reason=molecule_accepted" in _only(messages, f"{tag} finish")
 
 
@@ -498,7 +498,7 @@ def test_itergen_settings_line_carries_the_recurrence_penalty(caplog):
     runner._log_itergen_settings(
         "smiles", runner._itergen_generation_kwargs(dataset="smiles", max_tokens=4096, max_new_tokens=64)
     )
-    assert "recurrence_penalty=unset" in _only(_messages(caplog), "settings")
+    assert "recurrence_penalty=0.3" in _only(_messages(caplog), "settings")
 
 
 # ---- unconstrained -------------------------------------------------------------

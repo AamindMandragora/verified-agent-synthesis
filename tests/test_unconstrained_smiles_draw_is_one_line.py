@@ -37,9 +37,18 @@ class _FakeOutput:
         self.outputs = [_FakeCompletion(text)]
 
 
+class _FakeChatTokenizer:
+    @staticmethod
+    def apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False):
+        return "".join(m["content"] for m in messages)
+
+
 class _FakeLLM:
     def __init__(self, **kwargs):
         pass
+
+    def get_tokenizer(self):
+        return _FakeChatTokenizer()
 
     def generate(self, prompts, sampling_params):
         return [_FakeOutput("C=CC(=O)OCCCC")]
@@ -83,7 +92,7 @@ def test_a_huggingface_draw_stops_at_the_end_of_the_line(monkeypatch, tmp_path):
     transformers = pytest.importorskip("transformers")
     seen: list[dict] = []
 
-    class _FakeTokenizer:
+    class _FakeTokenizer(_FakeChatTokenizer):
         def __call__(self, text, return_tensors=None):
             self.last = text
             return self

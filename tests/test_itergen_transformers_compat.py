@@ -191,7 +191,7 @@ def test_smiles_itergen_samples_at_the_approved_temperature():
 
     assert kwargs["do_sample"] is True
     assert kwargs["temperature"] == 0.7
-    assert "recurrence_penalty" not in kwargs
+    assert kwargs["recurrence_penalty"] == 0.3
 
 
 
@@ -637,9 +637,15 @@ def test_crane_smiles_samples_with_neutral_reasoning_and_scores_only_inner_span(
     observed = {}
     written = {}
 
+    class _ChatTokenizer:
+        @staticmethod
+        def apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False):
+            return "".join(m["content"] for m in messages)
+
     class FakeAdaptiveSynCode:
         def __init__(self, **kwargs):
             observed["constructor_kwargs"] = kwargs
+            self.model = types.SimpleNamespace(tokenizer=_ChatTokenizer())
 
         def infer(self, prompt, stop_words=None):
             observed["generation_prompt"] = prompt
