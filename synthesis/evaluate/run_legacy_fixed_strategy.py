@@ -209,6 +209,26 @@ def _cars_prompt_profile(dataset: str) -> str:
     return "expression_only"
 
 
+def _gcd_prompt_profile(dataset: str) -> str:
+    """GCD forces its answer's constrained span to start immediately (see ``_gcd_prompt``),
+    so on GSM it cannot itself produce chain-of-thought text. It still uses the same task
+    header and few-shot examples every other GSM lane uses (``format_prompt`` /
+    ``evaluator_default``) -- the "<<" append is the only difference the method needs."""
+    if dataset == "gsm_symbolic":
+        return "evaluator_default"
+    return "expression_only"
+
+
+def _render_gsm_chat_prompt(tokenizer: Any, messages: list[dict]) -> str:
+    """Render GSM chat messages exactly as every other GSM lane does (see generation.py)."""
+    try:
+        return tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+        )
+    except TypeError:
+        return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+
 def _spider_completion_has_clean_boundary(text: str) -> bool:
     """True once a blank line has closed the model's own paragraph.
 
@@ -371,7 +391,7 @@ def _gsm_symbolic_completion_to_delimited(
             wrapped,
             example=example,
         )
-        if logic.example_syntax_pass(all_valid, segments, False, None):
+        if logic.example_syntax_pass(all_valid, segments, None):
             return wrapped
     return f"<<{expr}>>"
 
@@ -716,7 +736,7 @@ def _annotate_legacy_rows_with_syntax(
             syntax_valid = bool(_aux and _aux.get("syntax_valid"))  # the Spider output contract's verdict
         else:
             syntax_valid = bool(
-                logic.example_syntax_pass(all_valid, segments, False, None)
+                logic.example_syntax_pass(all_valid, segments, None)
             )
         row["syntax_valid"] = syntax_valid
     return rows
@@ -1097,6 +1117,12 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
     rows: list[dict[str, Any]] = []
     smiles_prompt_suffix: dict[str, str] = {}
 
+    gsm_tokenizer: Any = None
+    if dataset == "gsm_symbolic":
+        from transformers import AutoTokenizer
+
+        gsm_tokenizer = AutoTokenizer.from_pretrained(args.eval_model, trust_remote_code=True)
+
     for example in examples:
         grammar_text = _grammar_for_example(example)
         cache_key = f"{dataset}:{hash(grammar_text)}"
@@ -1121,7 +1147,9 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
             if __import__("os").environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
                 example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
 
-        prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "expression_only")
+        prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, _gcd_prompt_profile(dataset))
+        if dataset == "gsm_symbolic":
+            prompt = _render_gsm_chat_prompt(gsm_tokenizer, prompt)
         if dataset == "spider":
             prompt = str(prompt)
         gen_started = time.perf_counter()
