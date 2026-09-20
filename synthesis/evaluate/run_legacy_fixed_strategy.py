@@ -466,13 +466,12 @@ def _crane_smiles_span(output: str) -> str:
 
 _SPIDER_ANSWER_ONLY = "Only output the SQL quey. "
 _SPIDER_CRANE_HEADER = (
-    "You are an expert in writing SQL queries. You will be presented with a database "
-    "schema and a question about it.\n\n"
-    "Before answering you should reason briefly about which tables, joins and filters "
-    "the question needs. Then, output the SQL query that answers the question, wrapped "
-    "in << >>.\n\n"
+    "Write a SINGLE SQL query answering the question, using ONLY the tables and columns "
+    "in the schema.\n\n"
+    "Reason step by step (tables, joins, filters). Then output SQL: followed by your "
+    "query wrapped in << >>. Stop after the closing >>.\n\n"
     "You will always respond in the format described below: \n"
-    "Let's think step by step. <reasoning> The final query is <<SQL query>>"
+    "Let's think step by step. <reasoning> SQL: <<SQL query>>"
 )
 
 
