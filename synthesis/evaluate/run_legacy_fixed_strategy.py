@@ -1595,6 +1595,82 @@ def _itergen_generate_spider(
     return completion
 
 
+def _itergen_generate_smiles(
+    iter_gen: Any,
+    prompt: Any,
+    example: dict[str, Any],
+    *,
+    seen: set[str],
+    max_iterations: int = 20,
+    backwards_limit: int = 10,
+) -> str:
+    """Per-molecule IterGen loop: forward one molecule, check RDKit validity and
+    uniqueness (not a prompt exemplar, not already accepted this run), backward and
+    retry -- bounded by ``backwards_limit`` -- on failure. Same forward/check/backward
+    shape as ``_itergen_generate_spider``, adapted to SMILES since the IterGen paper
+    has no molecule case study of its own (2026-09-20 baseline repair, item 7; our
+    own adaptation, not something the IterGen authors defined).
+
+    ``seen`` is mutated in place with the accepted molecule, mirroring how the other
+    SMILES adapters track already-accepted molecules across a rolling multi-draw run.
+    """
+    from synthesis.evaluate.benchmarks.smiles.metrics import (
+        clean_smiles_output,
+        evaluate_smiles_output,
+    )
+
+    iter_gen.start(prompt)
+    class_name = str(example.get("class_name", ""))
+    grammar_text = str(example.get("grammar_text", ""))
+    generated: Any = ""
+    num_backwards = 0
+    iterations = 0
+    LOGGER.info(
+        "[legacy-itergen-smiles] start class=%s max_iterations=%d backwards_limit=%d",
+        class_name,
+        max_iterations,
+        backwards_limit,
+    )
+    while not iter_gen.finished() and iterations < max_iterations:
+        iterations += 1
+        generated = iter_gen.forward(units=["smiles"], num=1)
+        completion = str(generated[0]) if isinstance(generated, list) and generated else str(generated)
+        cleaned = clean_smiles_output(completion)
+        smiles_eval = evaluate_smiles_output(
+            class_name=class_name,
+            output=completion,
+            grammar_text=grammar_text,
+            prompt_exemplars=list(seen),
+            require_rdkit=True,
+        )
+        accepted = bool(smiles_eval.get("syntax_valid") and cleaned and cleaned not in seen)
+        if accepted:
+            seen.add(cleaned)
+            break
+        if num_backwards >= backwards_limit:
+            break
+        iter_gen.backward("smiles")
+        num_backwards += 1
+        LOGGER.info(
+            "[legacy-itergen-smiles] backtrack molecule=%r count=%d",
+            cleaned,
+            num_backwards,
+        )
+
+    if isinstance(generated, list):
+        completion = str(generated[0]) if generated else ""
+    else:
+        completion = str(generated)
+    LOGGER.info(
+        "[legacy-itergen-smiles] finish iterations=%d backtracks=%d finished=%s output_chars=%d",
+        iterations,
+        num_backwards,
+        bool(iter_gen.finished()),
+        len(completion),
+    )
+    return completion
+
+
 # Robustness guard, not an evaluation change: greedy (do_sample=False) IterGen can enter a
 # non-terminating regeneration loop on a degenerate example (e.g. an unbounded ``.``-repeated
 # SMILES) and never return from ``forward()``. A per-example wall-clock cap treats such a stuck
@@ -1618,6 +1694,8 @@ def _itergen_generate_with_timeout(
     cap_seconds: float,
     *,
     spider_example: dict[str, Any] | None = None,
+    smiles_example: dict[str, Any] | None = None,
+    smiles_seen: set[str] | None = None,
 ) -> tuple[str, bool]:
     """Run ``_itergen_generate`` under a SIGALRM wall-clock cap.
 
@@ -1627,6 +1705,9 @@ def _itergen_generate_with_timeout(
     def _generate() -> str:
         if spider_example is not None:
             return _itergen_generate_spider(iter_gen, prompt, spider_example)
+        if smiles_example is not None:
+            assert smiles_seen is not None
+            return _itergen_generate_smiles(iter_gen, prompt, smiles_example, seen=smiles_seen)
         return _itergen_generate(iter_gen, prompt)
 
     if cap_seconds <= 0:
@@ -1732,6 +1813,7 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
     itergen_cache: dict[str, Any] = {}
     rows: list[dict[str, Any]] = []
     smiles_prompt_suffix: dict[str, str] = {}
+    smiles_seen_per_class: dict[str, set[str]] = {}
 
     for _ex_i, example in enumerate(examples):
         grammar_text = _grammar_for_example(example)
@@ -1778,11 +1860,20 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
         else:
             generation_prompt = prompt
         gen_started = time.perf_counter()
+        if dataset == "smiles":
+            _smiles_cls = str(example.get("class_name", ""))
+            smiles_seen_per_class.setdefault(
+                _smiles_cls, set(example.get("prompt_exemplars", []) or [])
+            )
         raw_completion, _timed_out = _itergen_generate_with_timeout(
             iter_gen,
             generation_prompt,
             _ITERGEN_PER_EXAMPLE_TIMEOUT_SECONDS,
             spider_example=example if dataset == "spider" else None,
+            smiles_example=example if dataset == "smiles" else None,
+            smiles_seen=smiles_seen_per_class.get(str(example.get("class_name", "")))
+            if dataset == "smiles"
+            else None,
         )
         if _timed_out:
             print(

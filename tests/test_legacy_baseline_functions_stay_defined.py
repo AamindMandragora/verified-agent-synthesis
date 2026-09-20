@@ -48,6 +48,7 @@ REQUIRED_FUNCTION_NAMES = [
     "_cars_max_new_tokens",
     "_cars_smiles_class_targets",
     "_unconstrained_smiles_seed_prompt",
+    "_itergen_generate_smiles",
 ]
 
 
