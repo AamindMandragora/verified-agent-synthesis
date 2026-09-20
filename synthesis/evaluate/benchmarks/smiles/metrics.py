@@ -30,49 +30,9 @@ CLASS_MOTIFS: dict[str, tuple[str, ...]] = {
         "OC(=O)C(=C)",
         "O=C(O)C(=C)",
     ),
+    "chain_extenders": ("OC", "CO", "N"),
     "isocyanates": ("N=C=O", "O=C=N"),
 }
-
-# A chain extender is a small molecule with at least two reactive ends -- alcohol/
-# phenol O-H groups and/or primary or secondary amine N-H groups -- so it can join
-# two polymer chains. The old rule was a plain substring match against ("OC", "CO",
-# "N"), so methanol, ammonia, triethylamine, and dimethyl ether all counted as chain
-# extenders despite having zero or one reactive end. These SMARTS count genuine
-# reactive groups instead: a hydroxyl on a carbon that is not a carbonyl carbon (so
-# carboxylic acids do not count), and a primary/secondary amine nitrogen that is not
-# an amide nitrogen (not attached to a carbonyl) and not part of a C=N/N=N (so imines
-# and azo nitrogens do not count).
-_CHAIN_EXTENDER_HYDROXYL_SMARTS = "[OX2H][#6;!$([#6]=O)]"
-_CHAIN_EXTENDER_AMINE_SMARTS = "[NX3;H2,H1;!$(N[#6]=O);!$(N=*)]"
-
-
-@lru_cache(maxsize=None)
-def _chain_extender_patterns():
-    if Chem is None:
-        return None
-    hydroxyl = Chem.MolFromSmarts(_CHAIN_EXTENDER_HYDROXYL_SMARTS)
-    amine = Chem.MolFromSmarts(_CHAIN_EXTENDER_AMINE_SMARTS)
-    if hydroxyl is None or amine is None:
-        return None
-    return hydroxyl, amine
-
-
-def _chain_extender_membership(smiles: str) -> bool | None:
-    """True iff the molecule has >= 2 reactive ends (hydroxyls + amines,
-    counted together, per the SMARTS above). Returns None -- matching
-    ``rdkit_valid``'s convention -- when RDKit itself is unavailable, since
-    this class's rule cannot be evaluated without it."""
-    patterns = _chain_extender_patterns()
-    if patterns is None:
-        return None
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        return False
-    hydroxyl, amine = patterns
-    reactive_ends = len(mol.GetSubstructMatches(hydroxyl)) + len(
-        mol.GetSubstructMatches(amine)
-    )
-    return reactive_ends >= 2
 
 
 def clean_smiles_output(output: str | None) -> str:
@@ -127,13 +87,9 @@ def rdkit_valid(smiles: str) -> bool | None:
         return False
 
 
-def target_class_membership(class_name: str, smiles: str) -> bool | None:
-    if not smiles:
-        return False
-    if class_name == "chain_extenders":
-        return _chain_extender_membership(smiles)
+def target_class_membership(class_name: str, smiles: str) -> bool:
     motifs = CLASS_MOTIFS.get(class_name)
-    if not motifs:
+    if not motifs or not smiles:
         return False
     return any(motif in smiles for motif in motifs)
 
