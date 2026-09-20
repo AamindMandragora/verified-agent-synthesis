@@ -1905,6 +1905,30 @@ def _log_itergen_forward(
     )
 
 
+def _itergen_backward_and_log(
+    tag: str, iter_gen: Any, *, iteration: int, unit: str, value: Any, reason: str, count: int
+) -> None:
+    """Back up over the last unit of this name. Used by the Spider loop.
+
+    Spider's units (column_name, table_name) do not nest, so the start of the last one
+    sits before the text that failed the check and backing up over it removes that text.
+    SMILES nests, which is why it has its own helper below.
+    """
+    before = _itergen_generated_token_ids(iter_gen)
+    iter_gen.backward(unit)
+    after = _itergen_generated_token_ids(iter_gen)
+    LOGGER.info(
+        "[%s] backward iteration=%d unit=%s units_removed=1 tokens_removed=%s value=%r reason=%s count=%d",
+        tag,
+        iteration,
+        unit,
+        len(before) - len(after) if before is not None and after is not None else "unavailable",
+        _clip(value),
+        reason,
+        count,
+    )
+
+
 def _itergen_backward_over_the_molecule(
     tag: str, iter_gen: Any, *, iteration: int, value: Any, reason: str, count: int
 ) -> None:
