@@ -806,6 +806,27 @@ def _cars_tokens_to_text(tokens: list[Any]) -> str:
     return "".join(text_tokens).strip()
 
 
+def _cars_max_new_tokens(dataset: str, eval_max_steps: int) -> int:
+    """CARS paper settings (arXiv 2510.01902, Appendix C): 256 new tokens for SMILES,
+    512 for Spider -- fixed per benchmark, not derived from the shared --eval-max-steps
+    campaign flag other methods share (we previously used 150 for both)."""
+    if dataset == "smiles":
+        return 256
+    if dataset == "spider":
+        return 512
+    return max(32, int(eval_max_steps))
+
+
+def _cars_smiles_class_targets(examples: list[dict[str, Any]]) -> dict[str, int]:
+    """One draw target per class: however many rows the dataset sample already
+    allocated to that class (so sharded lanes keep drawing shard-sized targets)."""
+    counts: dict[str, int] = {}
+    for ex in examples:
+        cls = str(ex.get("class_name", ""))
+        counts[cls] = counts.get(cls, 0) + 1
+    return counts
+
+
 def _cars_sampler_steps(
     cars_model: Any,
     prompt: str,
@@ -927,7 +948,7 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
     smiles_prompt_suffix: dict[str, str] = {}
     grammar_cache: dict[str, Any] = {}
     n_steps = max(1, int(getattr(args, "cars_search_steps", 200)))
-    max_new_tokens = max(32, int(args.eval_max_steps))
+    max_new_tokens = _cars_max_new_tokens(dataset, args.eval_max_steps)
 
     gsm_cars_grammar = ""
     if dataset == "gsm_symbolic":
@@ -936,9 +957,10 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
     if dataset == "spider":
         spider_cars_grammar = (repo_root / "synthesis" / "evaluate" / "grammars" / "sql.lark").read_text()
 
-    for _ex_i, example in enumerate(examples):
+    def _cars_draw(_ex_i: int, example: dict[str, Any]) -> tuple[str, bool, bool]:
+        """Run one CARS draw for ``example``, append its row, return (actual, syntax_valid, is_correct)."""
         _maybe_reseed_parity_example(_ex_i)
-        __import__("os").environ["CSD_PARITY_EXAMPLE_INDEX"] = str(_ex_i)
+        os.environ["CSD_PARITY_EXAMPLE_INDEX"] = str(_ex_i)
         if dataset == "gsm_symbolic":
             grammar_text = gsm_cars_grammar
         elif dataset == "spider":
@@ -951,7 +973,7 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
 
         if dataset == "smiles":
             cls = str(example.get("class_name", ""))
-            if __import__("os").environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
+            if os.environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
                 example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
 
         prompt = _legacy_benchmark_prompt(
@@ -990,7 +1012,7 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
             syntax_valid = bool(aux and aux.get("syntax_valid"))
             if syntax_valid and actual:
                 cls = str(example.get("class_name", ""))
-                if __import__("os").environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
+                if os.environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
                     smiles_prompt_suffix[cls] = _cap_suffix(smiles_prompt_suffix.get(cls, "") + f" {actual}\nMolecule:")
 
         question = _baseline_row_question(dataset, example, expected)
@@ -1010,6 +1032,36 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
             run_wall_time_seconds=time.perf_counter() - run_started,
             extra_metrics=slice_metrics,
         )
+        return str(actual or ""), bool(syntax_valid), bool(is_correct)
+
+    if dataset == "smiles":
+        # CARS paper protocol (arXiv 2510.01902): draw until the target number of
+        # unique in-grammar molecules is reached (prompt exemplars excluded, and
+        # excluding molecules this run already accepted for the same class),
+        # capped at 10x the target so a class that never validates cannot spin
+        # forever. The target per class is however many rows the sliced dataset
+        # sample already allocated to it, so sharded lanes keep drawing
+        # shard-sized targets.
+        class_templates: dict[str, dict[str, Any]] = {}
+        for ex in examples:
+            class_templates.setdefault(str(ex.get("class_name", "")), ex)
+        target_counts = _cars_smiles_class_targets(examples)
+
+        _ex_i = -1
+        for cls, template in class_templates.items():
+            target = max(1, target_counts.get(cls, 1))
+            max_draws = target * 10
+            accepted_molecules: set[str] = set()
+            for _draw in range(max_draws):
+                if len(accepted_molecules) >= target:
+                    break
+                _ex_i += 1
+                actual, syntax_valid, is_correct = _cars_draw(_ex_i, dict(template))
+                if syntax_valid and is_correct and actual:
+                    accepted_molecules.add(actual)
+    else:
+        for _ex_i, example in enumerate(examples):
+            _cars_draw(_ex_i, example)
 
     if not rows:
         raise RuntimeError("CARS produced no rows; refusing to write an empty baseline JSON")

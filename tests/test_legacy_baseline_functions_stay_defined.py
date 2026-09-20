@@ -41,6 +41,12 @@ REQUIRED_FUNCTION_NAMES = [
     "_completion_for_dataset",
     "_crane_smiles_prompt",
     "_crane_smiles_span",
+    # Added by the 2026-09-20 baseline repair batch (items 1-2): guard these
+    # too, so a future whole-file copy cannot silently drop them either.
+    "_gcd_prompt_profile",
+    "_render_gsm_chat_prompt",
+    "_cars_max_new_tokens",
+    "_cars_smiles_class_targets",
 ]
 
 
