@@ -190,7 +190,7 @@ def test_smiles_itergen_samples_at_the_approved_temperature():
     )
 
     assert kwargs["do_sample"] is True
-    assert kwargs["temperature"] == 0.7
+    assert kwargs["temperature"] == 1.0
     assert kwargs["recurrence_penalty"] == 0.3
 
 
@@ -710,10 +710,10 @@ def test_crane_smiles_samples_with_neutral_reasoning_and_scores_only_inner_span(
     assert legacy_runner._crane_via_adaptive_syncode(args, "smiles") == 0
 
     constructor = observed["constructor_kwargs"]
-    # SMILES is scored on unique molecules, so this lane samples at the settled
-    # SMILES setting (0.8 / top_p 1.0) rather than decoding greedily.
+    # SMILES is scored on unique molecules, so this lane samples at the shared
+    # SMILES temperature rather than decoding greedily.
     assert constructor["do_sample"] is True
-    assert constructor["temperature"] == 0.8
+    assert constructor["temperature"] == 1.0
     assert constructor["top_p"] == 1.0
     assert constructor["start_symbol"] == "<<"
     assert constructor["end_symbol"] == ">>"

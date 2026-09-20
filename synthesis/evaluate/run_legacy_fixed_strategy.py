@@ -400,12 +400,17 @@ def _gcd_stop_words(dataset: str) -> list[str] | None:
     return None
 
 
+# Every SMILES baseline samples at this one temperature, so no lane gains or loses from
+# its sampling setting. 1.0 is what CARS and the CARS paper's GCD baseline
+# (arXiv 2510.01902) use: the model's own distribution, unsharpened.
+_SMILES_TEMPERATURE = 1.0
+
+
 def _gcd_generation_kwargs(dataset: str) -> dict[str, Any]:
     """SMILES samples rather than decoding greedily -- a molecule grammar accepts many
-    strings, so greedy would always draw the same one path. Temperature 1.0 matches the
-    CARS paper's own GCD baseline (arXiv 2510.01902), which this repairs to."""
+    strings, so greedy would always draw the same one path."""
     if dataset == "smiles":
-        return {"do_sample": True, "temperature": 1.0}
+        return {"do_sample": True, "temperature": _SMILES_TEMPERATURE}
     return {"do_sample": False}
 
 
@@ -440,8 +445,7 @@ def _smiles_draw_seed(global_draw_index: int) -> int:
 def _crane_generation_kwargs(dataset: str) -> dict[str, Any]:
     if dataset == "smiles":
         # SMILES is scored on unique molecules, so greedy would repeat one string.
-        # 0.8 / top_p 1.0 is the settled setting for the other SMILES baselines.
-        return {"do_sample": True, "temperature": 0.8, "top_p": 1.0}
+        return {"do_sample": True, "temperature": _SMILES_TEMPERATURE, "top_p": 1.0}
     return {"do_sample": False}
 
 
@@ -2056,7 +2060,7 @@ def _itergen_generation_kwargs(
         "num_return_sequences": 1,
     }
     if dataset == "smiles":
-        kwargs.update(do_sample=True, temperature=0.7)
+        kwargs.update(do_sample=True, temperature=_SMILES_TEMPERATURE)
     else:
         kwargs["do_sample"] = False
     if dataset in ("spider", "smiles"):
@@ -2738,7 +2742,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
 
     Each sample appends all previously generated valid molecules to the prompt
     so the model is nudged to produce novel strings (matching the CARS paper
-    protocol).  Temperature 0.8 gives diversity; greedy would repeat the same
+    protocol).  Sampling gives diversity; greedy would repeat the same
     molecule every time.
     """
     from synthesis.evaluate.benchmarks.smiles.dataset import (
@@ -2837,7 +2841,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
                 gen_started = time.perf_counter()
                 sp = _SP(
                     max_tokens=args.eval_max_steps,
-                    temperature=0.8,
+                    temperature=_SMILES_TEMPERATURE,
                     stop=_UNCONSTRAINED_SMILES_STOP,
                     seed=draw_seed,
                 )
@@ -2854,7 +2858,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
                 with torch.no_grad():
                     out_ids = model.generate(
                         **inputs, max_new_tokens=args.eval_max_steps,
-                        do_sample=True, temperature=0.8,
+                        do_sample=True, temperature=_SMILES_TEMPERATURE,
                         stop_strings=_UNCONSTRAINED_SMILES_STOP, tokenizer=tokenizer,
                     )
                 gen_seconds = time.perf_counter() - gen_started
@@ -2883,11 +2887,12 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
             )
             # raw = what the model wrote; scored = the molecule the scorer pulled out of it.
             LOGGER.info(
-                "[%s] class=%s draw=%d dataset=smiles temperature=0.8 stop_reason=%s generated_tokens=%s "
+                "[%s] class=%s draw=%d dataset=smiles temperature=%s stop_reason=%s generated_tokens=%s "
                 "syntax_valid=%s novel=%s raw=%r scored=%r",
                 tag,
                 class_name,
                 _i,
+                _SMILES_TEMPERATURE,
                 stop_reason,
                 num_toks,
                 bool(smiles_eval.get("syntax_valid")),

@@ -40,7 +40,7 @@ def test_smiles_still_samples() -> None:
     settings = kwargs_for("smiles")
 
     assert settings["do_sample"] is True
-    assert settings["temperature"] == 0.7
+    assert settings["temperature"] == 1.0
 
 
 def test_gsm_takes_no_penalty_because_its_lane_never_backtracks() -> None:
