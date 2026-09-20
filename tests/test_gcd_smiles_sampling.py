@@ -7,10 +7,10 @@ from synthesis.evaluate import run_legacy_fixed_strategy as runner
 from synthesis.evaluate.run_legacy_fixed_strategy import _gcd_generation_kwargs
 
 
-def test_smiles_gcd_uses_the_established_smiles_sampling_temperature():
+def test_smiles_gcd_samples_at_the_cars_paper_gcd_temperature():
     assert _gcd_generation_kwargs("smiles") == {
         "do_sample": True,
-        "temperature": 0.7,
+        "temperature": 1.0,
     }
 
 
@@ -102,4 +102,4 @@ def test_smiles_sampling_reaches_syncode_constructor(monkeypatch, tmp_path: Path
 
     assert runner.run_gcd_legacy_adapter(args) == 0
     assert constructor_kwargs[0]["do_sample"] is True
-    assert constructor_kwargs[0]["temperature"] == 0.7
+    assert constructor_kwargs[0]["temperature"] == 1.0

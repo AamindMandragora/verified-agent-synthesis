@@ -271,8 +271,11 @@ def _gcd_stop_words(dataset: str) -> list[str] | None:
 
 
 def _gcd_generation_kwargs(dataset: str) -> dict[str, Any]:
+    """SMILES samples rather than decoding greedily -- a molecule grammar accepts many
+    strings, so greedy would always draw the same one path. Temperature 1.0 matches the
+    CARS paper's own GCD baseline (arXiv 2510.01902), which this repairs to."""
     if dataset == "smiles":
-        return {"do_sample": True, "temperature": 0.7}
+        return {"do_sample": True, "temperature": 1.0}
     return {"do_sample": False}
 
 
