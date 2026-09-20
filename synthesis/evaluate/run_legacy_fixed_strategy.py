@@ -254,6 +254,30 @@ def _crane_stop_words(dataset: str) -> list[str]:
     return [">>"]
 
 
+_CRANE_SMILES_ANSWER_ONLY = "Your response must be a single SMILES molecule and nothing else."
+_CRANE_SMILES_REASON_FIRST = (
+    "First reason briefly, step by step, about what defines this class of molecule and how "
+    "yours differs from the examples. Then write the final molecule between << and >>."
+)
+
+
+def _crane_smiles_prompt(prompt: str) -> str:
+    """CRANE only constrains text after the model writes "<<", so its SMILES prompt asks for
+    reasoning first and shows every example molecule inside a << >> span."""
+    if _CRANE_SMILES_ANSWER_ONLY not in prompt:
+        raise ValueError("SMILES prompt changed: CRANE prompt rewrite no longer applies")
+    body = prompt.replace(_CRANE_SMILES_ANSWER_ONLY, _CRANE_SMILES_REASON_FIRST).rstrip()
+    body = re.sub(r"^Molecule: (\S+)$", r"Molecule: <<\1>>", body, flags=re.MULTILINE)
+    if not body.endswith("Molecule:"):
+        raise ValueError("SMILES prompt must end with an open 'Molecule:' line")
+    return body[: -len("Molecule:")] + "Reasoning:"
+
+
+def _crane_smiles_span(output: str) -> str:
+    spans = re.findall(r"<<(.*?)>>", output, flags=re.DOTALL)
+    return spans[-1].strip() if spans else ""
+
+
 def _legacy_gsm_symbolic_grammar_base(repo_root: Path, examples: list[dict[str, Any]]) -> str:
     """Tighten ``gsm.lark`` from a batch (allowed vars / numeric-only), matching GCD semantics.
 
@@ -1151,7 +1175,7 @@ _ITERGEN_PER_EXAMPLE_TIMEOUT_SECONDS = float(
 )
 
 
-class _ItergenPerExampleTimeout(Exception):
+class _ItergenPerExampleTimeout(BaseException):  # BaseException: IterGen catches Exception and would swallow it
     """Raised when a single IterGen ``forward()`` exceeds the per-example wall-clock cap."""
 
 
@@ -1399,6 +1423,11 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
         )
 
     n_per_class = max(1, args.smiles_samples_per_class or args.eval_sample_size)
+    # Sharded lanes slice the draw stream with --eval-start-index/--eval-end-index,
+    # the same way the other SMILES baselines do.
+    draw_start = int(getattr(args, "eval_start_index", 0) or 0)
+    raw_end = getattr(args, "eval_end_index", None)
+    draw_end = n_per_class if raw_end is None else min(int(raw_end), n_per_class)
     uc_smiles_cot_prefix = (
         "For each molecule requested below, give brief step-by-step reasoning about the "
         "constraints, then write the SMILES string.\n\n"
@@ -1434,19 +1463,22 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
         seed_prompt = uc_smiles_cot_prefix + base_prompt
         running_prompt = seed_prompt
 
-        for _i in range(n_per_class):
+        for _i in range(draw_start, draw_end):
+            # Seed by the global draw index, same formula as the other SMILES baselines.
+            draw_seed = int(os.environ.get("CSD_PARITY_SEED", 1234)) + _i * 1_000_003
             running_prompt = _truncate_prompt(running_prompt, seed_prompt)
             if args.eval_backend == "vllm":
                 from vllm import SamplingParams as _SP
 
                 gen_started = time.perf_counter()
-                sp = _SP(max_tokens=args.eval_max_steps, temperature=0.8, stop=["\n\n"])
+                sp = _SP(max_tokens=args.eval_max_steps, temperature=0.8, stop=["\n\n"], seed=draw_seed)
                 outputs = llm.generate([running_prompt], sp)
                 gen_seconds = time.perf_counter() - gen_started
                 completion = outputs[0].outputs[0]
                 gen_text = completion.text
                 num_toks = len(completion.token_ids) if getattr(completion, "token_ids", None) else None
             else:
+                torch.manual_seed(draw_seed)
                 inputs = tokenizer(running_prompt, return_tensors="pt").to(model.device)
                 gen_started = time.perf_counter()
                 with torch.no_grad():
@@ -1726,7 +1758,10 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
                 start_symbol="<<",
                 end_symbol=">>",
                 max_new_tokens=max(32, int(args.eval_max_steps)),
-                do_sample=False,
+                # SMILES is scored on unique molecules: sample like the other SMILES lanes.
+                do_sample=(dataset == "smiles"),
+                temperature=0.8 if dataset == "smiles" else 1.0,
+                top_p=1.0,
                 num_return_sequences=1,
             )
         sc = syncode_cache[cache_key]
@@ -1737,6 +1772,12 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
                 example["prompt"] = example["prompt"].rstrip() + smiles_prompt_suffix.get(cls, "")
 
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "evaluator_default")
+        if dataset == "smiles":
+            import torch as _torch
+
+            prompt = _crane_smiles_prompt(prompt)
+            _draw_i = int(getattr(args, "eval_start_index", 0) or 0) + len(rows)
+            _torch.manual_seed(int(os.environ.get("CSD_PARITY_SEED", 1234)) + _draw_i * 1_000_003)
         gen_started = time.perf_counter()
         completions = sc.infer(prompt, stop_words=_crane_stop_words(dataset))
         gen_seconds = time.perf_counter() - gen_started
@@ -1747,6 +1788,9 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
             if dataset == "gsm_symbolic"
             else completion
         )
+        if dataset == "smiles":
+            # Score only the molecule in the last span; the saved answer keeps the reasoning.
+            scored_output = _crane_smiles_span(completion)
         expected = logic.expected_answer(eval_runtime, example)
         actual, _answer_source, aux = logic.extract_actual(eval_runtime, scored_output, example)
         is_correct = bool(logic.is_correct(eval_runtime, actual, expected, example, aux, scored_output))

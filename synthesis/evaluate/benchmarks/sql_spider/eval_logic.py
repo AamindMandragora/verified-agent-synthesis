@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 import logging
 from typing import Any
 
@@ -140,7 +141,12 @@ def _span_content_for_scoring(scored_output: str) -> str:
     GSM and SMILES apply. Only an output with no delimiter at all, i.e. a legacy
     unconstrained baseline, is scored whole.
     """
-    text = scored_output or ""
+    # Qwen3.5 opens every answer with a (usually empty) <think>...</think> block. It is
+    # reasoning, not the answer: drop it. A block that never closes means the model ran
+    # out of budget while still reasoning, so there is no answer.
+    text = re.sub(r"<think>.*?</think>", "", scored_output or "", flags=re.DOTALL).strip()
+    if text.startswith("<think>"):
+        return ""
     spans = walk_spans(text).spans
     if not spans:
         return text
