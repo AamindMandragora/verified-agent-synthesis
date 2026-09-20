@@ -1,6 +1,6 @@
 """Adapter that subprocesses the upstream CRANE repo's main.py for GSM/Spider baselines.
 
-Provides paper-faithful evaluation for the unconstrained, gcd, crane, and itergen
+Provides paper-faithful evaluation for the unconstrained, crane, and itergen
 strategies on GSM-Symbolic and Spider, using the published CRANE evaluation
 pipeline (8-shot, greedy decoding, the paper's prompt template, and mode flags
 per strategy).
@@ -8,9 +8,15 @@ per strategy).
 Strategy -> CRANE main.py flag mapping:
 
     unconstrained: --cot_grammar_mode original --do_cot True
-    gcd:           --cot_grammar_mode itergen  --do_cot False
     crane:         --cot_grammar_mode adaptive --do_cot True
     itergen:       --cot_grammar_mode itergen  --do_cot True
+
+"gcd" is deliberately absent: the CRANE repo has no separate GCD mode, so it used to be
+implemented here as itergen-with-reasoning-off, which is not what GCD (greedy
+grammar-constrained decoding) means anywhere else in this codebase. GSM's "gcd" strategy
+is routed through run_gcd_legacy_adapter in run_legacy_fixed_strategy.py instead -- the
+same SynCode-backed hard-mask path Spider and SMILES GCD already use (see
+run_legacy_fixed_strategy._routes_through_crane_repo).
 
 The CRANE repo lives at ``~/CRANE`` by default; override via ``CRANE_REPO_DIR``.
 """
@@ -34,7 +40,6 @@ CRANE_SRC_DIR = CRANE_REPO_DIR / "src"
 
 _STRATEGY_TO_CRANE_MODE: dict[str, tuple[str, bool]] = {
     "unconstrained": ("original", True),
-    "gcd": ("itergen", False),
     "crane": ("adaptive", True),
     "itergen": ("itergen", True),
 }
@@ -120,7 +125,7 @@ def run_crane_repo_baseline(args: argparse.Namespace, dataset: str) -> int:
         )
     if args.strategy not in _STRATEGY_TO_CRANE_MODE:
         raise ValueError(
-            f"crane_repo_runner supports unconstrained/gcd/crane/itergen; got {args.strategy}"
+            f"crane_repo_runner supports unconstrained/crane/itergen; got {args.strategy}"
         )
     if not CRANE_SRC_DIR.exists():
         raise RuntimeError(
