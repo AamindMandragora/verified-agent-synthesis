@@ -148,7 +148,10 @@ def _span_content_for_scoring(scored_output: str) -> str:
     text = text.split("<think>", 1)[0].strip()
     spans = walk_spans(text).spans
     if not spans:
-        return text
+        # A span-free baseline continues the few-shot format and opens with "SQL:".
+        # The label is not part of the query, and the answer ends at the first blank line:
+        # after it the model starts over ("SQL: ..." again) until the budget runs out.
+        return re.sub(r"^sql\s*:\s*", "", text, flags=re.IGNORECASE).split("\n\n", 1)[0].strip()
     closed = [span for span in spans if span.closed]
     return closed[-1].content if closed else ""
 

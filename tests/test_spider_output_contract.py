@@ -48,21 +48,18 @@ def _real_parser():
     return _CachedRealEvaluator()._get_syntax_parser(_example())
 
 
-def test_existing_forced_span_entry_rejects_sql_label_instead_of_extracting_it():
+def test_span_free_answer_may_open_with_the_few_shot_sql_label():
+    # Span-free baselines continue the few-shot format ("SQL: ..."). The label is dropped;
+    # any other wrapper text is still rejected (next test).
     actual, source, aux = sql_eval_logic.extract_actual(
         _CachedRealEvaluator(),
         "SQL: SELECT name FROM singer",
         _example(),
     )
 
-    assert actual is None
-    assert source == "spider_output_contract_rejected"
-    assert aux == {
-        "syntax_valid": False,
-        "removed_terminal_token_count": 0,
-        "output_contract_valid": False,
-        "output_rejection_reason": "prompt_or_wrapper",
-    }
+    assert actual == "SELECT name FROM singer"
+    assert source == "bare_sql"
+    assert aux["syntax_valid"] is True and aux["output_rejection_reason"] is None
 
 
 def test_existing_itergen_adapter_rejects_wrapped_sql_with_coherent_fields():
@@ -520,7 +517,7 @@ def _evaluate_one_sample(
 
 
 def test_rejected_evaluator_sample_fields_are_coherent(monkeypatch):
-    sample = _evaluate_one_sample(monkeypatch, "SQL: SELECT name FROM singer")
+    sample = _evaluate_one_sample(monkeypatch, "Here is the query: SELECT name FROM singer")
 
     assert sample["actual"] is None
     assert sample["answer_source"] == "spider_output_contract_rejected"
