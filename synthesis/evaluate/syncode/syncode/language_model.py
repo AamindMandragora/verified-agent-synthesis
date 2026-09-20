@@ -60,18 +60,14 @@ class HuggingFaceModel:
         self._before_prediction_hook = before_prediction_hook
         self.grammar_decoder = grammar_decoder
         self.grammar_processor: Iterable = LogitsProcessorList([self.grammar_decoder]) if self.grammar_decoder is not None else None
-        # Fold in every stop id the model itself declares (Qwen chat models end on
-        # <|im_end|> which is not always tokenizer.eos_token_id), so EOS at a complete
-        # parse is actually reachable and transformers' generate() stops on it.
         # The hand-written generate loops stop on either end token: Qwen3.5-4B closes an
         # answer with <|endoftext|> (the model config's eos), not the tokenizer's <|im_end|>.
         _model_eos = getattr(self.model.generation_config, 'eos_token_id', None)
         _model_eos = [] if _model_eos is None else (_model_eos if isinstance(_model_eos, (list, tuple)) else [_model_eos])
         self._stop_token_ids = {int(t) for t in [self.tokenizer.eos_token_id, *_model_eos] if t is not None}
+        # The grammar mask admits the same end tokens, so EOS at a complete parse is reachable.
         if self.grammar_decoder is not None:
-            _eos = getattr(self.model.generation_config, 'eos_token_id', None)
-            if _eos is not None:
-                self.grammar_decoder.eos_token_ids |= set(_eos if isinstance(_eos, (list, tuple)) else [_eos])
+            self.grammar_decoder.eos_token_ids |= self._stop_token_ids
 
         self.mode = mode
         self.grammar = grammar
@@ -305,13 +301,24 @@ class UnconstrainedMode:
 class ConstrainedMode:
     pass
 
+
+def _adaptive_initial_state(start_inside_constrained, token_ids, grammar_decoder):
+    last_constrained_end = len(token_ids[0]) - 1
+    current_state = ConstrainedMode if start_inside_constrained else UnconstrainedMode
+    start_constrained_from = None
+    if start_inside_constrained:
+        start_constrained_from = len(token_ids[0])
+        grammar_decoder.reset_adaptive(start_constrained_from)
+    return last_constrained_end, current_state, start_constrained_from
+
 class AdaptiveGrammarDecoder(HuggingFaceModel):
-    def __init__(self, model, grammar, tokenizer=None, prompt_template = '', best_of = 1, before_prediction_hook=lambda : None, device='cuda', grammar_decoder=None, mode = 'original', opp = True, start_symbol = "<<", start_in_grammar = True, end_symbol = ">>", end_in_grammar = True, **kwargs):
+    def __init__(self, model, grammar, tokenizer=None, prompt_template = '', best_of = 1, before_prediction_hook=lambda : None, device='cuda', grammar_decoder=None, mode = 'original', opp = True, start_symbol = "<<", start_in_grammar = True, end_symbol = ">>", end_in_grammar = True, start_inside_constrained = False, **kwargs):
         super().__init__(model, grammar, tokenizer, prompt_template, best_of, before_prediction_hook, device, grammar_decoder, mode, opp, **kwargs)
         self.start_symbol = start_symbol
         self.start_in_grammar = start_in_grammar
         self.end_symbol = end_symbol
         self.end_in_grammar = end_in_grammar
+        self.start_inside_constrained = start_inside_constrained
     
     @torch.inference_mode()
     def _generate(
@@ -329,8 +336,13 @@ class AdaptiveGrammarDecoder(HuggingFaceModel):
 
         token_ids, attention_mask, past_key_values = inputs['input_ids'], inputs['attention_mask'], None
         
-        last_constrained_end = len(token_ids[0]) - 1
-        current_state = UnconstrainedMode
+        last_constrained_end, current_state, start_constrained_from = (
+            _adaptive_initial_state(
+                self.start_inside_constrained,
+                token_ids,
+                self.grammar_decoder,
+            )
+        )
         
         # This does not include grammar decoder
         self.model._prepare_special_tokens(gen_config, False, device=self.device)
