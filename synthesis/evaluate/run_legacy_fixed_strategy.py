@@ -497,6 +497,21 @@ def _gcd_gsm_grammar(base_gsm_grammar: str) -> str:
     return base_gsm_grammar.replace(unused_rule, "", 1).replace(body_rule, '\nstart: any_expr ">>"\n', 1)
 
 
+def _gcd_spider_grammar(base_sql_grammar: str) -> str:
+    """Grammar for the query GCD writes after the prompt's "SQL:": the statement, then ";".
+
+    SynCode parses from the rule named ``start``, so the statement terminator has to sit
+    in that rule. ``sql.lark`` keeps it in ``csd_start`` (the rule the CSD span parser
+    uses), so without this rewrite ";" is masked at every step, the lane's ";" stop word
+    can never fire, and the only way out is the model's own end token, which ranks far
+    below carrying the query on. Same rewrite ``_gcd_gsm_grammar`` makes for GSM.
+    """
+    body_rule = "\nstart: sql_stmt\n"
+    if body_rule not in base_sql_grammar:
+        raise ValueError("sql.lark no longer has the rule GCD rewrites")
+    return base_sql_grammar.replace(body_rule, '\nstart: sql_stmt ";"\n', 1)
+
+
 def _gsm_symbolic_completion_to_delimited(
     completion: str,
     example: dict[str, Any],
@@ -1452,7 +1467,9 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
         if dataset == "gsm_symbolic":
             return base_gsm_grammar
         if dataset == "spider":
-            return (repo_root / "synthesis" / "evaluate" / "grammars" / "sql.lark").read_text()
+            return _gcd_spider_grammar(
+                (repo_root / "synthesis" / "evaluate" / "grammars" / "sql.lark").read_text()
+            )
         if dataset == "smiles":
             return str(example.get("grammar_text", ""))
         raise ValueError(f"Unsupported dataset for GCD adapter: {dataset}")
