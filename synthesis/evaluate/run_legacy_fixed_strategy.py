@@ -472,10 +472,11 @@ def _gcd_gsm_grammar(base_gsm_grammar: str) -> str:
     SynCode parses from the rule named ``start``, so the closing marker has to sit in
     that rule. Without it ">>" is never allowed and no answer can end.
     """
-    rewritten = base_gsm_grammar.replace("\nstart: any_expr\n", '\nstart: any_expr ">>"\n', 1)
-    if rewritten == base_gsm_grammar:
-        raise ValueError("gsm.lark no longer has the 'start: any_expr' rule GCD rewrites")
-    return rewritten
+    unused_rule = 'syncode: "<<" start ">>"\n'
+    body_rule = "\nstart: any_expr\n"
+    if unused_rule not in base_gsm_grammar or body_rule not in base_gsm_grammar:
+        raise ValueError("gsm.lark no longer has the rules GCD rewrites")
+    return base_gsm_grammar.replace(unused_rule, "", 1).replace(body_rule, '\nstart: any_expr ">>"\n', 1)
 
 
 def _gsm_symbolic_completion_to_delimited(

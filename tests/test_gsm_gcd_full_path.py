@@ -134,12 +134,10 @@ def test_gsm_gcd_loads_the_gsm_lark_grammar(monkeypatch, tmp_path):
     rc, constructor_kwargs, _infer_calls, _tok, _rows = _run_gsm_gcd(monkeypatch, tmp_path, "<<t + 2>>")
     assert rc == 0
     grammar_text = constructor_kwargs[0]["grammar"]
-    # The dynamic grammar is derived from grammars/gsm.lark: it keeps the file's
-    # "syncode" rule name and the delimited-span shape GCD relies on.
-    gsm_lark_path = Path(runner.__file__).resolve().parents[2] / "synthesis" / "evaluate" / "grammars" / "gsm.lark"
-    assert "syncode:" in gsm_lark_path.read_text()
-    assert "syncode:" in grammar_text
-    assert '"<<"' not in grammar_text  # GCD supplies "<<" itself; grammar covers only the span body
+    # Derived from grammars/gsm.lark. SynCode parses from "start", so that rule must
+    # close the span; the prompt supplies "<<" itself.
+    assert 'start: any_expr ">>"' in grammar_text
+    assert '"<<"' not in grammar_text
 
 
 def test_gsm_gcd_decodes_greedily(monkeypatch, tmp_path):
