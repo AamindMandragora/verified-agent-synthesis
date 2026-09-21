@@ -20,6 +20,10 @@ The project is organized so the core workflow is explicit:
 - `synthesis/evaluate/benchmarks/`: benchmark-specific dataset, environment, generation, and metrics code.
 - `synthesis/evaluate/benchmarks/*/eval_logic.py`: benchmark-specific evaluation delegation logic.
 - `synthesis/evaluate/grammars/`: Lark grammar files used by constrained decoding.
+- Spider's `sql.lark` is pinned byte-for-byte to SynCode commit
+  `4d6c110a028d3fb9cbb5f1a6ac6446b696f3eac4`; it uses the upstream `start`
+  rule and basic lexer. Historical Spider artifacts can be rescored with
+  `scripts.analysis.upstream_sql.rescore` without modifying their source files.
 - `synthesis/evaluate/syncode/`: vendored Syncode dependency for DFA-mask parser acceleration.
 - `environment/`: environment setup and dependency installation notes/scripts.
 - `cache/`: local model, parser, DFA mask, and preserved cache artifacts.

@@ -1,102 +1,219 @@
-// SQL grammar for CSD evaluation on Spider.
+// Adapted from https://github.com/zbrookle/sql_to_ibis and https://github.com/lapp0/outlines 
+// License for https://github.com/zbrookle/sql_to_ibis follows
+//BSD 3-Clause License
 //
-// Mirrors gsm.lark: outer delimiter is "<<" ... ">>" and csd_start consumes
-// the closing delimiter. The constrained window contains one SQL statement.
+//Copyright (c) 2011-2022, Open source contributors.
 //
-// NAME is a single permissive identifier terminal used for tables, columns,
-// and aliases — mirroring itergen's grammar shape. This avoids the LALR
-// lexer ambiguity that comes with multiple same-regex terminals.
+//Redistribution and use in source and binary forms, with or without
+//modification, are permitted provided that the following conditions are met:
+//
+//* Redistributions of source code must retain the above copyright notice, this
+//  list of conditions and the following disclaimer.
+//
+//* Redistributions in binary form must reproduce the above copyright notice,
+//  this list of conditions and the following disclaimer in the documentation
+//  and/or other materials provided with the distribution.
+//
+//* Neither the name of the copyright holder nor the names of its
+//  contributors may be used to endorse or promote products derived from
+//  this software without specific prior written permission.
+//
+//THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+//AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+//IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+//DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+//FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+//DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+//SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+//CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+//OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+//OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-syncode: start
 
-start: sql_stmt
-csd_start: sql_stmt EOQ
-EOQ: /[;\n]+/
+start: set_expr ";"? -> final
 
-sql_stmt: select_core (compound_op select_core)*
+set_expr: query_expr
+        | set_expr "UNION"i ["DISTINCT"i] set_expr -> union_distinct
+        | set_expr "UNION"i "ALL"i set_expr -> union_all
+        | set_expr "INTERSECT"i ["DISTINCT"i] set_expr -> intersect_distinct
+        | set_expr "EXCEPT"i ["DISTINCT"i] set_expr -> except_distinct
+        | set_expr "EXCEPT"i "ALL"i set_expr -> except_all
 
-compound_op: "UNION"i ["ALL"i]
-           | "INTERSECT"i
-           | "EXCEPT"i
+query_expr: select [ "ORDER"i "BY"i (order_by_expr ",")*  order_by_expr] [ "LIMIT"i limit_count [ "OFFSET"i skip_rows ] ]
 
-select_core: "SELECT"i [distinct] select_list "FROM"i from_list [where_clause] [group_clause] [order_clause] [limit_clause]
+select: "SELECT"i [SELECT_CONSTRAINT] [(select_expr ",")*] select_expr "FROM"i [(from_expr ",")*] from_expr [ "WHERE"i where_expr ] [ "GROUP"i "BY"i [(groupby_expr ",")*] groupby_expr ] [ "HAVING"i having_expr] [ "WINDOW"i window_expr ]
 
-distinct: "DISTINCT"i
+where_expr: bool_expression
 
-select_list: select_item ("," select_item)*
-select_item: "*"                                          -> sel_star
-           | table_ref "." "*"                            -> sel_table_star
-           | value_expr [alias]                           -> sel_expr
+select_expr.0: expression_math [ [ "AS"i ] alias ] -> select_expression
 
-alias: "AS"i identifier
-     | identifier
+?from_expr: from_item -> from_expression
 
-from_list: table_source ("," table_source)*
-table_source: table_primary (join_op table_primary ["ON"i bool_expr])*
-table_primary: table_ref [alias]
-             | "(" sql_stmt ")" [alias]
-join_op: "JOIN"i | "INNER"i "JOIN"i | "LEFT"i ["OUTER"i] "JOIN"i | "RIGHT"i ["OUTER"i] "JOIN"i | "FULL"i ["OUTER"i] "JOIN"i | "CROSS"i "JOIN"i
+order_by_expr: order -> order_by_expression
 
-where_clause: "WHERE"i bool_expr
+having_expr: bool_expression
 
-group_clause: "GROUP"i "BY"i value_expr ("," value_expr)* [having_clause]
-having_clause: "HAVING"i bool_expr
+groupby_expr: expression -> group_by
 
-order_clause: "ORDER"i "BY"i order_item ("," order_item)*
-order_item: value_expr [order_dir]
-order_dir: "ASC"i | "DESC"i
+window_expr: [window_expr ","] _window_name "AS"i ( window_definition )
 
-limit_clause: "LIMIT"i NUMBER ["OFFSET"i NUMBER]
+from_item: table_name [ [ "AS"i ] alias ] -> table
+            | join -> join
+            | cross_join -> cross_join_expression
+            | subquery
+table_name: name
 
-bool_expr: bool_and ("OR"i bool_and)*
-bool_and: bool_not ("AND"i bool_not)*
-bool_not: "NOT"i bool_not
-        | bool_atom
-bool_atom: value_expr comp_op value_expr                  -> cmp
-         | value_expr "BETWEEN"i value_expr "AND"i value_expr -> between
-         | value_expr ["NOT"i] "IN"i "(" in_rhs ")"         -> in_
-         | value_expr ["NOT"i] "LIKE"i value_expr           -> like
-         | value_expr "IS"i ["NOT"i] "NULL"i                 -> is_null
-         | "EXISTS"i "(" sql_stmt ")"                      -> exists_
-         | "(" bool_expr ")"                              -> bool_paren
+subquery: ( "(" (query_expr | join | cross_join) ")" ) [ [ "AS"i ] alias ]
 
-in_rhs: value_expr ("," value_expr)*
-      | sql_stmt
+cross_join: from_item "CROSS"i "JOIN"i from_item
+join: from_item JOIN_EXPR from_item [ "ON"i bool_expression ] -> join_expression
 
-comp_op: "=" | "!=" | "<>" | "<=" | ">=" | "<" | ">"
+JOIN_EXPR.5: (JOIN_TYPE WS)? "JOIN"i
+JOIN_TYPE: "INNER"i | "OUTER"i? | JOIN_DIRECTION (WS "OUTER"i)? | JOIN_DIRECTION
+JOIN_DIRECTION: "FULL"i | "LEFT"i | "RIGHT"i
 
-value_expr: term (("+" | "-") term)*
-term: factor (("*" | "/") factor)*
-factor: agg_expr
-      | "(" value_expr ")"
-      | "(" sql_stmt ")"
-      | column_expr
-      | NUMBER
-      | STRING
-      | "NULL"i
+?expression_math: expression_product
+               | expression_math "+" expression_product -> expression_add
+               | expression_math "-" expression_product -> expression_sub
+               | "CASE"i (when_then)+ "ELSE"i expression_math "END"i -> case_expression
+               | "CAST"i "(" expression_math "AS"i TYPENAME ")" -> as_type
+               | "CAST"i "(" literal "AS"i TYPENAME ")" -> literal_cast
+               | AGGREGATION expression_math ")" [window_form] -> sql_aggregation
+               | "RANK"i "(" ")" window_form -> rank_expression
+               | "DENSE_RANK"i "(" ")" window_form -> dense_rank_expression
+               | "COALESCE"i "(" [(expression_math ",")*] expression_math ")" -> coalesce_expression
+               | subquery -> subquery_expression
 
-agg_expr: agg_kw "(" [distinct] agg_arg ")"
-agg_arg: "*" | value_expr
+window_form: "OVER"i "(" ["PARTITION"i "BY"i (partition_by ",")* partition_by] ["ORDER"i "BY"i (order ",")* order [ row_range_clause ] ] ")"
 
-agg_kw: "COUNT"i | "SUM"i | "AVG"i | "MIN"i | "MAX"i
+partition_by: expression_math
 
-column_expr: table_ref "." column_ref
-           | column_ref
+row_range_clause: ( ROWS | RANGE ) frame_extent
+frame_extent: frame_between | frame_preceding
+frame_between: "BETWEEN"i frame_bound "AND"i frame_bound
+frame_bound: frame_preceding | frame_following | "CURRENT"i "ROW"i
+frame_preceding: UNBOUNDED PRECEDING | INT_NUMBER PRECEDING
+frame_following: UNBOUNDED FOLLOWING | INT_NUMBER FOLLOWING
+RANGE: "RANGE"i
+ROWS: "ROWS"i
+UNBOUNDED: "UNBOUNDED"i
+PRECEDING: "PRECEDING"i
+FOLLOWING: "FOLLOWING"i
 
-// Identifiers (table names, column names, aliases) all share one terminal.
-// Three separate same-regex terminals caused LALR ambiguity (lexer always picks
-// the first-defined one), which broke alias-qualified refs like "T1.col FROM tbl AS T1".
-// itergen takes the same approach: a single "name" rule used everywhere.
-table_ref: NAME
-column_ref: NAME
-identifier: NAME
+when_then: "WHEN"i bool_expression "THEN"i expression_math
+order: expression_math ["ASC"i] -> order_asc
+          | expression_math "DESC"i -> order_desc
 
-NAME: /[a-zA-Z_][a-zA-Z0-9_]*/
 
-STRING: /'[^']*'|"[^"]*"/  // single- or double-quoted; no escaping either way, matching Spider gold usage
-NUMBER: /-?\d+(\.\d+)?/
+?expression_product: expression_parens
+                  | expression_product "*" expression_parens -> expression_mul
+                  | expression_product "/" expression_parens -> expression_div
 
+?expression_parens: expression
+                  | "(" expression_parens "*" expression ")" -> expression_mul
+                  | "(" expression_parens "/" expression ")" -> expression_div
+                  | "(" expression_parens "+" expression ")" -> expression_add
+                  | "(" expression_parens "-" expression ")" -> expression_sub
+
+column_name: [name "."] (name | STAR)
+?expression: column_name -> column_name
+            | literal
+
+
+SELECT_CONSTRAINT.9: "ALL"i | "DISTINCT"i
+TYPENAME:  "object"i
+         | "varchar"i
+         | "integer"i
+         | "int16"i
+         | "smallint"i
+         | "int32"i
+         | "int64"i
+         | "int"i
+         | "bigint"i
+         | "float16"i
+         | "float32"i
+         | "float64"i
+         | "float"i
+         | "bool"i
+         | "datetime64"i
+         | "timestamp"i
+         | "time"i
+         | "date"i
+         | "category"i
+         | "string"i
+AGGREGATION.8: ("SUM("i | "AVG("i | "MIN("i | "MAX("i | "COUNT("i "DISTINCT"i | "COUNT("i)
+alias: name -> alias_string
+_window_name: name
+limit_count: INT_NUMBER -> limit_count
+skip_rows: INT_NUMBER
+bool_expression: bool_parentheses
+                 | bool_expression "AND"i bool_parentheses -> bool_and
+                 | bool_expression "OR"i bool_parentheses -> bool_or
+bool_parentheses: comparison_type
+                 | "(" bool_expression "AND"i comparison_type ")" -> bool_and
+                 | "(" bool_expression "OR"i comparison_type ")" -> bool_or
+                 | "EXISTS"i subquery -> exists
+comparison_type: equals | not_equals | greater_than | less_than | greater_than_or_equal
+| less_than_or_equal | between | in_expr | not_in_expr | subquery_in | subquery_not_in | is_null | is_not_null | like_expr | not_like_expr
+
+equals: expression_math "=" expression_math
+is_null: expression_math "IS"i "NULL"i
+is_not_null: expression_math "IS"i "NOT"i "NULL"i
+not_equals: expression_math ("<>" | "!=") expression_math
+greater_than: expression_math ">" expression_math
+less_than: expression_math "<" expression_math
+greater_than_or_equal: expression_math ">=" expression_math
+less_than_or_equal: expression_math "<=" expression_math
+between: expression_math "BETWEEN"i expression_math "AND"i expression_math
+
+// `LIKE` and `NOT LIKE`
+like_expr: expression_math "LIKE"i expression_math
+not_like_expr: expression_math "NOT"i "LIKE"i expression_math
+
+// `IN` and `NOT IN`
+in_expr: expression_math "IN"i "(" [expression_math ","]* expression_math ")"
+subquery_in: expression_math "IN"i subquery
+not_in_expr: expression_math "NOT"i "IN"i "(" [expression_math ","]* expression_math ")"
+subquery_not_in: expression_math "NOT"i "IN"i subquery
+
+?literal: boolean -> bool
+       | number_expr -> number
+       | /'([^'])+'|''/ -> string
+       | timestamp_expression -> timestamp_expression
+boolean: "TRUE"i -> true
+       | "FALSE"i -> false
+?number_expr: product
+
+?product: INT_NUMBER -> integer
+       | FLOAT -> float
+
+INT_NUMBER: /[1-9][0-9]*/
+
+STAR: "*"
+window_definition:
+timestamp_expression: "NOW"i "(" ")" -> datetime_now
+                    | "TODAY"i "(" ")" -> date_today
+              //       | "TIMESTAMP"i "(" "'" date "'" "," "'" time "'" ")" -> custom_timestamp
+
+date: YEAR "-" MONTH "-" DAY
+YEAR: /[0-9]{4}/
+MONTH: /[0-9]{2}/
+DAY: /[0-9]{2}/
+time: HOURS ":" MINUTES ":" SECONDS
+HOURS: /[0-9]{2}/
+MINUTES: /[0-9]{2}/
+SECONDS: /[0-9]{2}/
+name: CNAME | ESCAPED_STRING
+
+_STRING_INNER: /(?:[^"\\]|\\.)*?/
+ESCAPED_STRING: "\"" _STRING_INNER "\""
+
+// %import common.ESCAPED_STRING
+%import common.CNAME
+%import common.WS
+%import common.SQL_COMMENT
 %import common.WS_INLINE
-%ignore WS_INLINE
-// No -- comments: a comment swallows the rest of the line, so inside an answer span it
-// can only ever be dead text after a finished query.
+%import common.FLOAT
+
+%ignore WS
+%ignore SQL_COMMENT

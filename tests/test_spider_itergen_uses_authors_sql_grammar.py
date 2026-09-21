@@ -42,9 +42,8 @@ def test_authors_grammar_defines_column_name_and_table_name():
     )
 
 
-def test_authors_grammar_is_not_our_own_sql_grammar():
-    """Our own grammar names these symbols differently; loading it would silently
-    reintroduce the vacuous loop this fix closes."""
+def test_upstream_adoption_preserves_the_named_units_itergen_needs():
+    """Both upstream grammars now have the units the backtracking loop needs."""
     from pathlib import Path
 
     grammar_text = _itergen_spider_authors_grammar_text()
@@ -57,4 +56,6 @@ def test_authors_grammar_is_not_our_own_sql_grammar():
     ).read_text()
 
     assert grammar_text != our_grammar_text
-    assert "column_ref" in our_grammar_text and "column_ref" not in grammar_text
+    for text in (grammar_text, our_grammar_text):
+        assert re.search(r"(?m)^column_name\s*:", text)
+        assert re.search(r"(?m)^table_name\s*:", text)

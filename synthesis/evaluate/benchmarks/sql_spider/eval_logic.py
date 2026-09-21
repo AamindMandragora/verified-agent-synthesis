@@ -253,7 +253,7 @@ def get_generation_runner():
 def get_syntax_parser(evaluator: Any, example: dict[str, Any] | None):
     from lark import Lark
 
-    return Lark(evaluator._get_grammar_text(), start="start", parser="lalr")
+    return Lark(evaluator._get_grammar_text(), start="start", parser="lalr", lexer="basic")
 
 
 def ensure_runtime_prereqs(evaluator: Any) -> None:

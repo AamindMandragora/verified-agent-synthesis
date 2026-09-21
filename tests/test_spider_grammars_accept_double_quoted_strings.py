@@ -132,7 +132,7 @@ ITERGEN_SINGLE_QUOTED_GOLDS = list(OURS_SINGLE_QUOTED_GOLDS)
 # loader as test_gold_answers_pass_the_prefix_and_completeness_checks.py) each
 # grammar's plain-Lark parser accepts outright. Measured 2026-09-20.
 OURS_GOLD_COVERAGE_BEFORE_FIX = 726
-OURS_GOLD_COVERAGE_AFTER_FIX = 915
+OURS_GOLD_COVERAGE_AFTER_FIX = 1026  # exact upstream adoption, measured 2026-09-21
 ITERGEN_GOLD_COVERAGE = 1026  # unchanged: the authors' grammar is not edited.
 
 
@@ -191,7 +191,7 @@ def test_ours_gold_coverage_did_not_regress_and_improved(ours_plain_lark, spider
     )
     assert covered == OURS_GOLD_COVERAGE_AFTER_FIX, (
         f"ours(sql.lark) covers {covered} gold queries, expected exactly "
-        f"{OURS_GOLD_COVERAGE_AFTER_FIX} after the double-quote fix"
+        f"{OURS_GOLD_COVERAGE_AFTER_FIX} after exact upstream adoption"
     )
 
 

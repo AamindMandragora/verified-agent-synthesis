@@ -993,6 +993,7 @@ def setup_dafny_environment(
     vllm_gpu_memory_utilization: float = 0.8,
     vllm_max_model_len: int = 16384,
     vllm_enforce_eager: bool = True,
+    parser_start: str = "csd_start",
 ) -> Dict[str, Any]:
     """
     Load model and setup Dafny environment once.
@@ -1057,7 +1058,7 @@ def setup_dafny_environment(
         grammar_text,
         VerifiedDecoderAgent,
         _dafny,
-        start="csd_start",
+        start=parser_start,
         tokenizer=tok,
     )
     parser = LarkDafnyParser(lm._Tokens)

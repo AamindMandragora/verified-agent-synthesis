@@ -110,6 +110,11 @@ when an operator wants an explicit match check.
 
 ## Evaluation Expectations
 
+- `synthesis/evaluate/grammars/sql.lark` is a byte-pinned SynCode upstream
+  grammar. Do not locally extend or simplify it. When rescoring historical
+  Spider artifacts after a grammar change, preserve each source artifact and
+  write a separate derived result with source hashes and parser settings.
+
 - Always compare synthesized strategy performance against a CRANE baseline on the same model/split/sample settings before claiming success.
 - Maintain high syntax/format validity while improving accuracy.
 - Fixed-strategy GSM baselines should use the local CRANE GSM rows across `unconstrained`, `gcd`, `crane`, `itergen`, and `cars` so comparisons are row-aligned.

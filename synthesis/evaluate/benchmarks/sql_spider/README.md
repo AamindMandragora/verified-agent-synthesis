@@ -35,3 +35,9 @@ Nested rollback helpers keep their returned prefixes private until the outermost
 The explicit returned strategy sequence is scored as returned and recorded separately as `strategy_output_text`, `strategy_output_relation`, and `strategy_mutation`; sampled raw-ID evidence is never relabeled as strategy-authored text. The relation is `mixed` whenever sampled IDs were removed or the returned sequence contains authored content; when origin is not proven, the conservative relation is also `mixed`. `sampled_output` requires an independent origin marker, never decoded-text equality alone. An unreconcilable mismatch raises `SpiderEvidenceContractError` and aborts the Spider harness rather than creating an accuracy row.
 Public helper traces are metadata-only: snapshot events expose size only, while generation, rollout, and rollback events expose counts, flags, lengths, and status. Unknown helper results use `result redacted`; `BackwardToSymbol` is length-only and does not publish a local prefix, while the outer `CraneGeneration` event owns its full returned prefix for pending alignment.
 Parser validation uses a temporary lexical view only for the live parser: outer CR/LF becomes inline whitespace and supported `--` comment bodies are omitted, while string-literal contents and the original returned/scored SQL candidate remain unchanged.
+
+The shared `grammars/sql.lark` file is the exact pinned SynCode SQL grammar
+(rather than a local SQL dialect). Spider selects its top-level `start` rule and
+uses Lark's `basic` lexer for both syntax checks and DFA-mask decoding. This
+keeps benchmark syntax scoring aligned with the constrained decoder; it does
+not by itself establish that SynCode accepts every valid SQL tokenization.
