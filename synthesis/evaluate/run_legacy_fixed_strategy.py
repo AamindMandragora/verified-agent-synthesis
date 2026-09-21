@@ -1164,7 +1164,31 @@ def _cars_set_cached_grammar(
 ) -> None:
     cached = grammar_cache.get(grammar_text)
     if cached is None:
-        cars_model._set_grammar_constraint(grammar_text)
+        # LLGuidance reads Lark productions but cannot read its priority
+        # annotations. Parse the grammar itself so dots in literals, regexes
+        # and comments stay untouched. The final benchmark checker still
+        # receives the original grammar, including its lexer priorities.
+        import lark
+
+        grammar_parser = lark.Lark.open(
+            "grammars/lark.lark", rel_to=lark.__file__, parser="lalr",
+            propagate_positions=True,
+        )
+        tree = grammar_parser.parse(grammar_text)
+        priorities = sorted(
+            ((node.meta.start_pos, node.meta.end_pos) for node in tree.find_data("priority")),
+            reverse=True,
+        )
+        backend_grammar = grammar_text
+        for start, end in priorities:
+            backend_grammar = backend_grammar[:start] + backend_grammar[end:]
+        if priorities:
+            LOGGER.info(
+                "[legacy-cars] grammar compatibility: removed %d Lark priority "
+                "annotations for LLGuidance; productions unchanged; final checker unchanged",
+                len(priorities),
+            )
+        cars_model._set_grammar_constraint(backend_grammar)
         grammar_cache[grammar_text] = cars_model.grammar_constraint
     else:
         cars_model.grammar_constraint = cached

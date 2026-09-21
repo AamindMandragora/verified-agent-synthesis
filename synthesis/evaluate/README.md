@@ -1,5 +1,16 @@
 # Evaluate Stage
 
+## CARS grammar compatibility
+
+CARS uses LLGuidance, which does not accept Lark priority annotations.
+The cached grammar-loading path parses the grammar definition and removes only
+priority annotations from the copy passed to CARS. It leaves productions,
+literals, comments and the on-disk grammar unchanged. The final benchmark
+checker still uses the original grammar and its priorities. This compatibility
+step does not claim identical ambiguity handling between LLGuidance and Lark's
+basic lexer. Other grammar errors still raise; no fallback grammar is used.
+The change applies to all evaluator models, not just 4B.
+
 The evaluate stage executes compiled strategies on benchmark tasks and returns structured metrics used by the synthesis feedback loop.
 
 ## Responsibilities
