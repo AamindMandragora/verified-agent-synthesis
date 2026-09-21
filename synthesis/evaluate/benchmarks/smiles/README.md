@@ -25,3 +25,16 @@ Strategies decide their own constraint behaviour. The prompt appends `<< >>` del
 
 SMILES scoring treats syntax validity and class-membership quality as separate signals.
 The synthesis loop can use these diagnostics to discourage degenerate strategies that exploit formatting without producing meaningful molecules.
+
+Class membership uses the original CARS chemical-substructure patterns from
+`experiments/smiles/evaluate_molecules.py:eval_membership`, pinned at CARS commit
+`f46607f983d89e4ca4f40527cd231ab04adc6ed7`: `C=CC(=O)O*` for acrylates,
+`CO`, `OC`, or `N` for chain extenders, and `[*]N=C=O` for isocyanates.
+These are RDKit SMARTS queries, not text substrings. The shared
+`metrics.target_class_membership` serves both metaDecode evaluation and the
+fixed baseline adapters. Missing RDKit raises an error; an unknown class raises
+`ValueError`; an invalid molecule has false membership.
+
+This matches the original class predicate, not every step of the original CARS
+evaluation program. Syntax checks, duplicate handling, prompt-exemplar exclusion,
+and collection denominators remain separate and unchanged by this scorer update.
