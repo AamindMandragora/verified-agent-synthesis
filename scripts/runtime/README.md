@@ -1,5 +1,11 @@
 # Runtime queues
 
+Historical full-baseline evidence used by `run_table5_8_queue.py` is preserved
+under this worktree's `outputs/paper-evidence-20260921/historical-opus/`.
+The six source files retain their original required hashes and values; this
+removes the queue's dependence on the retired full-baseline worktree. The
+preservation record lists original and destination paths and verified hashes.
+
 `prepare_spider_continuation.py` seals a warm Spider continuation without
 reusing attempt numbers. It copies the complete progress report, selects the
 best complete score-bearing attempt (including a complete over-budget timeout),

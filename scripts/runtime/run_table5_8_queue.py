@@ -263,11 +263,15 @@ CANONICAL_CRANE_COMMIT = "616379ce33ac6245933c16e6264b41f7d5800183"
 AUTHOR_TOKEN_BUDGET = 32768
 AUTHOR_REASONING_BUDGET = 4096
 TABLE5_MAX_ATTEMPT_SECONDS = 7200.0
+PRESERVED_PAPER_EVIDENCE = (
+    Path(__file__).resolve().parents[2]
+    / "outputs/paper-evidence-20260921/historical-opus"
+)
 BAR_BINDINGS = {
     "gsm_symbolic": {
         "min_accuracy": 20 / 49,
         "min_syntax_rate": 47 / 49,
-        "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/saved-results/2026-08-05-corrected-full-baseline-evidence.json",
+        "source_path": str(PRESERVED_PAPER_EVIDENCE / "2026-08-05-corrected-full-baseline-evidence.json"),
         "source_sha256": "57392e149cea23efe6f596b921c6cd3d74ae7519e7c286393adadc9bdb579ab7",
     },
     "spider": {
@@ -280,7 +284,7 @@ BAR_BINDINGS = {
         "acrylates": {"min_accuracy": 0.14, "min_syntax_rate": 0.9},
         "chain_extenders": {"min_accuracy": 0.20, "min_syntax_rate": 0.9},
         "isocyanates": {"min_accuracy": 0.30, "min_syntax_rate": 0.9},
-        "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/saved-results/2026-08-05-corrected-full-baseline-cold-manifest.json",
+        "source_path": str(PRESERVED_PAPER_EVIDENCE / "2026-08-05-corrected-full-baseline-cold-manifest.json"),
         "source_sha256": "06c285b2c948c16d9d09b3473ed34ed08ff12ac7efd81bbaaf767d53a0a4d05c",
     },
 }
@@ -319,19 +323,19 @@ IMPORTED_OPUS_BASE = {
     "historical_heldout": {"correct": 14, "syntax_valid": 45, "sample_count": 49},
     "artifacts": {
         "strategy_dafny": {
-            "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/outputs/generated/coldq_fullbaseline_20260803_gsm-qwen25-1p5b/coldq_fullbaseline_20260803_gsm-qwen25-1p5b_20260804_060028_e0a771/dafny/GeneratedCSD.dfy",
+            "source_path": str(PRESERVED_PAPER_EVIDENCE / "GeneratedCSD.dfy"),
             "sha256": "5c0a3e900eb18d1c9e661f11b82a0d0c11e3f5250e61bfcc7f9378cc2c06e8fa",
         },
         "run_log": {
-            "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/outputs/generated/coldq_fullbaseline_20260803_gsm-qwen25-1p5b/run.log",
+            "source_path": str(PRESERVED_PAPER_EVIDENCE / "run.log"),
             "sha256": "f08750c3eb2367472b227a054db8d6d0ce890d3fe0fc728e54b7ade0e6a04792",
         },
         "synthesis_report": {
-            "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/outputs/generated/coldq_fullbaseline_20260803_gsm-qwen25-1p5b/coldq_fullbaseline_20260803_gsm-qwen25-1p5b_20260804_060028_e0a771/results/success_report.json",
+            "source_path": str(PRESERVED_PAPER_EVIDENCE / "success_report.json"),
             "sha256": "ff71e5bbb8409ba8394ed68493c0e6fe4cef061fea666196a7a0a8c338ba998b",
         },
         "heldout_result": {
-            "source_path": "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/outputs/reeval/full_baseline_corrected_20260805/gsm-qwen25-1p5b.json",
+            "source_path": str(PRESERVED_PAPER_EVIDENCE / "gsm-qwen25-1p5b.json"),
             "sha256": "050a5722ab7577e637d81b1838d28b54bf243581c8300aa53922b56f7753b861",
         },
     },
