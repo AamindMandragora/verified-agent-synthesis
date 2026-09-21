@@ -46,11 +46,8 @@ EXPECTED_REPLAYED_ATTEMPTS = [
     37,
 ]
 DEFAULT_HISTORICAL_REPORT = Path(
-    "/home/aadivyar/csd-generation-worktrees/full-baseline-campaign-20260803/"
-    "outputs/generated/coldq_fullbaseline_20260803_gsm-qwen25-1p5b/"
-    "coldq_fullbaseline_20260803_gsm-qwen25-1p5b_20260804_060028_e0a771/"
-    "results/progress_report.json"
-)
+    __file__
+).resolve().parents[2] / "outputs/paper-evidence-20260921/historical-opus/progress_report.json"
 
 
 def _sha256(payload: bytes) -> str:
