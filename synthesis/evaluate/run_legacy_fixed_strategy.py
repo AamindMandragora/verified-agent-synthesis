@@ -706,7 +706,14 @@ def _aggregate_run_metrics(
     *,
     run_wall_time_seconds: float | None,
 ) -> dict[str, Any]:
-    metrics: dict[str, Any] = {"num_examples": len(rows)}
+    metrics: dict[str, Any] = {
+        "num_examples": len(rows),
+        "timing_definitions": {
+            "total_generation_seconds": "Generation time summed over retained/scored outputs; excludes discarded outer draws.",
+            "mean_generation_seconds_per_example": "Mean generation time over retained/scored outputs, not collection cost per requested output.",
+            "run_wall_time_seconds": "Total adapter collection wall time, including setup, scoring, and rejected work.",
+        },
+    }
     times = [
         float(r["generation_seconds"])
         for r in rows
@@ -1452,6 +1459,20 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
     return 0
 
 
+def _unique_smiles_correct(
+    class_name: str, molecule: str, correct: bool, syntax_valid: bool,
+    seen_per_class: dict[str, set[str]],
+) -> bool:
+    """Count a cleaned SMILES string once per class; preserve syntax and row count."""
+    seen = seen_per_class.setdefault(class_name, set())
+    duplicate = molecule in seen
+    if molecule and syntax_valid:
+        seen.add(molecule)
+    if duplicate:
+        LOGGER.info("[baseline-smiles-score] class=%s duplicate=True counted_correct=False", class_name)
+    return bool(correct and syntax_valid and molecule and not duplicate)
+
+
 def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
     """GCD baseline via vendored SynCode (grammar_strict mode = pure hard-mask constrained decoding)."""
     run_started = time.perf_counter()
@@ -1533,6 +1554,7 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
 
     syncode_cache: dict[str, Any] = {}
     rows: list[dict[str, Any]] = []
+    smiles_seen_per_class: dict[str, set[str]] = {}
 
     gsm_tokenizer: Any = None
     if dataset == "gsm_symbolic":
@@ -1637,6 +1659,10 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
             syntax_valid = bool(aux and aux.get("syntax_valid"))  # the Spider output contract's verdict
         if dataset == "smiles":
             syntax_valid = bool(aux and aux.get("syntax_valid"))
+            is_correct = _unique_smiles_correct(
+                str(example.get("class_name", "")), str(actual or ""),
+                is_correct, syntax_valid, smiles_seen_per_class,
+            )
 
         question = _baseline_row_question(dataset, example, expected)
         rows.append(
@@ -3147,6 +3173,7 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
 
     syncode_cache: dict[str, Any] = {}
     rows: list[dict[str, Any]] = []
+    smiles_seen_per_class: dict[str, set[str]] = {}
 
     for example in examples:
         surface = _crane_adaptive_surface(dataset, _grammar_for_example(example))
@@ -3296,6 +3323,10 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
             syntax_valid = bool(aux and aux.get("syntax_valid"))  # the Spider output contract's verdict
         if dataset == "smiles":
             syntax_valid = bool(aux and aux.get("syntax_valid"))
+            is_correct = _unique_smiles_correct(
+                str(example.get("class_name", "")), str(actual or ""),
+                is_correct, syntax_valid, smiles_seen_per_class,
+            )
 
         question = _baseline_row_question(dataset, example, expected)
         rows.append(
