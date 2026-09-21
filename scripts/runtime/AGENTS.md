@@ -142,6 +142,10 @@ The six historical full-baseline source bindings use this worktree's
 `outputs/paper-evidence-20260921/historical-opus/`. Preserve those files and
 their existing SHA-256 values; never point defaults back to a retired worktree.
 This is an evidence-location change, not a change to scores or run settings.
+Other preserved queue sources belong to sibling `historical-gpt/` and
+`spider-contract/` directories under the same paper-evidence root. Keep their
+hashes unchanged. The generated SQL input list retains its absolute-path
+schema and references preserved results under `historical-spider/`.
 
 `run_table5_8_queue.py` is the separate 3-run GSM-Symbolic campaign for the
 Table 5 backend cells. It uses exact profiles

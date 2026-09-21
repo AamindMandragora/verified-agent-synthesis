@@ -6,6 +6,12 @@ The six source files retain their original required hashes and values; this
 removes the queue's dependence on the retired full-baseline worktree. The
 preservation record lists original and destination paths and verified hashes.
 
+The remaining GPT source files and Spider threshold manifest live alongside it
+in `historical-gpt/` and `spider-contract/`. The generated SQL rescore input list
+keeps its existing absolute-path format; its three retired-worktree results
+are copied under `historical-spider/`. `remaining-inputs/` keeps the original
+list, proposed replacement list, and seven-file hash preservation record.
+
 `prepare_spider_continuation.py` seals a warm Spider continuation without
 reusing attempt numbers. It copies the complete progress report, selects the
 best complete score-bearing attempt (including a complete over-budget timeout),

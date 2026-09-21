@@ -277,7 +277,7 @@ BAR_BINDINGS = {
     "spider": {
         "min_accuracy": 59 / 300,
         "min_syntax_rate": 0.9,
-        "source_path": "/home/aadivyar/csd-generation-worktrees/spider-u10a-reservation-20260825-luna/saved-results/2026-08-26-spider-evaluator-contract-u10c-manifest.json",
+        "source_path": str(PRESERVED_PAPER_EVIDENCE.parent / "spider-contract/2026-08-26-spider-evaluator-contract-u10c-manifest.json"),
         "source_sha256": "eb669be8ce13c0412f61bbcfa6b5c630167ce30c89288f0e9e8ff7b9b3a41175",
     },
     "smiles": {
@@ -299,15 +299,15 @@ IMPORTED_GPT_BASE = {
     "historical_heldout": None,
     "artifacts": {
         "strategy_dafny": {
-            "source_path": "/home/aadivyar/csd-generation-worktrees/table58-two-hour-attempt-cap-20260904/synthesis/verify/imported/table5_gpt56sol/GeneratedCSD.dfy",
+            "source_path": str(PRESERVED_PAPER_EVIDENCE.parent / "historical-gpt/GeneratedCSD.dfy"),
             "sha256": "058316be3d85057303e2446f23eee263107bc7d648fa79cde34bf8182d4649fd",
         },
         "run_log": {
-            "source_path": "/home/aadivyar/csd-generation-worktrees/h131-hard-timeout-repair-20260903/.context/h131-spider-reclimb-20260903/h131.parallel.log",
+            "source_path": str(PRESERVED_PAPER_EVIDENCE.parent / "historical-gpt/h131.parallel.log"),
             "sha256": "8896d47c51f6ce2ca1e03e43088cb7b69cd6629613e4cbf623d9a39bfd5679e6",
         },
         "synthesis_report": {
-            "source_path": "/home/aadivyar/csd-generation-worktrees/h131-hard-timeout-repair-20260903/outputs/generated/h131_recovery_gpt56sol_gsm_qwen25_1p5b_20260903/h131_recovery_gpt56sol_gsm_qwen25_1p5b_20260903_20260904_004257_9092c2/results/failure_report.json",
+            "source_path": str(PRESERVED_PAPER_EVIDENCE.parent / "historical-gpt/failure_report.json"),
             "sha256": "f48a7300d2bd044d4e6be83495b1f18388ec570be8b68a8d9faa6129111ab704",
         },
     },
