@@ -5,12 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import lru_cache
 from itertools import combinations
+import logging
 from typing import Any, Dict, Iterable, Optional, Sequence
 
 from lark import Lark
 from lark.exceptions import LarkError
 
-try:  # Optional on focal; metrics report when it is absent.
+try:  # Import remains optional, but class scoring requires RDKit.
     from rdkit import Chem, DataStructs  # type: ignore
     from rdkit.Chem import AllChem  # type: ignore
 except Exception:  # pragma: no cover - depends on host environment
@@ -19,19 +20,15 @@ except Exception:  # pragma: no cover - depends on host environment
     AllChem = None  # type: ignore
 
 EOS_MARKERS = ("<|im_end|>", "<|eot_id|>", "<|endoftext|>")
-CLASS_MOTIFS: dict[str, tuple[str, ...]] = {
-    "acrylates": (
-        "C=CC(=O)O",
-        "C=CC(O)=O",
-        "C(=C)C(=O)O",
-        "C(=C)C(O)=O",
-        "OC(=O)C=C",
-        "O=C(O)C=C",
-        "OC(=O)C(=C)",
-        "O=C(O)C(=C)",
-    ),
-    "chain_extenders": ("OC", "CO", "N"),
-    "isocyanates": ("N=C=O", "O=C=N"),
+_LOG = logging.getLogger(__name__)
+# Exact patterns from https://github.com/pparys/cars, commit
+# f46607f983d89e4ca4f40527cd231ab04adc6ed7,
+# experiments/smiles/evaluate_molecules.py:eval_membership.
+CLASS_SMARTS: dict[str, tuple[str, ...]] = {
+    "acrylates": ("C=CC(=O)O*",),
+    "chain_extenders": ("CO", "OC", "N"),
+    "chain": ("CO", "OC", "N"),
+    "isocyanates": ("[*]N=C=O",),
 }
 
 
@@ -88,10 +85,23 @@ def rdkit_valid(smiles: str) -> bool | None:
 
 
 def target_class_membership(class_name: str, smiles: str) -> bool:
-    motifs = CLASS_MOTIFS.get(class_name)
-    if not motifs or not smiles:
-        return False
-    return any(motif in smiles for motif in motifs)
+    if Chem is None:
+        _LOG.error("[smiles-score] RDKit missing; refusing to change class-scoring rules")
+        raise RuntimeError("RDKit is required for original CARS class-membership scoring")
+    if class_name not in CLASS_SMARTS:
+        raise ValueError(f"Invalid monomer class: {class_name}")
+    molecule = Chem.MolFromSmiles(smiles) if smiles else None
+    result = molecule is not None and any(
+        molecule.HasSubstructMatch(pattern) for pattern in _class_patterns(class_name)
+    )
+    _LOG.debug("[smiles-score] class=%s text_length=%d molecule_valid=%s membership=%s",
+               class_name, len(smiles), molecule is not None, result)
+    return result
+
+
+@lru_cache(maxsize=None)
+def _class_patterns(class_name: str):
+    return tuple(Chem.MolFromSmarts(pattern) for pattern in CLASS_SMARTS[class_name])
 
 
 def is_prompt_exemplar(smiles: str, prompt_exemplars: Sequence[str]) -> bool:
@@ -108,8 +118,7 @@ def evaluate_smiles_output(
     smiles = clean_smiles_output(output)
     grammar_ok = grammar_valid(smiles, grammar_text)
     rdkit_ok = rdkit_valid(smiles)
-    # RDKit validates chemistry when installed; when it is unavailable, fall
-    # back to the project grammar so syntax rate remains measurable.
+    # Class membership below always requires RDKit; there is no text-only fallback.
     if require_rdkit and rdkit_ok is not None:
         syntax_ok = bool(grammar_ok and rdkit_ok)
     else:
