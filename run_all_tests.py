@@ -673,9 +673,9 @@ class Runner:
                 FutureWarning,
                 stacklevel=2,
             )
-            return "claude", "claude-opus-5"
+            return "claude", "claude-opus-5-5"
         if profile == "claude-sonnet4.6":
-            return "claude", "claude-opus-5"
+            return "claude", "claude-opus-5-5"
         if profile == "anthropic-sonnet4.6":
             return "anthropic", anthropic_sonnet46
         if profile in {"claude-bedrock-sonnet4.6", "bedrock-sonnet4.6"}:

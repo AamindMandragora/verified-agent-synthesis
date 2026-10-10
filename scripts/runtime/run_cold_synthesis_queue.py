@@ -27,7 +27,7 @@ from scripts.runtime.run_warm_task_recovery_queue import (
 )
 
 
-AUTHOR_MODEL = "claude-opus-5"
+AUTHOR_MODEL = "claude-opus-5-5"
 TERMINAL_SYNTHESIS_FAILURE = 75
 # Two, not three: focal is a shared box, and a 3-GPU bundle needs three
 # near-empty cards at once, which never happens in practice -- that's why

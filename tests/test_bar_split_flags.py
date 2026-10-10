@@ -33,7 +33,7 @@ def _base_argv(dataset: str = "gsm_symbolic") -> list[str]:
         "--min-accuracy", "0.3",
         "--min-syntax-rate", "0.9",
         "--generation-backend", "claude",
-        "--generation-model", "claude-opus-5",
+        "--generation-model", "claude-opus-5-5",
     ]
     if dataset == "smiles":
         argv += ["--smiles-classes", "acrylates"]
@@ -63,7 +63,7 @@ def stubbed_heavy_parts(monkeypatch, tmp_path):
             captured["evaluator_kwargs"] = kwargs
 
     class FakeGenerator:
-        DEFAULT_MODEL = "claude-opus-5"
+        DEFAULT_MODEL = "claude-opus-5-5"
 
         def __init__(self, **kwargs):
             pass

@@ -51,7 +51,7 @@ from ..safe_logging import safe_logging_enabled, text_metadata
 
 LOGGER = logging.getLogger(__name__)
 
-CLAUDE_CODE_MODEL = "claude-opus-5"
+CLAUDE_CODE_MODEL = "claude-opus-5-5"
 CLAUDE_ACCESS_ERROR_MARKER = "[claude-author-access]"
 CODEX_MODEL = "gpt-5.6-sol"
 CODEX_ACCESS_ERROR_MARKER = "[codex-author-access]"

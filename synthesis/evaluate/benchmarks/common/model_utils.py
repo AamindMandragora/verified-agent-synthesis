@@ -41,6 +41,7 @@ _HYGIENE_LOG = logging.getLogger("csd.delimiter_hygiene")
 _EXACT_CHECK_LOG = logging.getLogger("csd.exact_grammar_check")
 _GROUNDING_LOG = logging.getLogger("csd.grounding")
 _SPIDER_CONTRACT_LOG = logging.getLogger("csd.spider_output_contract")
+_SAMPLING_LOG = logging.getLogger("csd.sampling_defaults")
 
 
 def _coerce_token_id_set(value: Any) -> frozenset[int]:
@@ -2490,6 +2491,34 @@ def _build_tokens_dafny(_dafny, tokenizer, token_ids):
     )
 
 
+# Sampling fields that a model's generation_config.json can set. Transformers 5.5.4 fills each one
+# that the caller leaves unset (None) from the model's file before the global defaults.
+_MODEL_SAMPLING_FIELDS = ("temperature", "top_p", "top_k", "min_p", "typical_p", "repetition_penalty")
+
+
+def _use_global_sampling_defaults(hf_model: Any, *, tag: str) -> None:
+    """Make CARS, GCD and the HF eval backend decode the same way on every model (user, 2026-10-09/10).
+
+    Qwen2.5 ships temperature 0.7, top-p 0.8, top-k 20 and a repetition penalty (1.05 on 7B, 1.1 on
+    1.5B). CARS leaves these unset and GCD passes keyword values only, so both took Qwen2.5's values:
+    SMILES draws collapsed onto a few molecules, and even greedy GCD on GSM and Spider got the
+    repetition penalty. Qwen3.5 ships no sampling values. Clearing the model's values gives every
+    model the Transformers global defaults: temperature 1.0, top-p 1.0, top-k 50, repetition penalty
+    1.0. (The CARS paper says no top-k. The user chose top-k 50 so that the Qwen2.5 lanes match the
+    Qwen3.5 lanes, which already ran with it.) End tokens stay as they are. CRANE and IterGen build
+    their config from config.json, and the unconstrained lanes pass explicit vLLM SamplingParams, so
+    they never read the model's file.
+    """
+    config = getattr(hf_model, "generation_config", None)
+    if config is None:
+        _SAMPLING_LOG.info("[%s] no generation_config on the model; nothing to clear", tag)
+        return
+    cleared = {f: getattr(config, f, None) for f in _MODEL_SAMPLING_FIELDS if getattr(config, f, None) is not None}
+    for field in cleared:
+        setattr(config, field, None)
+    _SAMPLING_LOG.info("[%s] cleared model sampling defaults %s; generate uses the global defaults", tag, cleared or "{}")
+
+
 def create_huggingface_lm(
     model_name: str,
     device: str,
@@ -2554,6 +2583,8 @@ def create_huggingface_lm(
         input_device = torch.device("cpu")
 
     model.eval()
+    # Qwen2.5 ships repetition_penalty 1.1 / 1.05; GenerateUnconstrainedChunk's generate() would apply it.
+    _use_global_sampling_defaults(model, tag="hf-eval")
 
     if token_ids is None:
         token_ids = list(range(len(tokenizer)))

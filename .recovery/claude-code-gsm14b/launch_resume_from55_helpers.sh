@@ -24,7 +24,7 @@ log() {
 command=(
   "$PY" -m synthesis.run_synthesis
   --task "$TASK"
-  --generation-model claude-opus-5 --generation-backend claude
+  --generation-model claude-opus-5-5 --generation-backend claude
   --claude-executable "$CLAUDE_EXECUTABLE"
   --claude-config-dir "$CLAUDE_CONFIG_DIR"
   --claude-expected-account "$EXPECTED_ACCOUNT"

@@ -27,7 +27,7 @@ Cold-queue and babysitter runtime scripts. Repo-wide rules live in `../../AGENTS
   a pooled worker must not retry above the memory budget the queue reserved
   while sharing focal with other users.
 - Do not put strategy coaching into `--task` strings (Critical Prompting Rule).
-- Claude Code synthesis queue commands use the fixed `claude-opus-5` model ID;
+- Claude Code synthesis queue commands use the fixed `claude-opus-5-5` model ID;
   direct Anthropic and Bedrock model IDs are separate routes and should not be
   changed by this contract.
 - The `full-baseline-20260803` profile must contain exactly 20 cold cells and

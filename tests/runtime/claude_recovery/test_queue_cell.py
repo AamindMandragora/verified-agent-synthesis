@@ -208,7 +208,7 @@ def test_command_uses_claude_account_and_preserves_row_settings(tmp_path: Path):
     rendered = " ".join(map(str, command))
 
     assert "--generation-backend claude" in rendered
-    assert "--generation-model claude-opus-5" in rendered
+    assert "--generation-model claude-opus-5-5" in rendered
     assert "--claude-expected-account aadivya@fermi.ai" in rendered
     assert "--claude-idle-timeout-seconds 900" in rendered
     assert "--claude-emergency-timeout-seconds 7200" in rendered

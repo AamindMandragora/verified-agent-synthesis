@@ -17,7 +17,7 @@ def test_campaign_safe_logging_never_writes_raw_prompt_response_or_completion(
     generator = object.__new__(StrategyGenerator)
     generator._prompt_log_counter = 0
     generator.backend = "claude"
-    generator.model_name = "claude-opus-5"
+    generator.model_name = "claude-opus-5-5"
     private_system = "PRIVATE SYSTEM SCHEMA"
     private_user = "PRIVATE USER SQL"
     private_output = "PRIVATE PROVIDER RESPONSE"

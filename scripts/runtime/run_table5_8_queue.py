@@ -353,7 +353,7 @@ SMILES_CLASSES = ("acrylates", "chain_extenders", "isocyanates")
 TABLE5_PROFILES = {
     "gpt5.6-sol": {"generation_backend": "codex", "generation_model": "gpt-5.6-sol"},
     "gemini3.7-flash": {"generation_backend": "gemini", "generation_model": "gemini-3.7-flash"},
-    "opus5": {"generation_backend": "claude", "generation_model": "claude-opus-5"},
+    "opus5": {"generation_backend": "claude", "generation_model": "claude-opus-5-5"},
 }
 CANONICAL_SPLITS = {
     "gsm_symbolic": "environment/benchmark_splits/gsm_symbolic_crane_proportional_49x49_seed123.json",
@@ -767,7 +767,7 @@ def provider_pilot_from_report(
     expected_routes = {
         "gpt5.6-sol": ("codex", "gpt-5.6-sol", None, None),
         "gemini3.7-flash": ("gemini", "gemini-3.7-flash", 32768, None),
-        "opus5": ("claude", "claude-opus-5", 64000, 48000),
+        "opus5": ("claude", "claude-opus-5-5", 64000, 48000),
     }
     if profile not in expected_routes:
         raise ConfigError(f"unknown provider pilot profile: {profile}")
@@ -1061,7 +1061,7 @@ def validate_provider_pilot(
     expected = {
         "gpt5.6-sol": ("codex", "gpt-5.6-sol"),
         "gemini3.7-flash": ("gemini", "gemini-3.7-flash"),
-        "opus5": ("claude", "claude-opus-5"),
+        "opus5": ("claude", "claude-opus-5-5"),
     }
     backend, model = expected[profile]
     if pilot.get("backend") != backend or pilot.get("model") != model:

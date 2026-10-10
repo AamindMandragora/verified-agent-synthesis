@@ -15,7 +15,7 @@ from synthesis.generate.generator import ClaudeTransientError, StrategyGenerator
 
 
 EXPECTED_ACCOUNT = "aadivya@fermi.ai"
-MODEL = "claude-opus-5"
+MODEL = "claude-opus-5-5"
 
 
 def _fake_claude(
@@ -465,7 +465,7 @@ def test_claude_backend_rejects_any_other_model(tmp_path):
     config_dir = tmp_path / "claude-config"
     config_dir.mkdir()
 
-    with pytest.raises(ValueError, match="claude-opus-5"):
+    with pytest.raises(ValueError, match="claude-opus-5-5"):
         StrategyGenerator(
             backend="claude",
             model_name="claude-opus-4-7",

@@ -124,7 +124,7 @@ def test_synthesis_command_uses_the_fixed_claude_code_opus5_author():
     command = queue.synthesis_command(_job(), Path("/env/python"))
 
     assert command[command.index("--generation-backend") + 1] == "claude"
-    assert command[command.index("--generation-model") + 1] == "claude-opus-5"
+    assert command[command.index("--generation-model") + 1] == "claude-opus-5-5"
 
 
 def test_bedrock_author_enables_extended_thinking(monkeypatch):

@@ -366,7 +366,7 @@ def rerun_command(row: dict[str, Any], python: Path, thresholds: dict[str, Any] 
         "--max-iterations", "40", "--min-accuracy", str(limits["min_accuracy"]), "--min-syntax-rate", str(limits["min_syntax_rate"]),
         "--eval-sample-size", str(row["sample_size"]), "--eval-max-steps", str(row["eval_max_steps"]),
         "--eval-max-seconds-per-example", str(row["eval_max_seconds"]), "--eval-step-token-budget", "1",
-        "--generation-backend", "claude", "--generation-model", "claude-opus-5",
+        "--generation-backend", "claude", "--generation-model", "claude-opus-5-5",
         # The bar comes from fixed_baseline_command, which scores the TEST side.
         # run_synthesis scores train, so it refuses GSM/Spider reruns with a
         # nonzero bar; that refusal is the split guard doing its job.

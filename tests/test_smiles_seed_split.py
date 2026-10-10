@@ -407,7 +407,7 @@ def test_synthesis_scores_the_train_seeds(monkeypatch, tmp_path):
             captured["evaluator"] = kwargs
 
     class FakeGenerator:
-        DEFAULT_MODEL = "claude-opus-5"
+        DEFAULT_MODEL = "claude-opus-5-5"
 
         def __init__(self, **kwargs):
             pass
@@ -425,7 +425,7 @@ def test_synthesis_scores_the_train_seeds(monkeypatch, tmp_path):
         "argv",
         ["run_synthesis", "--task", "t", "--dataset", "smiles", "--min-accuracy", "0.3",
          "--min-syntax-rate", "0.9", "--generation-backend", "claude",
-         "--generation-model", "claude-opus-5", "--smiles-classes", "acrylates",
+         "--generation-model", "claude-opus-5-5", "--smiles-classes", "acrylates",
          "--bar-from-train"],
     )
     with pytest.raises(_StopAtEvaluator):

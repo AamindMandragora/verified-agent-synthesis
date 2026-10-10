@@ -136,15 +136,15 @@ def test_run_synthesis_help_names_the_fixed_claude_code_model():
     )
 
     assert result.returncode == 0
-    assert "claude-opus-5" in " ".join(result.stdout.split())
+    assert "claude-opus-5-5" in " ".join(result.stdout.split())
 
 
 def test_root_run_synthesis_keeps_the_fixed_claude_code_model():
     repo_root = Path(__file__).resolve().parents[1]
     source = (repo_root / "run_synthesis.py").read_text()
 
-    assert "Claude Code uses the fixed claude-opus-5 model" in source
-    assert 'args.generation_model = "claude-opus-5"' in source
+    assert "Claude Code uses the fixed claude-opus-5-5 model" in source
+    assert 'args.generation_model = "claude-opus-5-5"' in source
 
 
 def test_run_synthesis_resolves_author_model_before_printing_banner():
@@ -293,7 +293,7 @@ def test_sonnet_profile_migrates_to_claude_with_explicit_old_routes(tmp_path):
     with pytest.warns(FutureWarning, match="sonnet4.6"):
         assert runner.resolve_gen_profile("sonnet4.6") == (
             "claude",
-            "claude-opus-5",
+            "claude-opus-5-5",
         )
     assert runner.resolve_gen_profile("anthropic-sonnet4.6") == (
         "anthropic",
@@ -421,7 +421,7 @@ def test_sonnet_generation_profile_quota_failure_is_skipped_not_requeued(tmp_pat
     assert len(calls) == 1
     assert calls[0][1]["abort_on_quota"] is False
     assert "--generation-model" in calls[0][0]
-    assert "claude-opus-5" in calls[0][0]
+    assert "claude-opus-5-5" in calls[0][0]
     assert not runner.config.gpu3_retry_queue.exists()
 
 

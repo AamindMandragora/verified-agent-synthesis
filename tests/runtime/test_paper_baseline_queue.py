@@ -65,7 +65,7 @@ def test_rerun_command_is_one_cold_cycle_without_warm_start():
     command = queue.rerun_command(row, Path("/env/python"))
     assert command[command.index("--max-iterations") + 1] == "40"
     assert "--initial-strategy-file" not in command
-    assert command[command.index("--generation-model") + 1] == "claude-opus-5"
+    assert command[command.index("--generation-model") + 1] == "claude-opus-5-5"
     assert "--output-name" not in command
     assert "--gsm-split-file" not in command
     assert "--spider-split-file" not in command
@@ -259,7 +259,7 @@ def test_baseline_win_schedules_and_runs_one_claimed_cold_rerun(tmp_path: Path):
                 "run_configuration": {
                     "task_description": row["task"], "output_name": queue.rerun_output_name(row), "git_commit": "a" * 40,
                     "max_iterations": 40, "thresholds": thresholds,
-                    "author_model": {"backend": "claude", "model": "claude-opus-5", "max_new_tokens": 8192, "reasoning_budget_tokens": 4096, "anthropic_thinking": "always-on", "anthropic_effort": "high", "anthropic_thinking_display": "summarized"},
+                    "author_model": {"backend": "claude", "model": "claude-opus-5-5", "max_new_tokens": 8192, "reasoning_budget_tokens": 4096, "anthropic_thinking": "always-on", "anthropic_effort": "high", "anthropic_thinking_display": "summarized"},
                     "evaluation": {"dataset": row["dataset"], "eval_model": row["eval_model"], "eval_sample_size": 49, "eval_max_steps": 900, "eval_step_token_budget": 1, "eval_max_seconds_per_example": 600, "split_provenance": {"bar_split_name": "train", "gsm_split_name": "train", "gsm_split_file": Path(row["split_file"]).name}},
                 },
             }), encoding="utf-8")

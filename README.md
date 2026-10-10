@@ -168,7 +168,7 @@ dafny --version
 
 3. Run synthesis.
 
-Strategy generation defaults to **OpenAI** (`OPENAI_API_KEY` in `.env`; model `gpt-5.4` or `OPENAI_GENERATION_MODEL`). Matrix runs must use direct hosted reasoning APIs: `opus4.7` uses the Anthropic backend, `gpt5.5` uses the OpenAI backend, and `gemini` uses the direct Gemini API. The Claude Code route (`--generation-backend claude`) uses the isolated Claude Code Max login with the fixed model `claude-opus-5`. Do not route matrix model ablations through Bedrock. Use **`--generation-backend vllm`** or **`huggingface`** for fully local generation. Evaluation always runs on local vLLM; pick the model with `--eval-model` (the backend is fixed in `synthesis/run_constants.py`).
+Strategy generation defaults to **OpenAI** (`OPENAI_API_KEY` in `.env`; model `gpt-5.4` or `OPENAI_GENERATION_MODEL`). Matrix runs must use direct hosted reasoning APIs: `opus4.7` uses the Anthropic backend, `gpt5.5` uses the OpenAI backend, and `gemini` uses the direct Gemini API. The Claude Code route (`--generation-backend claude`) uses the isolated Claude Code Max login with the fixed model `claude-opus-5-5`. Do not route matrix model ablations through Bedrock. Use **`--generation-backend vllm`** or **`huggingface`** for fully local generation. Evaluation always runs on local vLLM; pick the model with `--eval-model` (the backend is fixed in `synthesis/run_constants.py`).
 
 **BYOD (bring your own credentials):** all provider API keys load from the environment / `.env` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, AWS credentials for Bedrock). There are no key or base-URL CLI flags.
 

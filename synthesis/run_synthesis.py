@@ -403,7 +403,7 @@ Examples:
         type=str,
         default=None,
         help="Model identifier for CSD generation (OpenAI model id when using --generation-backend openai; "
-        "Codex uses the fixed gpt-5.6-sol model; Claude Code uses the fixed claude-opus-5 model; Claude Bedrock uses an AWS model id. "
+        "Codex uses the fixed gpt-5.6-sol model; Claude Code uses the fixed claude-opus-5-5 model; Claude Bedrock uses an AWS model id. "
         "OpenAI defaults from OPENAI_GENERATION_MODEL or gpt-5.4.",
     )
 
@@ -574,7 +574,7 @@ Examples:
 
     if args.generation_model is None:
         if args.generation_backend == "claude":
-            args.generation_model = "claude-opus-5"
+            args.generation_model = "claude-opus-5-5"
         elif args.generation_backend == "codex":
             args.generation_model = "gpt-5.6-sol"
         elif args.generation_backend == "claude-bedrock":

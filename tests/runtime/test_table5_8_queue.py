@@ -169,7 +169,7 @@ def test_table5_backend_profiles_are_exact():
     assert {(row["profile"], row["generation_backend"], row["generation_model"]) for row in rows} == {
         ("gpt5.6-sol", "codex", "gpt-5.6-sol"),
         ("gemini3.7-flash", "gemini", "gemini-3.7-flash"),
-        ("opus5", "claude", "claude-opus-5"),
+        ("opus5", "claude", "claude-opus-5-5"),
     }
     assert {row["benchmark"] for row in rows} == {"gsm_symbolic"}
 
@@ -2034,7 +2034,7 @@ def test_every_generated_option_is_in_real_synthesis_parser_help():
 
 def test_provider_pilot_hash_is_canonical_and_tamper_evident():
     pilots = {
-        "opus5": {"status": "ready", "model": "claude-opus-5"},
+        "opus5": {"status": "ready", "model": "claude-opus-5-5"},
         "gpt5.6-sol": {"status": "blocked", "model": "gpt-5.6-sol"},
     }
     expected = queue.sha256_text(
@@ -3080,7 +3080,7 @@ def test_controller_only_cells_filters_after_full_manifest_validation(
 
 def _real_pilot_report(profile, commit, *, output_name="pilot", compiled_dir="/tmp/compiled"):
     backend, model = {
-        "opus5": ("claude", "claude-opus-5"),
+        "opus5": ("claude", "claude-opus-5-5"),
         "gpt5.6-sol": ("codex", "gpt-5.6-sol"),
         "gemini3.7-flash": ("gemini", "gemini-3.7-flash"),
     }[profile]
@@ -3183,7 +3183,7 @@ def test_real_pilot_parser_uses_nested_run_report_and_requires_verifier_eval(tmp
         report_path, profile="opus5", git_commit=commit, environment={}
     )
     assert pilot["backend"] == "claude"
-    assert pilot["model"] == "claude-opus-5"
+    assert pilot["model"] == "claude-opus-5-5"
     assert pilot["verification_status"] == "success"
     assert pilot["evaluation_status"] == "success"
     assert pilot["expected_account"] == "ssdear@gmail.com"

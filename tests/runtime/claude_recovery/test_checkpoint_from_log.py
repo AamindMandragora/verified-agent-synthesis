@@ -189,7 +189,7 @@ def test_claude_resume_launcher_preserves_attempt_boundary_and_has_no_api_fallba
 
     command = result.stdout
     assert "--generation-backend claude" in command
-    assert "--generation-model claude-opus-5" in command
+    assert "--generation-model claude-opus-5-5" in command
     assert "--initial-attempt-offset 54" in command
     assert "--max-iterations 26" in command
     assert "gsm14b_attempt55.dfy" in command
