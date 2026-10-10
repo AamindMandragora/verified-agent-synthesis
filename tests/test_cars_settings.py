@@ -142,6 +142,8 @@ def _run_cars_smiles(monkeypatch, tmp_path, examples, molecule_sequence, invalid
     monkeypatch.setenv("CARS_REPO_DIR", str(tmp_path))
 
     args = argparse.Namespace(
+        smiles_split_name="train",
+        smiles_trial=1,
         dataset="smiles",
         eval_model="Qwen/Qwen2.5-1.5B-Instruct",
         eval_backend="vllm",
@@ -167,7 +169,7 @@ def _run_cars_smiles(monkeypatch, tmp_path, examples, molecule_sequence, invalid
 
 
 def test_smiles_cars_uses_the_256_token_cap(monkeypatch, tmp_path):
-    examples = [{"class_name": "acrylates", "grammar_text": "", "prompt": "Molecule:"}]
+    examples = [{"class_name": "acrylates", "draw_index": 0, "draw_seed": 100000, "smiles_split_name": "train", "smiles_trial": 1, "grammar_text": "", "prompt": "Molecule:"}]
     _run_cars_smiles(monkeypatch, tmp_path, examples, molecule_sequence=["C=C"])
     assert FakeCARSRunner.calls[0]["max_new_tokens"] == 256
 
@@ -177,8 +179,8 @@ def test_smiles_cars_stops_once_the_target_unique_count_is_reached(monkeypatch, 
     # distinct valid molecule, so exactly 2 draws should happen, not one per row
     # beyond that and not the 10x cap (20).
     examples = [
-        {"class_name": "acrylates", "grammar_text": "", "prompt": "Molecule:"},
-        {"class_name": "acrylates", "grammar_text": "", "prompt": "Molecule:"},
+        {"class_name": "acrylates", "draw_index": 0, "draw_seed": 100000, "smiles_split_name": "train", "smiles_trial": 1, "grammar_text": "", "prompt": "Molecule:"},
+        {"class_name": "acrylates", "draw_index": 0, "draw_seed": 100000, "smiles_split_name": "train", "smiles_trial": 1, "grammar_text": "", "prompt": "Molecule:"},
     ]
     result = _run_cars_smiles(
         monkeypatch, tmp_path, examples, molecule_sequence=["C=C", "C=CC", "C=CCC"]
@@ -188,7 +190,7 @@ def test_smiles_cars_stops_once_the_target_unique_count_is_reached(monkeypatch, 
 
 
 def test_smiles_cars_caps_at_10x_target_when_nothing_ever_validates(monkeypatch, tmp_path):
-    examples = [{"class_name": "isocyanates", "grammar_text": "", "prompt": "Molecule:"}]
+    examples = [{"class_name": "isocyanates", "draw_index": 0, "draw_seed": 100000, "smiles_split_name": "train", "smiles_trial": 1, "grammar_text": "", "prompt": "Molecule:"}]
     result = _run_cars_smiles(
         monkeypatch,
         tmp_path,

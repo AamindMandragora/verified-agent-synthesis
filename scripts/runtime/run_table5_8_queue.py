@@ -271,12 +271,17 @@ BAR_BINDINGS = {
     "gsm_symbolic": {
         "min_accuracy": 20 / 49,
         "min_syntax_rate": 47 / 49,
+        # Source evidence cells record split_name "train".
+        "bar_split": "train",
         "source_path": str(PRESERVED_PAPER_EVIDENCE / "2026-08-05-corrected-full-baseline-evidence.json"),
         "source_sha256": "57392e149cea23efe6f596b921c6cd3d74ae7519e7c286393adadc9bdb579ab7",
     },
     "spider": {
         "min_accuracy": 59 / 300,
         "min_syntax_rate": 0.9,
+        # UNVERIFIED against the source manifest; matches this queue's
+        # completion check, which requires bar_split_name == "train".
+        "bar_split": "train",
         "source_path": str(PRESERVED_PAPER_EVIDENCE.parent / "spider-contract/2026-08-26-spider-evaluator-contract-u10c-manifest.json"),
         "source_sha256": "eb669be8ce13c0412f61bbcfa6b5c630167ce30c89288f0e9e8ff7b9b3a41175",
     },
@@ -284,6 +289,10 @@ BAR_BINDINGS = {
         "acrylates": {"min_accuracy": 0.14, "min_syntax_rate": 0.9},
         "chain_extenders": {"min_accuracy": 0.20, "min_syntax_rate": 0.9},
         "isocyanates": {"min_accuracy": 0.30, "min_syntax_rate": 0.9},
+        # Synthesis scores the SMILES train seed range (2026-09-26), and
+        # run_synthesis refuses a test-side SMILES bar. These three bars were
+        # measured before that split existed, on the old baseline seeds.
+        "bar_split": "train",
         "source_path": str(PRESERVED_PAPER_EVIDENCE / "2026-08-05-corrected-full-baseline-cold-manifest.json"),
         "source_sha256": "06c285b2c948c16d9d09b3473ed34ed08ff12ac7efd81bbaaf767d53a0a4d05c",
     },
@@ -419,7 +428,7 @@ JOB_KEYS = frozenset({
     "synthesis_reasoning_budget",
     "effective_output_tokens", "effective_thinking_tokens",
     "smiles_class", "token_budget", "beam_size", "adaptive_helper_mask",
-    "helper_selection_policy", "max_iterations", "min_accuracy", "min_syntax_rate",
+    "helper_selection_policy", "max_iterations", "min_accuracy", "bar_split", "min_syntax_rate",
     "max_attempt_seconds",
     "bar_source_path", "bar_source_sha256", "eval_sample_size", "heldout_sample_size",
     "eval_max_steps", "eval_max_seconds", "gpu_mem_util", "memory_reservation_mib",
@@ -475,6 +484,7 @@ def _row(cell_id: str, table: int, benchmark: str, profile: str, *, smiles_class
         "max_attempt_seconds": max_attempt_seconds,
         "min_accuracy": (BAR_BINDINGS[benchmark][smiles_class]["min_accuracy"] if benchmark == "smiles" else BAR_BINDINGS[benchmark]["min_accuracy"]),
         "min_syntax_rate": (BAR_BINDINGS[benchmark][smiles_class]["min_syntax_rate"] if benchmark == "smiles" else BAR_BINDINGS[benchmark]["min_syntax_rate"]),
+        "bar_split": BAR_BINDINGS[benchmark]["bar_split"],
         "bar_source_path": BAR_BINDINGS[benchmark]["source_path"],
         "bar_source_sha256": BAR_BINDINGS[benchmark]["source_sha256"],
         "eval_sample_size": sample,
@@ -622,6 +632,9 @@ def synthesis_command(row: dict[str, Any], python: Path) -> list[str]:
             "--initial-attempt-offset", str(continuation["initial_attempt_offset"]),
         ]
     cmd.append("--adaptive-helper-mask" if row["adaptive_helper_mask"] else "--no-adaptive-helper-mask")
+    if row["bar_split"] not in ("train", "test"):
+        raise ConfigError(f"{row['cell_id']} bar_split must be 'train' or 'test', got {row['bar_split']!r}")
+    cmd.append(f"--bar-from-{row['bar_split']}")
     if row["dataset"] == "smiles":
         cmd += ["--smiles-classes", row["smiles_class"], "--smiles-samples-per-class", str(row["eval_sample_size"]), "--smiles-final-samples-per-class", str(row["heldout_sample_size"])]
     return cmd
@@ -2350,7 +2363,7 @@ def heldout_command(row: dict[str, Any], python: Path, compiled_csd: Path) -> li
     elif row["dataset"] == "spider":
         cmd += ["--spider-split-file", str(row["heldout_split_file"]), "--spider-split-name", "test", "--provenance-spider-data-path", str(row["spider_data_path"]), "--provenance-spider-data-sha256", str(row["spider_data_sha256"]), "--provenance-spider-data-file-count", str(row["spider_data_file_count"])]
     else:
-        cmd += ["--smiles-classes", str(row["smiles_class"])]
+        cmd += ["--smiles-classes", str(row["smiles_class"]), "--smiles-split-name", "test", "--smiles-trial", "1"]
     return cmd
 
 

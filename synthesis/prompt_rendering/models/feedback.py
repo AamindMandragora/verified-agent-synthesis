@@ -84,6 +84,7 @@ class FeedbackSummaryModel(PromptModel):
     failure_modes: List[FailureModeEntry]
     output_run_summary: List[str]
     aggregate_failure_stats_lines: List[str]
+    model_call_cost_lines: List[str]
     diagnostic_metrics: List[str]
     show_structural_metrics: bool
     structural_metrics: List[str]

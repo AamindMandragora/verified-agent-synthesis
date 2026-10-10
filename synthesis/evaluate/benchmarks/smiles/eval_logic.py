@@ -27,7 +27,25 @@ def get_grammar_file(evaluator: Any, grammars_dir: Path) -> Path:
 def load_dataset_sample(evaluator: Any) -> list[dict[str, Any]]:
     from synthesis.evaluate.benchmarks.smiles.dataset import load_smiles
 
-    return load_smiles(classes=normalize_classes(evaluator), samples_per_class=evaluator.sample_size)
+    split_name = getattr(evaluator, "smiles_split_name", None)
+    if split_name is None:
+        raise ValueError(
+            "SMILES evaluation needs a split: pass smiles_split_name='train' or 'test' "
+            "(the two disjoint seed ranges in smiles/seed_split.py). There is no default."
+        )
+    trial = getattr(evaluator, "smiles_trial", None)
+    if trial is None:
+        raise ValueError(
+            "SMILES evaluation needs a trial: pass smiles_trial=1, 2 or 3 (each trial is "
+            "its own block of seeds in smiles/seed_split.py). There is no default."
+        )
+    return load_smiles(
+        classes=normalize_classes(evaluator),
+        samples_per_class=evaluator.sample_size,
+        split_name=split_name,
+        trial=trial,
+        first_draw_index=int(getattr(evaluator, "sample_offset", 0) or 0),
+    )
 
 
 def format_prompt(evaluator: Any, example: dict[str, Any]) -> str:
@@ -229,7 +247,7 @@ def should_stop_collected(
             seen.add(smiles)
             if len(seen) >= target_unique_valid:
                 return (
-                    "paper-aligned early stop: collected "
+                    "collected "
                     f"{len(seen)} unique-valid molecules (target {target_unique_valid}) "
                     f"after {len(sample_outputs)} samples."
                 )

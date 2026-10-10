@@ -15,6 +15,8 @@ def test_reevaluation_provenance_binds_output_to_strategy_model_and_cell(tmp_pat
         max_steps=400,
         step_token_budget=1,
         smiles_classes="isocyanates",
+        smiles_split_name="test",
+        smiles_trial=2,
         provenance_cell_id="smiles-qwen35-9b-isocyanates",
         provenance_manifest_commit="a" * 40,
     )
@@ -32,6 +34,8 @@ def test_reevaluation_provenance_binds_output_to_strategy_model_and_cell(tmp_pat
         "max_steps": 400,
         "step_token_budget": 1,
         "smiles_class": "isocyanates",
+        "smiles_split_name": "test",
+        "smiles_trial": 2,
     }
 
 

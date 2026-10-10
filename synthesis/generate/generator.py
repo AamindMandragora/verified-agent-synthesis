@@ -74,9 +74,106 @@ def load_template() -> str:
     return TEMPLATE_PATH.read_text()
 
 
+# String literals at least this long are prose (task guidance for the model), not
+# tokens a proof reasons about. For verification each one becomes a body-less
+# function, so the prover sees an unknown string instead of unfolding every
+# character; for compiling, the same function gets the literal back as its body.
+# A 3,807-character guidance literal made AuthorBody take 1,031 s to verify; an
+# opaque function holding it took 155 s; a body-less one took 14 s (2026-09-25,
+# runs/resynth-20260923/verify_timeout_probe/hoist_check). Hiding a value from the
+# prover can only make a proof fail, never pass wrongly.
+PROSE_LITERAL_MIN_CHARS = 64
+_PROSE_LITERAL_ANCHOR = "  import opened VerifiedDecoderAgent\n"
+
+
+def _dafny_string_end(body: str, start: int) -> int:
+    """Index just past the string literal opening at ``start`` ("..." or @"...")."""
+    if body[start] == "@":
+        i = start + 2
+        while True:
+            j = body.index('"', i)
+            if body.startswith('""', j):
+                i = j + 2
+                continue
+            return j + 1
+    i = start + 1
+    while body[i] != '"':
+        i += 2 if body[i] == "\\" else 1
+    return i + 1
+
+
+def hoist_prose_literals(body: str) -> tuple[str, list[str]]:
+    """Replace each long string literal in ``body`` with a ``ProseLiteralN()`` call.
+
+    Returns the rewritten body and the literals (with their quotes), in source
+    order. Comments, char literals ('"') and primed identifiers (x') are skipped.
+    """
+    out: list[str] = []
+    literals: list[str] = []
+    i, n = 0, len(body)
+    while i < n:
+        c = body[i]
+        if body.startswith("//", i):
+            j = body.find("\n", i)
+            j = n if j < 0 else j
+        elif body.startswith("/*", i):
+            depth, j = 1, i + 2
+            while depth and j < n:
+                if body.startswith("/*", j):
+                    depth, j = depth + 1, j + 2
+                elif body.startswith("*/", j):
+                    depth, j = depth - 1, j + 2
+                else:
+                    j += 1
+        elif c == "'" and not (i and (body[i - 1].isalnum() or body[i - 1] in "_'")):
+            m = re.match(r"'(\\.[^']*|[^'\\])'", body[i:])
+            j = i + (m.end() if m else 1)
+        elif c == '"' or body.startswith('@"', i):
+            j = _dafny_string_end(body, i)
+            literal = body[i:j]
+            if len(literal) >= PROSE_LITERAL_MIN_CHARS:
+                out.append(f"ProseLiteral{len(literals)}()")
+                literals.append(literal)
+                i = j
+                continue
+        else:
+            j = i + 1
+        out.append(body[i:j])
+        i = j
+    return "".join(out), literals
+
+
+def _with_prose_functions(template: str, strategy: str, *, bodies: bool) -> str:
+    body, literals = hoist_prose_literals(strategy)
+    if literals:
+        if template.count(_PROSE_LITERAL_ANCHOR) != 1:
+            raise ValueError("template must contain the module import line exactly once")
+        decls = "".join(
+            f"  function ProseLiteral{k}(): string {{ {lit} }}\n" if bodies
+            else f"  function {{:extern}} {{:axiom}} ProseLiteral{k}(): string\n"
+            for k, lit in enumerate(literals)
+        )
+        template = template.replace(_PROSE_LITERAL_ANCHOR, _PROSE_LITERAL_ANCHOR + "\n" + decls)
+    LOGGER.info(
+        "[prose-literals] %s %d literal(s), lengths=%s",
+        "restored" if bodies else "hid from the prover",
+        len(literals), [len(x) for x in literals],
+    )
+    return template.replace(STRATEGY_MARKER, body)
+
+
 def inject_strategy_into_template(strategy: str) -> str:
-    """Insert a strategy body into the template, returning complete Dafny source."""
-    return load_template().replace(STRATEGY_MARKER, strategy)
+    """Dafny source to VERIFY: the strategy body in the template, prose literals hidden."""
+    return _with_prose_functions(load_template(), strategy, bodies=False)
+
+
+def compile_source(strategy: str) -> str:
+    """Dafny source to COMPILE: as inject_strategy_into_template, literals restored.
+
+    Compile it with --no-verify: the proof ran on the verification source, which
+    differs only in these function bodies.
+    """
+    return _with_prose_functions(load_template(), strategy, bodies=True)
 
 
 class ClaudeTransientError(RuntimeError):
@@ -2542,7 +2639,11 @@ class StrategyGenerator:
         Returns:
             Complete Dafny source code
         """
-        return self._template.replace(STRATEGY_MARKER, strategy)
+        return _with_prose_functions(self._template, strategy, bodies=False)
+
+    def compile_source(self, strategy: str) -> str:
+        """Dafny source to compile (see module-level compile_source)."""
+        return _with_prose_functions(self._template, strategy, bodies=True)
 
     def get_template(self) -> str:
         """Get the raw template content."""

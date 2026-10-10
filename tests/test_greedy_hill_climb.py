@@ -155,27 +155,48 @@ def _result(accuracy, syntax_rate, n=10, success=True, error=None):
 
 
 class ScriptedEvaluator:
-    """Returns a scripted EvaluationResult per call and records the
-    (sample_size, sample_offset) of every call."""
+    """Returns a scripted EvaluationResult per call and records the full
+    kwargs (sample_size, sample_offset, deadline, early-stop targets, ...)
+    of every call.
 
-    def __init__(self, results):
+    `train_split_size` mimics the evaluator's train-side manifest length
+    accessor: None means "no split manifest" (e.g. SMILES/GSM-without-extra-
+    examples), an int means the train split has that many total examples
+    (e.g. Spider's 300).
+    """
+
+    def __init__(self, results, train_split_size=None):
         self.sample_seed = 0
         self.results = list(results)
-        self.calls = []  # list of dicts with sample_size / sample_offset
+        self.calls = []  # list of dicts with every evaluate_sample kwarg
         self.model_name = "fake-model"
         self.dataset_name = "fake_dataset"
         self.max_steps = 1
         self.step_token_budget = 1
+        self._train_split_size = train_split_size
 
     def evaluate_sample(self, compiled_module_path, sample_size=None, sample_offset=0, **kwargs):
-        self.calls.append({"sample_size": sample_size, "sample_offset": sample_offset})
+        call = {"sample_size": sample_size, "sample_offset": sample_offset}
+        call.update(kwargs)
+        self.calls.append(call)
         return self.results.pop(0)
+
+    def train_split_size(self):
+        return self._train_split_size
 
     def split_provenance(self, bar_split_name=None):
         return {"split_file": None, "split_side": "train", "bar_split": bar_split_name}
 
 
-def make_pipeline(tmp_path, evaluator, generator, max_iterations, min_accuracy=0.6, min_syntax_rate=0.9):
+def make_pipeline(
+    tmp_path,
+    evaluator,
+    generator,
+    max_iterations,
+    min_accuracy=0.6,
+    min_syntax_rate=0.9,
+    max_attempt_seconds=None,
+):
     return SynthesisPipeline(
         evaluator=evaluator,
         generator=generator,
@@ -190,7 +211,7 @@ def make_pipeline(tmp_path, evaluator, generator, max_iterations, min_accuracy=0
         eval_sample_size=10,
         eval_max_seconds_per_example=None,
         min_examples_before_threshold_stop=None,
-        max_attempt_seconds=None,
+        max_attempt_seconds=max_attempt_seconds,
         refinement_beam_size=1,
     )
 
@@ -259,95 +280,7 @@ def test_acceptance_rule_strict_decrease_with_lex_tiebreak(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_greedy_flow_rebases_on_incumbent_and_confirms_on_slice_b(tmp_path):
-    # cand1 "S1": A=(.3,.5) below bars -> seeds incumbent, B=(.2,.5) also eval'd
-    # cand2 "S2": A=(.2,.5) worse than incumbent's A -> REJECT, no B eval
-    # cand3 "S3": A=(.5,.7) better on A -> B=(0.13,0.03) drags pooled below
-    #             incumbent's pooled -> REJECT after B
-    # cand4 "S4": A=(.6,.9) meets bars -> B=(.6,.9) confirms -> SUCCESS
-    evaluator = ScriptedEvaluator(
-        [
-            _result(0.3, 0.5),   # S1 slice A
-            _result(0.2, 0.5),   # S1 slice B (seeding)
-            _result(0.2, 0.5),   # S2 slice A -> reject, no B
-            _result(0.5, 0.7),   # S3 slice A -> stage-1 pass
-            _result(0.13, 0.03), # S3 slice B -> pooled reject
-            _result(0.6, 0.9),   # S4 slice A -> bars met
-            _result(0.6, 0.9),   # S4 slice B -> confirmed
-        ]
-    )
-    generator = FakeGenerator(["S1", "S2", "S3", "S4"])
-    pipeline = make_pipeline(tmp_path, evaluator, generator, max_iterations=4)
 
-    result = pipeline.synthesize(task_description="dummy", output_name="dummy")
-
-    assert result.success is True
-    assert result.strategy_code == "S4"
-
-    # Exactly the scripted eval calls happened, with slice B at offset 10.
-    assert [c["sample_offset"] for c in evaluator.calls] == [0, 10, 0, 0, 10, 0, 10]
-    assert all(c["sample_size"] == 10 for c in evaluator.calls)
-
-    # Every refinement was based on the incumbent S1 (never on rejected S2/S3),
-    # quoting the incumbent's slice-A scores, not pooled and not the candidate's.
-    assert len(generator.refine_calls) == 3
-    for call in generator.refine_calls:
-        assert call["previous_strategy"] == "S1"
-        assert call["previous_accuracy"] == pytest.approx(0.3)
-        assert call["previous_syntax_rate"] == pytest.approx(0.5)
-
-    # Rejections are announced to the author...
-    assert "REJECTED" in generator.refine_calls[1]["evaluation_feedback"]
-    assert "REJECTED" in generator.refine_calls[2]["evaluation_feedback"]
-    # ...but slice-B numbers stay out of every author-facing feedback string
-    # (S3's B result 13%/3% is the canary).
-    for call in generator.refine_calls:
-        assert "13" not in call["evaluation_feedback"]
-
-
-def test_eval_error_after_seeding_also_rebases_on_incumbent(tmp_path):
-    # cand1 seeds the incumbent; cand2's evaluation errors out (but ran
-    # examples, so it is not a harness failure) -> the refinement base must
-    # still be the incumbent, not the errored candidate.
-    evaluator = ScriptedEvaluator(
-        [
-            _result(0.3, 0.5),                                   # S1 slice A
-            _result(0.2, 0.5),                                   # S1 slice B
-            _result(0.0, 0.0, success=False, error="boom"),      # S2 slice A
-        ]
-    )
-    generator = FakeGenerator(["S1", "S2", "S3"])
-    pipeline = make_pipeline(tmp_path, evaluator, generator, max_iterations=2)
-
-    with pytest.raises(SynthesisExhaustionError):
-        pipeline.synthesize(task_description="dummy", output_name="dummy")
-
-    assert generator.refine_calls, "expected refinement after the eval error"
-    assert generator.refine_calls[-1]["previous_strategy"] == "S1"
-    # the errored candidate was not confirmed on slice B
-    assert [c["sample_offset"] for c in evaluator.calls] == [0, 10, 0]
-
-
-def test_single_slice_bar_crossing_is_not_success(tmp_path):
-    # cand1 meets both bars on slice A but misses them on slice B -> the run
-    # must continue (cand1 may seed the incumbent, but no SUCCESS). cand2
-    # clears both slices -> SUCCESS on attempt 2.
-    evaluator = ScriptedEvaluator(
-        [
-            _result(0.6, 0.9),   # S1 slice A: bars met
-            _result(0.1, 0.2),   # S1 slice B: bars missed -> not a win
-            _result(0.7, 0.9),   # S2 slice A
-            _result(0.6, 0.9),   # S2 slice B
-        ]
-    )
-    generator = FakeGenerator(["S1", "S2"])
-    pipeline = make_pipeline(tmp_path, evaluator, generator, max_iterations=2)
-
-    result = pipeline.synthesize(task_description="dummy", output_name="dummy")
-
-    assert result.success is True
-    assert result.strategy_code == "S2"
-    assert len(result.attempts) == 2
 
 
 def test_warm_resume_restores_best_incumbent_before_scoring_seed(tmp_path):
@@ -827,38 +760,6 @@ def test_flip_diff_caps_rendered_examples_at_three(tmp_path):
     assert "more" in out  # the 2 unrendered flips are acknowledged
 
 
-def test_reject_feedback_contains_flip_diff_but_never_slice_b(tmp_path):
-    # S1 seeds the incumbent (A then B). S2 is worse on slice A with example 0
-    # flipping pass->fail -> stage-1 reject; its refinement feedback must carry
-    # the flip diff built from SLICE-A results only.
-    evaluator = ScriptedEvaluator(
-        [
-            _result_with_samples(
-                0.5, 1.0,
-                [_sample(True, "42", ["SeedTrace"]), _sample(False, "0", ["SeedTrace"])],
-            ),  # S1 slice A
-            _result_with_samples(
-                0.5, 1.0,
-                [_sample(True, "9", ["SecretB"]), _sample(False, "0", ["SecretB"])],
-            ),  # S1 slice B
-            _result_with_samples(
-                0.0, 1.0,
-                [_sample(False, "41", ["CandTrace"]), _sample(False, "0", ["CandTrace"])],
-            ),  # S2 slice A -> reject, flip on example 0
-        ]
-    )
-    generator = FakeGenerator(["S1", "S2", "S3"])
-    pipeline = make_pipeline(tmp_path, evaluator, generator, max_iterations=2)
-
-    with pytest.raises(SynthesisExhaustionError):
-        pipeline.synthesize(task_description="dummy", output_name="dummy")
-
-    feedback = generator.refine_calls[-1]["evaluation_feedback"]
-    assert "pass->fail" in feedback
-    assert "SeedTrace" in feedback and "CandTrace" in feedback
-    assert "42" in feedback and "41" in feedback
-    assert "SecretB" not in feedback
-
 
 # ---------------------------------------------------------------------------
 # The replaced machinery is gone (one best-tracker: the incumbent)
@@ -877,3 +778,183 @@ def test_pareto_anchor_and_restart_machinery_deleted(tmp_path):
         assert not hasattr(pipeline, name), f"{name} should be deleted"
     assert not hasattr(pipeline, "restart_after_stuck_iters")
     assert not hasattr(pipeline, "restart_cooldown_iters")
+
+
+# ---------------------------------------------------------------------------
+# Train-side confirmation (300-example pooled check; user rule 2026-09-24)
+# ---------------------------------------------------------------------------
+
+
+def test_confirmation_pass_gives_success(tmp_path):
+    """Slice A meets the bars and the pooled A+confirmation result also
+    meets the bars -> SUCCESS, using ALL remaining train examples."""
+    evaluator = ScriptedEvaluator(
+        [
+            _result(0.6, 0.9, n=10),  # S1 slice A: exactly meets bars
+            _result(0.6, 0.9, n=5),   # confirmation: 5 remaining examples
+        ],
+        train_split_size=15,
+    )
+    generator = FakeGenerator(["S1"])
+    pipeline = make_pipeline(tmp_path, evaluator, generator, max_iterations=1)
+
+    result = pipeline.synthesize(task_description="dummy", output_name="dummy")
+
+    assert result.success is True
+    assert len(evaluator.calls) == 2
+    assert evaluator.calls[0]["sample_offset"] == 0
+    assert evaluator.calls[0]["sample_size"] == 10
+    assert evaluator.calls[1]["sample_offset"] == 10
+    assert evaluator.calls[1]["sample_size"] == 5
+
+    attempt = result.attempts[-1]
+    assert attempt.confirmation is not None
+    assert attempt.confirmation["passed"] is True
+    assert attempt.confirmation["slice_a_size"] == 10
+    assert attempt.confirmation["confirm_size"] == 5
+    assert attempt.confirmation["pooled_accuracy"] == pytest.approx(0.6)
+    assert attempt.confirmation["pooled_syntax"] == pytest.approx(0.9)
+
+
+def test_confirmation_miss_blocks_success_and_loop_continues(tmp_path):
+    """Slice A clears the (higher) bar but the confirmation slice is bad
+    enough that pooled falls short -> no SUCCESS; attempt records the miss
+    and the loop moves on to the next attempt."""
+    evaluator = ScriptedEvaluator(
+        [
+            _result(1.0, 1.0, n=10),  # S1 slice A: comfortably meets bars
+            _result(0.0, 1.0, n=5),   # confirmation: accuracy craters
+            _result(0.0, 0.0, n=10),  # S2 slice A: rejected (worse than incumbent)
+        ],
+        train_split_size=15,
+    )
+    generator = FakeGenerator(["S1", "S2"])
+    pipeline = make_pipeline(
+        tmp_path, evaluator, generator, max_iterations=2, min_accuracy=0.9, min_syntax_rate=0.9
+    )
+
+    with pytest.raises(SynthesisExhaustionError) as exc_info:
+        pipeline.synthesize(task_description="dummy", output_name="dummy")
+
+    attempts = exc_info.value.attempts
+    first = attempts[0]
+    assert first.confirmation is not None
+    assert first.confirmation["passed"] is False
+    # pooled = (10*1.0 + 5*0.0) / 15 = 0.667, below the 0.9 accuracy bar
+    assert first.confirmation["pooled_accuracy"] == pytest.approx(10 / 15)
+    assert first.failed_at is not None  # not recorded as a success
+
+    # The confirmation-miss is surfaced to the author with pooled numbers.
+    feedback = generator.refine_calls[0]["evaluation_feedback"]
+    assert "0.667" in feedback or "66.7%" in feedback
+    assert "confirm" in feedback.lower()
+
+
+def test_no_examples_beyond_slice_a_is_unchanged_a_only_success(tmp_path):
+    """GSM/SMILES: no train examples beyond slice A -> success is decided on
+    slice A alone and the confirmation eval is never called."""
+    evaluator = ScriptedEvaluator(
+        [
+            _result(0.6, 0.9, n=10),  # S1 slice A meets bars
+        ],
+        train_split_size=10,  # == eval_sample_size -> nothing left to confirm
+    )
+    generator = FakeGenerator(["S1"])
+    pipeline = make_pipeline(tmp_path, evaluator, generator, max_iterations=1)
+
+    result = pipeline.synthesize(task_description="dummy", output_name="dummy")
+
+    assert result.success is True
+    assert len(evaluator.calls) == 1  # confirmation eval never called
+    assert result.attempts[-1].confirmation is None
+
+
+def test_no_split_manifest_is_unchanged_a_only_success(tmp_path):
+    """No train_split_size at all (e.g. SMILES has no split manifest)."""
+    evaluator = ScriptedEvaluator(
+        [
+            _result(0.6, 0.9, n=10),
+        ],
+        train_split_size=None,
+    )
+    generator = FakeGenerator(["S1"])
+    pipeline = make_pipeline(tmp_path, evaluator, generator, max_iterations=1)
+
+    result = pipeline.synthesize(task_description="dummy", output_name="dummy")
+
+    assert result.success is True
+    assert len(evaluator.calls) == 1
+    assert result.attempts[-1].confirmation is None
+
+
+def test_confirmation_eval_ignores_attempt_deadline(tmp_path):
+    """The confirmation eval must not be killed by the per-attempt
+    wall-clock cap -- it is called with no deadline even when the pipeline
+    has one configured for the main slice-A eval."""
+    evaluator = ScriptedEvaluator(
+        [
+            _result(0.6, 0.9, n=10),
+            _result(0.6, 0.9, n=5),
+        ],
+        train_split_size=15,
+    )
+    generator = FakeGenerator(["S1"])
+    pipeline = make_pipeline(
+        tmp_path, evaluator, generator, max_iterations=1, max_attempt_seconds=60.0
+    )
+
+    result = pipeline.synthesize(task_description="dummy", output_name="dummy")
+
+    assert result.success is True
+    confirm_call = evaluator.calls[1]
+    assert confirm_call["sample_offset"] == 10
+    assert confirm_call["sample_size"] == 5
+    assert confirm_call.get("deadline") is None
+
+
+def test_pooled_early_stop_targets_are_exact_and_clipped(tmp_path):
+    """need_B = (bar*N_total - correct_A) / N_B, clipped to [0, 1]."""
+    pipeline = make_pipeline(tmp_path, ScriptedEvaluator([]), FakeGenerator(["S1"]), 1)
+
+    # bar=0.6, N_total=15, A: n=10 correct=6 (acc=0.6) -> need exactly 0.6 on B (n=5)
+    a_exact = _result(0.6, 0.9, n=10)
+    need_acc, need_syn = pipeline._pooled_early_stop_targets(a_exact, n_b=5, n_total=15)
+    assert need_acc == pytest.approx(0.6)
+    assert need_syn == pytest.approx(0.9)
+
+    # A already exceeds the accuracy bar on its own -> need_B clips to 0.0;
+    # the syntax bar (0.9) isn't fully covered by A alone, so its need_B is
+    # the exact (unclipped) remainder: (0.9*15 - 10) / 5 = 0.7.
+    a_over = _result(1.0, 1.0, n=10)
+    need_acc, need_syn = pipeline._pooled_early_stop_targets(a_over, n_b=5, n_total=15)
+    assert need_acc == 0.0
+    assert need_syn == pytest.approx(0.7)
+
+    # A is far below the bar -> B alone cannot save it; need_B clips up to 1.0
+    a_under = _result(0.0, 0.0, n=10)
+    need_acc, need_syn = pipeline._pooled_early_stop_targets(a_under, n_b=5, n_total=15)
+    assert need_acc == 1.0
+    assert need_syn == 1.0
+
+
+def test_early_stopped_confirmation_counts_unrun_examples_as_misses(tmp_path):
+    """A confirmation eval that stops early (bar already out of reach) scores
+    only the examples it ran. Pooling over just those can look like a pass;
+    the pooled bar must be judged over the whole train split instead."""
+    evaluator = ScriptedEvaluator(
+        [
+            _result(0.6, 0.9, n=10),  # slice A meets bars
+            _result(0.6, 0.9, n=5),   # confirmation stopped after 5 of 20
+        ],
+        train_split_size=30,
+    )
+    generator = FakeGenerator(["S1"])
+    pipeline = make_pipeline(tmp_path, evaluator, generator, max_iterations=1)
+
+    with pytest.raises(SynthesisExhaustionError) as exc:
+        pipeline.synthesize(task_description="dummy", output_name="dummy")
+
+    confirmation = exc.value.attempts[-1].confirmation
+    assert confirmation["passed"] is False
+    # (6 + 3) correct of 30 train examples, not (6 + 3) of the 15 that ran.
+    assert confirmation["pooled_accuracy"] == pytest.approx(9 / 30)

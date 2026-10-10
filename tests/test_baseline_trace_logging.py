@@ -341,7 +341,7 @@ def test_the_crane_audit_line_carries_the_constrained_step_count(monkeypatch, tm
 
 def test_cars_logs_draws_rejections_and_the_10x_cap(monkeypatch, tmp_path, caplog):
     caplog.set_level(logging.INFO, logger=TRACE_LOGGER)
-    examples = [{"class_name": "isocyanates", "grammar_text": "", "prompt": "Molecule:"}]
+    examples = [{"class_name": "isocyanates", "draw_index": 0, "draw_seed": 100000, "smiles_split_name": "train", "smiles_trial": 1, "grammar_text": "", "prompt": "Molecule:"}]
     cars_fixture._run_cars_smiles(
         monkeypatch, tmp_path, examples, molecule_sequence=["N=C=O"], invalid_molecules={"N=C=O"}
     )
@@ -364,7 +364,7 @@ def test_cars_logs_draws_rejections_and_the_10x_cap(monkeypatch, tmp_path, caplo
 
 def test_cars_logs_target_reached(monkeypatch, tmp_path, caplog):
     caplog.set_level(logging.INFO, logger=TRACE_LOGGER)
-    examples = [{"class_name": "acrylates", "grammar_text": "", "prompt": "Molecule:"}] * 2
+    examples = [{"class_name": "acrylates", "draw_index": 0, "draw_seed": 100000, "smiles_split_name": "train", "smiles_trial": 1, "grammar_text": "", "prompt": "Molecule:"}] * 2
     cars_fixture._run_cars_smiles(
         monkeypatch, tmp_path, [dict(e) for e in examples], molecule_sequence=["C=C", "C=CC"]
     )
@@ -591,7 +591,7 @@ def _unconstrained_args(tmp_path, **overrides):
         smiles_classes="acrylates", smiles_samples_per_class=1, output_json=tmp_path / "out.json",
     )
     base.update(overrides)
-    return argparse.Namespace(**base)
+    return argparse.Namespace(**{"smiles_split_name": "train", "smiles_trial": 1, **base})
 
 
 def test_unconstrained_smiles_logs_no_grammar_stop_reason_and_both_texts(monkeypatch, tmp_path, caplog):

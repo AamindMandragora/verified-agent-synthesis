@@ -13,7 +13,8 @@ This module fixes both halves at the root:
 
 1. `check_bar_split_provenance(...)` — called at launch by run_synthesis.
    When a run uses a split file and a nonzero accuracy bar, the caller must
-   declare which split the bar was measured on (--bar-split-name), and it
+   declare which split the bar was measured on (--bar-from-train or
+   --bar-from-test on run_synthesis), and it
    must match the split being evaluated. A mismatch always refuses to start —
    there is no override flag; cross-split comparison is exactly the bug this
    guard exists to prevent.
@@ -43,7 +44,13 @@ class BarSplitProvenanceError(ValueError):
 SPLIT_NAMES_BY_DATASET = {
     "gsm_symbolic": ("train", "test"),
     "spider": ("train", "test"),
+    # SMILES (2026-09-26): train/test are two disjoint per-draw seed ranges, not
+    # an index file. See synthesis/evaluate/benchmarks/smiles/seed_split.py.
+    "smiles": ("train", "test"),
 }
+
+# Datasets whose split is a seed range, so there is never a split file to point at.
+SEED_RANGE_SPLIT_DATASETS = ("smiles",)
 
 
 def validate_split_name(dataset: str, split_name: str | None, flag: str) -> None:
@@ -72,19 +79,19 @@ def check_bar_split_provenance(
 ) -> None:
     """Refuse to launch when the accuracy bar's split doesn't match the eval split.
 
-    The guard only applies when a train/eval split file is actually in use
-    (no split file = no ambiguity) and the run has a real accuracy bar.
-    SMILES has no split-file mechanism, so it is exempt.
+    The guard only applies when a train/test split is actually in use (a split
+    file for GSM/Spider; always, for SMILES, whose split is two seed ranges) and
+    the run has a real accuracy bar.
     """
-    if dataset == "smiles":
-        return
     if split_file is None:
-        return
+        if dataset not in SEED_RANGE_SPLIT_DATASETS:
+            return
+        split_file = f"the {dataset} seed ranges (synthesis/evaluate/benchmarks/smiles/seed_split.py)"
     if min_accuracy is None or min_accuracy <= 0:
         return
 
     validate_split_name(dataset, split_name, "split name")
-    validate_split_name(dataset, bar_split_name, "--bar-split-name")
+    validate_split_name(dataset, bar_split_name, "bar split")
     eval_side = split_name
     bar_side = bar_split_name
 
@@ -92,15 +99,16 @@ def check_bar_split_provenance(
         valid = "|".join(SPLIT_NAMES_BY_DATASET.get(dataset, ("train", "test")))
         raise BarSplitProvenanceError(
             f"--min-accuracy {min_accuracy} is used as an acceptance bar on the "
-            f"'{eval_side}' side of {split_file}, but --bar-split-name was not "
-            "given. Declare which split the bar was measured on "
-            f"(--bar-split-name {valid}). Refusing to launch: comparing "
+            f"'{eval_side}' side of {split_file}, but no bar split was "
+            "declared. Declare which split the bar was measured on "
+            f"(--bar-from-train or --bar-from-test; valid splits: {valid}). "
+            "Refusing to launch: comparing "
             "a bar from one split side against scores from the other produced "
             "wrong win/loss verdicts on 2026-07-17 (GSM Qwen3.5-4B/9B)."
         )
     if bar_side != eval_side:
         raise BarSplitProvenanceError(
-            f"Bar split mismatch: --bar-split-name '{bar_side}' but this run "
+            f"Bar split mismatch: --bar-from-{bar_side} but this run "
             f"evaluates the '{eval_side}' side of {split_file}. Either re-measure "
             f"the bar on '{eval_side}' or evaluate on '{bar_side}'. There is no "
             "override: cross-split bars produced wrong verdicts on 2026-07-17."
@@ -113,6 +121,8 @@ def build_split_provenance(
     spider_split_file: Any = None,
     spider_split_name: str | None = None,
     bar_split_name: str | None = None,
+    smiles_split_name: str | None = None,
+    smiles_trial: int | None = None,
 ) -> dict:
     """The ONE split-provenance dict shape embedded in every output JSON.
 
@@ -130,4 +140,12 @@ def build_split_provenance(
         "spider_split_file": _str_or_none(spider_split_file),
         "spider_split_name": spider_split_name,
         "bar_split_name": bar_split_name,
+        **_smiles_seed_range_record(smiles_split_name, smiles_trial),
     }
+
+
+def _smiles_seed_range_record(smiles_split_name: str | None, smiles_trial: int | None) -> dict:
+    """smiles_split_name, smiles_trial and that trial's smiles_seed_range ([start, stop)); all None off SMILES."""
+    from synthesis.evaluate.benchmarks.smiles.seed_split import seed_range_record
+
+    return seed_range_record(smiles_split_name, smiles_trial)

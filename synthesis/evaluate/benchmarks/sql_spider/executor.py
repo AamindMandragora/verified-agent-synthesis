@@ -14,7 +14,10 @@ then call evaluate() and return its structured results.
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
+import time
+import types
 import tempfile
 import importlib.util
 import re
@@ -28,6 +31,29 @@ from synthesis.evaluate.benchmarks.sql_spider.dataset import (
     default_tables_json,
     write_gold_file,
 )
+
+
+# The Spider authors' evaluation.py runs predicted SQL with no time limit. A
+# model-written always-true join (e.g. `ON p.player_id = p.player_id` on wta_1,
+# ~10.5e9 rows) then hangs the whole lane. Any query still running after this many
+# seconds is interrupted and the row is scored wrong, the same rule the train-bar
+# scorer uses and the Spider test-suite evaluator's per-query timeout follows.
+SPIDER_QUERY_CAP_S = 60.0
+
+
+def _capped_sqlite3() -> types.ModuleType:
+    """sqlite3 stand-in whose connections interrupt work SPIDER_QUERY_CAP_S after connect."""
+    shim = types.ModuleType("sqlite3_capped")
+    shim.__dict__.update({k: v for k, v in vars(sqlite3).items() if not k.startswith("__")})
+
+    def connect(*args, **kwargs):
+        conn = sqlite3.connect(*args, **kwargs)
+        deadline = time.monotonic() + SPIDER_QUERY_CAP_S
+        conn.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 10000)
+        return conn
+
+    shim.connect = connect
+    return shim
 
 
 def _ensure_syncode_import_path() -> None:
@@ -77,6 +103,7 @@ def _load_spider_evaluate():
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
         spec.loader.exec_module(module)
+    module.sqlite3 = _capped_sqlite3()
     return module.evaluate
 
 

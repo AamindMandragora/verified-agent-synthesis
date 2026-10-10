@@ -368,3 +368,12 @@ def test_dry_run_does_not_create_claim(tmp_path: Path):
                   manifest_sha256="m" * 64, dry_run=True,
                   runner=lambda *args, **kwargs: pytest.fail("dry run called runner"))
     assert not claim_root.exists()
+
+
+def test_rerun_command_declares_its_test_side_bar():
+    # Rerun bars come from fixed-baseline runs scored on the TEST side
+    # (fixed_baseline_command passes --*-split-name test), so the rerun must
+    # say so; run_synthesis then refuses GSM/Spider reruns that score train.
+    for row in queue.build_scope(Path("/repo")):
+        command = queue.rerun_command(row, Path("/env/python"))
+        assert [arg for arg in command if arg.startswith("--bar-from-")] == ["--bar-from-test"]

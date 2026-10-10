@@ -236,6 +236,7 @@ def test_ablation_scope_is_selected_and_immutably_bound_in_the_manifest(
             "gsm_symbolic": {
                 "min_accuracy": 13 / 49,
                 "min_syntax_rate": 0.9,
+                "bar_split": "train",
                 "source_path": str(bar),
                 "source_sha256": bar_sha,
             }
@@ -754,9 +755,9 @@ def test_manifest_is_immutable_and_records_every_execution_dependency(tmp_path, 
     bar_path.write_text("{}", encoding="utf-8")
     bar_sha = __import__("hashlib").sha256(bar_path.read_bytes()).hexdigest()
     monkeypatch.setattr(queue, "BAR_BINDINGS", {
-        "gsm_symbolic": {"min_accuracy": 13 / 49, "min_syntax_rate": 0.9, "source_path": str(bar_path), "source_sha256": bar_sha},
-        "spider": {"min_accuracy": 59 / 300, "min_syntax_rate": 0.9, "source_path": str(bar_path), "source_sha256": bar_sha},
-        "smiles": {"acrylates": {"min_accuracy": 0.14, "min_syntax_rate": 0.9}, "chain_extenders": {"min_accuracy": 0.20, "min_syntax_rate": 0.9}, "isocyanates": {"min_accuracy": 0.30, "min_syntax_rate": 0.9}, "source_path": str(bar_path), "source_sha256": bar_sha},
+        "gsm_symbolic": {"min_accuracy": 13 / 49, "min_syntax_rate": 0.9, "bar_split": "train", "source_path": str(bar_path), "source_sha256": bar_sha},
+        "spider": {"min_accuracy": 59 / 300, "min_syntax_rate": 0.9, "bar_split": "train", "source_path": str(bar_path), "source_sha256": bar_sha},
+        "smiles": {"acrylates": {"min_accuracy": 0.14, "min_syntax_rate": 0.9}, "chain_extenders": {"min_accuracy": 0.20, "min_syntax_rate": 0.9}, "isocyanates": {"min_accuracy": 0.30, "min_syntax_rate": 0.9}, "bar_split": "train", "source_path": str(bar_path), "source_sha256": bar_sha},
     })
     rows = queue.build_scope(tmp_path)
     source_digest = queue.execution_source_sha256(tmp_path)
@@ -3861,3 +3862,14 @@ def test_constrained_window_rate_distinguishes_equal_syntax_by_work():
 
     assert queue.constrained_window_rate(low) == 10.0
     assert queue.constrained_window_rate(high) == 20.0
+
+
+def test_fresh_commands_pass_exactly_the_row_declared_bar_split_flag():
+    for row in queue.build_scope(Path("/repo")):
+        if row["execution_mode"] != "fresh_synthesis":
+            continue
+        assert row["bar_split"] == queue.BAR_BINDINGS[row["benchmark"]]["bar_split"]
+        command = queue.synthesis_command(row, Path("/env/python"))
+        assert [arg for arg in command if arg.startswith("--bar-from-")] == [
+            f"--bar-from-{row['bar_split']}"
+        ]

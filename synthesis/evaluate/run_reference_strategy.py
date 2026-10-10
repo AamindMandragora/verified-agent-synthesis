@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from synthesis.evaluate.baseline_store import build_metrics_from_eval_samples
-from synthesis.generate.generator import inject_strategy_into_template
+from synthesis.generate.generator import compile_source
 from synthesis.evaluate.evaluator import Evaluator
 
 
@@ -56,7 +56,7 @@ def _compile_reference(strategy: str, output_dir: Path) -> Path:
     # Each reference is a BODY only. The single copy of the decoder contract lives
     # in synthesis/verify/library/GeneratedCSD.dfy, and the same function the
     # synthesis pipeline uses builds the full file from it.
-    source_text = inject_strategy_into_template(source_path.read_text())
+    source_text = compile_source(source_path.read_text())
 
     compiler = build_default_compiler(output_dir=output_dir)
     result = compiler.compile(source_text, output_name=f"ref_{strategy}")
@@ -89,6 +89,8 @@ def _evaluate(
     vllm_gpu_memory_utilization: float,
     vllm_max_model_len: int | None,
     smiles_classes: str | None,
+    smiles_split_name: str | None = None,
+    smiles_trial: int | None = None,
 ) -> dict[str, Any]:
     kwargs: dict[str, Any] = dict(
         dataset_name=dataset,
@@ -104,6 +106,9 @@ def _evaluate(
         kwargs["vllm_max_model_len"] = vllm_max_model_len
     if smiles_classes is not None:
         kwargs["smiles_classes"] = smiles_classes
+    if dataset == "smiles":
+        kwargs["smiles_split_name"] = smiles_split_name
+        kwargs["smiles_trial"] = smiles_trial
 
     evaluator = Evaluator(**kwargs)
     try:
@@ -111,7 +116,12 @@ def _evaluate(
     finally:
         evaluator.unload_runtime()
 
-    return _payload_from_result(result)
+    payload = _payload_from_result(result)
+    if dataset == "smiles":
+        from synthesis.evaluate.benchmarks.smiles.seed_split import seed_range_record
+
+        payload.update(seed_range_record(smiles_split_name, smiles_trial))
+    return payload
 
 
 def _payload_from_result(result: Any) -> dict[str, Any]:
@@ -190,6 +200,19 @@ def main() -> None:
     parser.add_argument("--vllm-gpu-memory-utilization", type=float, default=0.8)
     parser.add_argument("--vllm-max-model-len", type=int, default=None)
     parser.add_argument("--smiles-classes", default=None)
+    parser.add_argument(
+        "--smiles-split-name",
+        choices=["train", "test"],
+        default=None,
+        help="SMILES seed range to draw from (required for --dataset smiles).",
+    )
+    parser.add_argument(
+        "--smiles-trial",
+        type=int,
+        choices=[1, 2, 3],
+        default=None,
+        help="SMILES trial (its own seed block inside the split; required for --dataset smiles).",
+    )
     parser.add_argument("--output-json", type=Path, required=True)
     parser.add_argument(
         "--compiled-cache-dir",
@@ -198,6 +221,10 @@ def main() -> None:
         help="Directory to cache compiled reference modules (avoids recompilation)",
     )
     args = parser.parse_args()
+    if args.dataset == "smiles" and args.smiles_split_name is None:
+        parser.error("--smiles-split-name {train,test} is required for --dataset smiles.")
+    if args.dataset == "smiles" and args.smiles_trial is None:
+        parser.error("--smiles-trial {1,2,3} is required for --dataset smiles.")
 
     cache_dir = args.compiled_cache_dir
     if cache_dir is None:
@@ -232,6 +259,8 @@ def main() -> None:
         vllm_gpu_memory_utilization=args.vllm_gpu_memory_utilization,
         vllm_max_model_len=args.vllm_max_model_len,
         smiles_classes=args.smiles_classes,
+        smiles_split_name=args.smiles_split_name,
+        smiles_trial=args.smiles_trial,
     )
 
     args.output_json.parent.mkdir(parents=True, exist_ok=True)

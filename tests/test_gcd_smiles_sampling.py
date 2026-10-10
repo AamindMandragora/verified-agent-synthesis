@@ -46,7 +46,7 @@ def test_smiles_sampling_reaches_syncode_constructor(monkeypatch, tmp_path: Path
         def load_dataset_sample(runtime):
             return [
                 {
-                    "class_name": "acrylates",
+                    "class_name": "acrylates", "draw_index": 0, "draw_seed": 100000, "smiles_split_name": "train", "smiles_trial": 1,
                     "grammar_text": "start: /.+/",
                     "prompt": "Molecule:",
                 }
@@ -87,6 +87,8 @@ def test_smiles_sampling_reaches_syncode_constructor(monkeypatch, tmp_path: Path
     monkeypatch.setattr(runner, "_build_minimal_json", lambda *args, **kwargs: None)
 
     args = argparse.Namespace(
+        smiles_split_name="train",
+        smiles_trial=1,
         dataset="smiles",
         eval_model="Qwen/Qwen2.5-1.5B-Instruct",
         eval_backend="vllm",

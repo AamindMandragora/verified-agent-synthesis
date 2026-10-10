@@ -50,7 +50,8 @@ MIN_EXAMPLES_BEFORE_THRESHOLD_STOP = 15
 # Guarded by tests/test_delimiter_single_source_of_truth.py.
 
 # ---------------------------------------------------------------------------
-# Splits — one canonical split file per dataset (SMILES has none).
+# Splits — one canonical split file per dataset. SMILES has none: its train/test
+# split is two disjoint seed ranges (synthesis/evaluate/benchmarks/smiles/seed_split.py).
 # The Spider 50-example fast-iteration set lives in its own script
 # (scripts/fast_loop/), not here.
 # ---------------------------------------------------------------------------
@@ -63,6 +64,10 @@ SPLIT_FILE_BY_DATASET = {
 # Synthesis always scores itself on the train side; held-out re-evals go
 # through reevaluate_compiled_csd.py, never run_synthesis.
 SYNTHESIS_SPLIT_NAME = "train"
+# SMILES synthesis scores trial 1 of the train seeds: the same draws as the
+# baselines' train trial 1, so a synthesis score and a baseline score on trial 1
+# compare the same (class, seed) pairs.
+SYNTHESIS_SMILES_TRIAL = 1
 
 # ---------------------------------------------------------------------------
 # Output layout

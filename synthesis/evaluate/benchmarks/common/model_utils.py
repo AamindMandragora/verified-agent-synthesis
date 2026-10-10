@@ -15,10 +15,11 @@ import math
 import multiprocessing as mp
 import re
 import time
+import weakref
 from collections import defaultdict
 from contextlib import contextmanager
 
-from typing import Any
+from typing import Any, NamedTuple
 
 import torch
 from synthesis.evaluate.benchmarks.common.delimiter_hygiene import (
@@ -189,6 +190,123 @@ def _first_ungrounded_token_idx(token_strs: list, support: set) -> tuple:
     # Offset past the end of every token (should not happen given the text was
     # built from these tokens) — clamp to the last token to keep idx in range.
     return (True, max(len(token_strs) - 1, 0))
+
+
+
+_PROMPT_MOLECULE_LABEL_RE = re.compile(r"^\s*Molecule:\s*(.*?)\s*$", re.IGNORECASE)
+
+
+def _normalize_prompt_visible_span(text: str) -> str:
+    """Normalize one prompt-visible candidate span for exact duplicate checks.
+
+    This is intentionally conservative. SMILES candidates should be single
+    whitespace-free spans; broad substring search would create false positives
+    such as treating `CC` as already present when only `CCO` appears.
+    """
+    text = (text or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"^\s*Molecule:\s*", "", text, flags=re.IGNORECASE).strip()
+    if text.startswith("<<") and text.endswith(">>"):
+        text = text[2:-2].strip()
+    text = text.strip("`'\"")
+    if not text or text.lower() == "molecule:":
+        return ""
+    if "\n" in text or re.search(r"\s", text):
+        return ""
+    return text
+
+
+def _prompt_visible_span_set(prompt_text: str) -> set[str]:
+    """Candidate spans visible in the prompt, parsed without gold/scorer state.
+
+    Supports both ordinary SMILES examples (`Molecule: CCO`) and the rolling
+    suffix shape used by the evaluator (`CCO` on the line before `Molecule:`).
+    The returned set is exact-match only after normalization.
+    """
+    spans: set[str] = set()
+    lines = (prompt_text or "").splitlines()
+    for i, line in enumerate(lines):
+        match = _PROMPT_MOLECULE_LABEL_RE.match(line)
+        if not match:
+            continue
+        inline = _normalize_prompt_visible_span(match.group(1))
+        if inline:
+            spans.add(inline)
+            continue
+        if i > 0:
+            previous = _normalize_prompt_visible_span(lines[i - 1])
+            if previous:
+                spans.add(previous)
+    return spans
+
+
+def _candidate_smiles(text: str) -> str:
+    """Extract a bare SMILES candidate from rendered span text.
+
+    Local normalization only: strips a leading `Molecule:` label, `<< >>` span
+    delimiters, surrounding quotes/backticks, and whitespace, then keeps the first
+    whitespace-free token. Never calls the SMILES scorer or its class functions.
+    """
+    s = (text or "").strip()
+    if not s:
+        return ""
+    s = re.sub(r"^\s*Molecule:\s*", "", s, flags=re.IGNORECASE).strip()
+    if s.startswith("<<") and s.endswith(">>"):
+        s = s[2:-2].strip()
+    s = s.strip("`'\"").strip()
+    parts = s.split()
+    return parts[0] if parts else ""
+
+
+def _morgan_fp(smiles: str):
+    """Morgan (ECFP4) fingerprint of a SMILES string via RDKit, or None.
+
+    Uses RDKit directly -- the same general cheminformatics tooling the baselines
+    use for diversity. It does NOT import or reference the SMILES scorer
+    (`benchmarks.smiles.metrics`), its class-membership function, or CLASS_MOTIFS.
+    """
+    if not smiles:
+        return None
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import AllChem
+    except Exception:
+        return None
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    return AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2048)
+
+
+def _smiles_resemblance(candidate_text: str, exemplars) -> tuple[str, float]:
+    """Max Tanimoto similarity (0..1) of a candidate to any prompt-visible exemplar.
+
+    Fair: exemplars come only from prompt-visible text and similarity uses generic
+    RDKit fingerprints. Returns ("", 0.0) when the candidate is empty, and
+    (candidate, 0.0) when RDKit is unavailable, the candidate is unparseable, or no
+    exemplar parses. Never reads gold labels, scorer state, the SMILES scorer's
+    class-membership function, or held-out data.
+    """
+    candidate = _candidate_smiles(candidate_text)
+    if not candidate:
+        return "", 0.0
+    cand_fp = _morgan_fp(candidate)
+    if cand_fp is None:
+        return candidate, 0.0
+    try:
+        from rdkit import DataStructs
+    except Exception:
+        return candidate, 0.0
+    best = 0.0
+    for ex in exemplars:
+        ex_fp = _morgan_fp(ex)
+        if ex_fp is None:
+            continue
+        sim = DataStructs.TanimotoSimilarity(cand_fp, ex_fp)
+        if sim > best:
+            best = sim
+    return candidate, float(best)
 
 
 # Per-component timing. Keyed by a short label. Values are (total_seconds, call_count).
@@ -758,7 +876,6 @@ def _get_vllm_quantization_kwargs(
 class _TaskGuidanceState:
     """First-call-wins prompt guidance appended by generated CSDs."""
 
-    MAX_GUIDANCE_CHARS = 1200
     HEADER = "Additional task guidance from CSD:"
 
     def __init__(self) -> None:
@@ -768,10 +885,7 @@ class _TaskGuidanceState:
         self.accepted_guidance = None
 
     def _coerce_guidance(self, guidance: object) -> str:
-        text = str(guidance).strip()
-        if not text:
-            return ""
-        return text[: self.MAX_GUIDANCE_CHARS]
+        return str(guidance).strip()
 
 
 def _eos_is_legal(parser, prefix, has_other_valid_token: bool) -> bool:
@@ -823,6 +937,51 @@ def _answer_complete(text: str) -> bool:
     return after[0] not in "+-*/%(<"
 
 
+class VocabTextIndex(NamedTuple):
+    """The text of every token in one LM vocabulary, built once per LM.
+
+    texts[i] is the text of tokens[i]; first_index[s] is the lowest i whose
+    text is s. The token-set helper fast paths (gsm_symbolic/environment.py)
+    use it so IntersectTokenSets(lm.Tokens, x) costs O(|x|) instead of
+    rebuilding the text of every vocabulary token on every call.
+    """
+
+    texts: list[str]
+    first_index: dict[str, int]
+
+
+# id(tokens seq) -> (weak ref to that seq, its index). Keyed by identity: a
+# Dafny seq is immutable, so its texts never change; the weak ref both drops
+# the entry when the seq dies and guards against a reused id().
+_VOCAB_TEXT_INDEX: dict[int, tuple[weakref.ref, VocabTextIndex]] = {}
+
+
+def register_vocab_text_index(tokens, index: VocabTextIndex) -> None:
+    key = id(tokens)
+
+    def _drop(ref, key=key):
+        entry = _VOCAB_TEXT_INDEX.get(key)
+        if entry is not None and entry[0] is ref:
+            del _VOCAB_TEXT_INDEX[key]
+
+    try:
+        ref = weakref.ref(tokens, _drop)
+    except TypeError:
+        # A plain list (test doubles) can't be weakly referenced, and could
+        # be mutated anyway: leave it unindexed; the helpers take the
+        # general path, which gives the same answer.
+        return
+    _VOCAB_TEXT_INDEX[key] = (ref, index)
+
+
+def vocab_text_index(seq) -> VocabTextIndex | None:
+    """The index registered for exactly this seq object, else None."""
+    entry = _VOCAB_TEXT_INDEX.get(id(seq))
+    if entry is None or entry[0]() is not seq:
+        return None
+    return entry[1]
+
+
 class _TensorizedLMBase:
     """Shared tensorized behavior for Dafny LM wrappers."""
 
@@ -861,6 +1020,10 @@ class _TensorizedLMBase:
         # its eval_logic. 0.0 is exact argmax.
         self._constrained_temperature = 0.0
         self._generate_count = 0
+        # Model calls for the current example: GenerateLogits calls that reached
+        # the model (prefix-cache hits excluded). The evaluator resets it at the
+        # start of each example and records it in that example's result.
+        self._example_model_calls = 0
         self._token_id_to_str: dict[int, str] = {}
         # Free-text delimiter rule (see delimiter_hygiene): what the output so far renders to.
         self._last_prefix_text = ""
@@ -920,10 +1083,14 @@ class _TensorizedLMBase:
                 self._recurrence_penalty,
             )
 
+        token_texts = [self._to_str(tokens[i]) for i in range(len(tokens))]
         self._token_str_to_indices = {}
         for i in range(n):
-            token_str = self._to_str(tokens[i])
-            self._token_str_to_indices.setdefault(token_str, []).append(i)
+            self._token_str_to_indices.setdefault(token_texts[i], []).append(i)
+        first_index: dict[str, int] = {}
+        for i, text in enumerate(token_texts):
+            first_index.setdefault(text, i)
+        register_vocab_text_index(tokens, VocabTextIndex(token_texts, first_index))
 
         self._oracle_trie_root = _OracleTrieNode()
         self._oracle_node = self._oracle_trie_root
@@ -947,6 +1114,12 @@ class _TensorizedLMBase:
 
     def ClearRuntimeDeadline(self):
         self._runtime_deadline = None
+
+    def ResetModelCallCount(self):
+        self._example_model_calls = 0
+
+    def ModelCallCount(self) -> int:
+        return self._example_model_calls
 
     def _check_runtime_deadline(self):
         if self._runtime_deadline is not None and time.monotonic() >= self._runtime_deadline:
@@ -1468,6 +1641,66 @@ class _TensorizedLMBase:
                     n, ("".join(token_strs))[:120],
                 )
         return (found, idx)
+
+    def SpanAppearsInPrompt(self, text):
+        """Dafny extern: exact normalized prompt-visible duplicate check.
+
+        Fair: reads only the current prompt/instruction text. It does not read
+        gold labels, evaluator state, scorer results, dataset metadata, or class-
+        specific win rules.
+        """
+        if not isinstance(text, str):
+            text = self._to_str(text)
+        candidate = _normalize_prompt_visible_span(text)
+        if not candidate:
+            return False
+        visible = self._prompt_visible_span_set()
+        found = candidate in visible
+        _GROUNDING_LOG.info(
+            "[grounding] prompt-duplicate span=%r visible_n=%d found=%s",
+            candidate[:120], len(visible), found,
+        )
+        return found
+
+    def SpanResemblanceToPromptExamples(self, text):
+        """Dafny extern: structural resemblance (0..1) of a candidate to the
+        example molecules shown in the prompt.
+
+        Renders `text` as a candidate, then returns the maximum RDKit Tanimoto
+        similarity between it and the prompt-visible example spans (the same span
+        set used by SpanAppearsInPrompt). Returns 0.0 when RDKit is unavailable,
+        the candidate is unparseable, or the prompt shows no examples.
+
+        Fair: reads only prompt-visible examples and uses generic RDKit
+        fingerprints. It does not read gold labels, evaluator results, held-out
+        data, scorer state, the SMILES scorer's class-membership function, or
+        class-specific strategy advice.
+        """
+        if not isinstance(text, str):
+            text = self._to_str(text)
+        exemplars = self._prompt_visible_span_set()
+        if not exemplars:
+            return self._dafny.BigRational(0.0)
+        candidate, score = _smiles_resemblance(text, exemplars)
+        if candidate:
+            _GROUNDING_LOG.info(
+                "[grounding] prompt-resemblance span=%r exemplars_n=%d score=%.3f",
+                candidate[:120], len(exemplars), score,
+            )
+        return self._dafny.BigRational(score)
+
+    def _prompt_visible_span_set(self) -> set[str]:
+        """Prompt-visible candidate spans, cached per instruction text."""
+        it = self.instruction_text or ""
+        if getattr(self, "_prompt_visible_span_cache_key", None) == it:
+            return self._prompt_visible_span_cache_val
+        spans = _prompt_visible_span_set(it)
+        self._prompt_visible_span_cache_key = it
+        self._prompt_visible_span_cache_val = spans
+        _GROUNDING_LOG.info(
+            "[grounding] parsed %d prompt-visible spans for current example", len(spans)
+        )
+        return spans
 
     def _grounding_support_set(self) -> set:
         """Return schema identifiers cached for the current instruction text."""
@@ -2349,6 +2582,7 @@ def create_huggingface_lm(
                 return
 
             self._generate_count += 1
+            self._example_model_calls += 1
             if self._generate_count % 10 == 0:
                 print(f"    [PROGRESS] GenerateLogits call #{self._generate_count}, prefix length: {len(input_prefix)}, cache_hits={self._cache_hits}")
 
@@ -2500,6 +2734,7 @@ def create_vllm_lm(
                     return
 
                 self._generate_count += 1
+                self._example_model_calls += 1
                 if self._generate_count % 10 == 0:
                     print(f"    [PROGRESS] GenerateLogits call #{self._generate_count}, prefix length: {len(input_prefix)}, cache_hits={self._cache_hits}")
 

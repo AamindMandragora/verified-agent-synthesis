@@ -584,36 +584,70 @@ def _attach_helper_fastpath(VerifiedDecoderAgent) -> None:
     # right-hand seq each call. Strategies that pass `lm.Tokens` (~150K) as the
     # right-hand side melt down at O(|left| * 150K) ops per generation step.
     import _dafny
+    from synthesis.evaluate.benchmarks.common.model_utils import vocab_text_index
 
     def _seq_to_str(tok):
+        # A _dafny.Seq backed by a plain list: tok[i] is elems[i], so joining
+        # the list gives the same text without a Python call per character.
+        elems = getattr(tok, "elems", None)
+        if type(elems) is list:
+            try:
+                return "".join(elems)
+            except TypeError:
+                pass
         try:
             return "".join(tok[i] for i in range(len(tok)))
         except Exception:
             return str(tok)
 
+    # An LM vocabulary (lm.Tokens) carries a precomputed text index (built once
+    # in _TensorizedLMBase). Without it, every call rebuilt the text of all
+    # 248k Qwen3.5 tokens (~0.74 s per IntersectTokenSets(lm.Tokens, x)).
+    def _texts_of(seq):
+        index = vocab_text_index(seq)
+        if index is not None:
+            return index.texts
+        return [_seq_to_str(seq[i]) for i in range(len(seq))]
+
+    def _text_set_of(seq):
+        index = vocab_text_index(seq)
+        if index is not None:
+            return index.first_index  # only used for `in`
+        return {_seq_to_str(seq[i]) for i in range(len(seq))}
+
+    # Contract (VerifiedAgentSynthesis.dfy): every result token is in a and in
+    # b, and |result| <= |a|. This fast path returns a's tokens whose text is
+    # in b, in a's order, keeping only the first token of each text.
     def _fast_intersect_token_sets(a, b):
-        b_set = set()
-        for i in range(len(b)):
-            b_set.add(_seq_to_str(b[i]))
+        a_index = vocab_text_index(a)
+        if a_index is not None:
+            # Same answer in O(|b|): each text of b that a contains, at its
+            # first position in a, emitted in a's order.
+            first_index = a_index.first_index
+            hits = set()
+            for i in range(len(b)):
+                j = first_index.get(_seq_to_str(b[i]))
+                if j is not None:
+                    hits.add(j)
+            return _dafny.SeqWithoutIsStrInference([a[j] for j in sorted(hits)])
+        b_set = _text_set_of(b)
+        a_texts = _texts_of(a)
         out = []
         seen_a = set()
         for i in range(len(a)):
-            t = a[i]
-            s = _seq_to_str(t)
+            s = a_texts[i]
             if s in b_set and s not in seen_a:
                 seen_a.add(s)
-                out.append(t)
+                out.append(a[i])
         return _dafny.SeqWithoutIsStrInference(out)
 
     def _fast_subtract_token_sets(a, b):
-        b_set = set()
-        for i in range(len(b)):
-            b_set.add(_seq_to_str(b[i]))
+        b_set = _text_set_of(b)
+        a_texts = _texts_of(a)
         out = []
         for i in range(len(a)):
-            t = a[i]
-            if _seq_to_str(t) not in b_set:
-                out.append(t)
+            if a_texts[i] not in b_set:
+                out.append(a[i])
         return _dafny.SeqWithoutIsStrInference(out)
 
     def _fast_flatten_token_groups(groups):
@@ -931,6 +965,35 @@ def resolve_run_dir(run_dir: Path) -> Path:
     return run_dir
 
 
+def extract_content_between(text: str, start: str, end: str) -> str:
+    """Text between the first `start` and the first `end` after it, else "".
+
+    Host side of the Dafny extern CSDHelpers.ExtractContentExtern, whose contract
+    only requires that non-empty content sit between the two delimiters.
+    """
+    i = text.find(start)
+    if i < 0:
+        return ""
+    j = text.find(end, i + len(start))
+    if j < 0:
+        return ""
+    return text[i + len(start):j]
+
+
+def bind_csdhelpers_externs(VerifiedDecoderAgent, _dafny) -> None:
+    """Attach Python bodies for the static {:extern}s declared on CSDHelpers."""
+    VerifiedDecoderAgent.CSDHelpers.ExtractContentExtern = staticmethod(
+        lambda input_, startDelim, endDelim: _dafny.SeqWithoutIsStrInference(
+            map(
+                _dafny.CodePoint,
+                extract_content_between(
+                    "".join(input_), "".join(startDelim), "".join(endDelim)
+                ),
+            )
+        )
+    )
+
+
 def load_compiled_modules(run_dir: Path):
     """
     Load compiled CSD modules from a synthesis run directory.
@@ -976,6 +1039,7 @@ def load_compiled_modules(run_dir: Path):
     _dafny = importlib.import_module("_dafny")
     VerifiedDecoderAgent = importlib.import_module("VerifiedDecoderAgent")
     GeneratedCSD = importlib.import_module("GeneratedCSD")
+    bind_csdhelpers_externs(VerifiedDecoderAgent, _dafny)
 
     return _dafny, VerifiedDecoderAgent, GeneratedCSD
 

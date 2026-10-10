@@ -69,6 +69,8 @@ def build_reevaluation_provenance(
         "max_steps": args.max_steps,
         "step_token_budget": args.step_token_budget,
         "smiles_class": args.smiles_classes,
+        "smiles_split_name": getattr(args, "smiles_split_name", None),
+        "smiles_trial": getattr(args, "smiles_trial", None),
     }
     revision = getattr(args, "provenance_eval_model_revision", None)
     snapshot_path = getattr(args, "provenance_eval_model_snapshot_path", None)
@@ -213,6 +215,12 @@ def main() -> None:
     p.add_argument("--gsm-split-name", choices=["train", "test"], default=None)
     p.add_argument("--spider-split-name", choices=["train", "test"], default=None)
     p.add_argument("--smiles-classes", type=str, default=None)
+    # SMILES train/test = two disjoint per-draw seed ranges (smiles/seed_split.py).
+    # Held-out re-evals pass test; no default, same as GSM/Spider.
+    p.add_argument("--smiles-split-name", choices=["train", "test"], default=None)
+    # Which of the 3 SMILES trials (each its own seed block inside the split);
+    # required for SMILES, no default.
+    p.add_argument("--smiles-trial", type=int, choices=[1, 2, 3], default=None)
     p.add_argument("--max-seconds-per-example", type=float, default=None)
     p.add_argument(
         "--completion-mode",
@@ -270,6 +278,20 @@ def main() -> None:
             p.error("--spider-split-name is required for --dataset spider "
                     "(no default side — see synthesis/split_provenance.py)")
         print("[reevaluate] --spider-split-name defaulted to 'train' (babysitter smoke)")
+    if args.dataset == "smiles" and args.smiles_split_name is None:
+        args.smiles_split_name = babysitter_smoke_split_fallback(args.output_json)
+        if args.smiles_split_name is None:
+            p.error("--smiles-split-name is required for --dataset smiles "
+                    "(no default side — see synthesis/evaluate/benchmarks/smiles/seed_split.py)")
+        print("[reevaluate] --smiles-split-name defaulted to 'train' (babysitter smoke)")
+    if args.dataset == "smiles" and args.smiles_trial is None:
+        # Same bootstrap as the split: only the babysitter smoke may omit it (trial 1,
+        # the draws synthesis scores); everything else must name its trial.
+        if babysitter_smoke_split_fallback(args.output_json) is None:
+            p.error("--smiles-trial 1|2|3 is required for --dataset smiles "
+                    "(no default; see synthesis/evaluate/benchmarks/smiles/seed_split.py)")
+        args.smiles_trial = 1
+        print("[reevaluate] --smiles-trial defaulted to 1 (babysitter smoke)")
 
     if os.environ.get("VLLM_WORKER_MULTIPROC_METHOD") is None:
         os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
@@ -305,6 +327,9 @@ def main() -> None:
         evaluator_kwargs["spider_split_name"] = args.spider_split_name
     if args.smiles_classes:
         evaluator_kwargs["smiles_classes"] = args.smiles_classes
+    if args.dataset == "smiles":
+        evaluator_kwargs["smiles_split_name"] = args.smiles_split_name
+        evaluator_kwargs["smiles_trial"] = args.smiles_trial
 
     ev = Evaluator(**evaluator_kwargs)
     try:

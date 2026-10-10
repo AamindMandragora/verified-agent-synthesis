@@ -540,6 +540,17 @@ def verify_repo_version(
     return live_commit
 
 
+def bar_split_flag(job: dict[str, Any]) -> str:
+    """The one run_synthesis bar-split flag this job declared (no default)."""
+    bar_split = job.get("bar_split")
+    if bar_split not in ("train", "test"):
+        raise ConfigError(
+            f"{job.get('cell_id')} must declare bar_split 'train' or 'test' "
+            f"(the split its min_accuracy bar was measured on); got {bar_split!r}"
+        )
+    return f"--bar-from-{bar_split}"
+
+
 def synthesis_command(job: dict[str, Any], python: Path) -> list[str]:
     command = [
         str(python),
@@ -573,6 +584,7 @@ def synthesis_command(job: dict[str, Any], python: Path) -> list[str]:
         "8192",
         "--device",
         "auto",
+        bar_split_flag(job),
     ]
     if job["dataset"] == "smiles":
         command.extend(
@@ -1135,7 +1147,9 @@ def heldout_command(job: dict[str, Any], python: Path, csd: Path) -> list[str]:
             ["--spider-split-file", split_file, "--spider-split-name", "test"]
         )
     else:
-        command.extend(["--smiles-classes", str(job["smiles_class"])])
+        command.extend(
+            ["--smiles-classes", str(job["smiles_class"]), "--smiles-split-name", "test", "--smiles-trial", "1"]
+        )
     return command
 
 

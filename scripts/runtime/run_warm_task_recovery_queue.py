@@ -263,6 +263,7 @@ def heldout_command(job: dict[str, Any], python: Path, csd: Path) -> list[str]:
         command.extend(["--spider-split-name", split_name])
     else:
         command.extend(["--smiles-classes", str(job["smiles_class"])])
+        command.extend(["--smiles-split-name", split_name, "--smiles-trial", "1"])
     return command
 
 

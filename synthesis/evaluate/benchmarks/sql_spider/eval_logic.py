@@ -173,6 +173,20 @@ def _span_free_answer_end(text: str) -> str:
     return text[:end].strip()
 
 
+_CODE_FENCE = re.compile(r"```[A-Za-z]*[ \t]*\n?(.*?)(?:```|\Z)", flags=re.DOTALL)
+
+
+def _strip_code_fence(text: str) -> str:
+    """The query inside the first ```sql ... ``` fence, or the text unchanged if there is none.
+
+    Qwen2.5 wraps its SQL in a Markdown fence (290/300 rows for 7B unconstrained on
+    2026-09-30). The fence is formatting, not SQL, so every method is scored on what is
+    inside it (user ruling 2026-10-01). An unclosed fence keeps everything after it.
+    """
+    match = _CODE_FENCE.search(text)
+    return match.group(1).strip() if match else text
+
+
 def _span_content_for_scoring(scored_output: str) -> str:
     """The content of the last closed `<< >>` span, verbatim.
 
@@ -190,10 +204,10 @@ def _span_content_for_scoring(scored_output: str) -> str:
         # A span-free baseline continues the few-shot format and opens with "SQL:".
         # The label is not part of the query, and the answer ends at the first blank line:
         # after it the model starts over ("SQL: ..." again) until the budget runs out.
-        no_label = re.sub(r"^sql\s*:\s*", "", text, flags=re.IGNORECASE).split("\n\n", 1)[0].strip()
+        no_label = re.sub(r"^sql\s*:\s*", "", _strip_code_fence(text), flags=re.IGNORECASE).split("\n\n", 1)[0].strip()
         return _span_free_answer_end(no_label)
     closed = [span for span in spans if span.closed]
-    return closed[-1].content if closed else ""
+    return _strip_code_fence(closed[-1].content) if closed else ""
 
 
 def extract_actual(evaluator: Any, scored_output: str, example: dict[str, Any]) -> tuple[str | None, str, dict[str, Any] | None]:

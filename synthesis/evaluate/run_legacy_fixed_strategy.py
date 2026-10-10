@@ -124,6 +124,9 @@ def _audit_delta(before: dict[str, Any] | None, after: dict[str, Any] | None) ->
     }
 
 
+from synthesis.evaluate.benchmarks.smiles.seed_split import seed_smiles_draw, smiles_draw_seed
+
+
 def _completion_for_dataset(dataset: str, prompt: Any, raw_output: Any) -> str:
     """Use generated-only text for Spider; preserve legacy stripping elsewhere."""
     if dataset == "spider":
@@ -408,15 +411,6 @@ def _crane_stop_words(dataset: str) -> list[str] | None:
     if dataset == "gsm_symbolic":
         return [">>"]
     return None
-
-
-def _smiles_draw_seed(global_draw_index: int) -> int:
-    """Seed one SMILES draw from its GLOBAL index in the draw stream.
-
-    Sharded lanes slice that stream with ``--eval-start-index``, so a shard-local
-    index would make two shards replay each other's draws.
-    """
-    return int(os.environ.get("CSD_PARITY_SEED", 1234)) + int(global_draw_index) * 1_000_003
 
 
 def _crane_generation_kwargs(dataset: str) -> dict[str, Any]:
@@ -739,6 +733,7 @@ def _build_minimal_json(
     *,
     run_wall_time_seconds: float | None = None,
     extra_metrics: dict[str, Any] | None = None,
+    eval_split: dict[str, Any] | None = None,
 ) -> None:
     metrics = _aggregate_run_metrics(rows, run_wall_time_seconds=run_wall_time_seconds)
     if extra_metrics:
@@ -750,6 +745,8 @@ def _build_minimal_json(
             "metrics": metrics,
             "answers": [],
         }
+        if eval_split is not None:
+            payload["eval_split"] = eval_split
         output_json.parent.mkdir(parents=True, exist_ok=True)
         output_json.write_text(json.dumps(payload, indent=2) + "\n")
         return
@@ -794,6 +791,8 @@ def _build_minimal_json(
         "metrics": metrics,
         "answers": answers,
     }
+    if eval_split is not None:
+        payload["eval_split"] = eval_split
 
     output_json.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text(json.dumps(payload, indent=2) + "\n")
@@ -811,6 +810,7 @@ def _write_cars_partial_json(
     *,
     run_wall_time_seconds: float | None = None,
     extra_metrics: dict[str, Any] | None = None,
+    eval_split: dict[str, Any] | None = None,
 ) -> Path:
     partial_json = _cars_partial_json_path(output_json)
     _build_minimal_json(
@@ -818,6 +818,7 @@ def _write_cars_partial_json(
         partial_json,
         run_wall_time_seconds=run_wall_time_seconds,
         extra_metrics=extra_metrics,
+        eval_split=eval_split,
     )
     return partial_json
 
@@ -880,6 +881,8 @@ def _annotate_legacy_rows_with_syntax(
             if dataset == "smiles" and getattr(args, "smiles_classes", None)
             else None
         ),
+        smiles_split_name=args.smiles_split_name if dataset == "smiles" else None,
+        smiles_trial=args.smiles_trial if dataset == "smiles" else None,
     )
     _configure_fixed_eval_runtime(eval_runtime, args, dataset)
     examples, _slice_metrics = _slice_eval_examples(
@@ -1117,6 +1120,34 @@ def _cars_draw_stop_reason(*, tries: int, search_steps_cap: int, produced_text: 
     return "no_sample"
 
 
+# Sampling fields that a model's generation_config.json can set. Transformers 5.5.4 fills each one
+# that the caller leaves unset (None) from the model's file before the global defaults.
+_MODEL_SAMPLING_FIELDS = ("temperature", "top_p", "top_k", "min_p", "typical_p", "repetition_penalty")
+
+
+def _use_global_sampling_defaults(hf_model: Any, *, tag: str) -> None:
+    """Make CARS and GCD decode the same way on every model (user, 2026-10-09).
+
+    Qwen2.5 ships temperature 0.7, top-p 0.8, top-k 20 and a repetition penalty (1.05 on 7B, 1.1 on
+    1.5B). CARS leaves these unset and GCD passes keyword values only, so both took Qwen2.5's values:
+    SMILES draws collapsed onto a few molecules, and even greedy GCD on GSM and Spider got the
+    repetition penalty. Qwen3.5 ships no sampling values. Clearing the model's values gives every
+    model the Transformers global defaults: temperature 1.0, top-p 1.0, top-k 50, repetition penalty
+    1.0. (The CARS paper says no top-k. The user chose top-k 50 so that the Qwen2.5 lanes match the
+    Qwen3.5 lanes, which already ran with it.) End tokens stay as they are. CRANE and IterGen build
+    their config from config.json, and the unconstrained lanes pass explicit vLLM SamplingParams, so
+    they never read the model's file.
+    """
+    config = getattr(hf_model, "generation_config", None)
+    if config is None:
+        LOGGER.info("[%s] no generation_config on the model; nothing to clear", tag)
+        return
+    cleared = {f: getattr(config, f, None) for f in _MODEL_SAMPLING_FIELDS if getattr(config, f, None) is not None}
+    for field in cleared:
+        setattr(config, field, None)
+    LOGGER.info("[%s] cleared model sampling defaults %s; generate uses the global defaults", tag, cleared or "{}")
+
+
 def _cars_log_first_generate_call(cars_model: Any, *, dataset: str) -> None:
     """Log the sampling settings the CARS library hands to ``generate``, once.
 
@@ -1243,6 +1274,8 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
             if dataset == "smiles" and getattr(args, "smiles_classes", None)
             else None
         ),
+        smiles_split_name=args.smiles_split_name if dataset == "smiles" else None,
+        smiles_trial=args.smiles_trial if dataset == "smiles" else None,
     )
     _configure_fixed_eval_runtime(eval_runtime, args, dataset)
 
@@ -1266,6 +1299,7 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
         max_new_tokens,
         n_steps,
     )
+    _use_global_sampling_defaults(getattr(cars_model, "model", cars_model), tag="legacy-cars")
     _cars_log_first_generate_call(cars_model, dataset=dataset)
     try_totals = {"tries": 0, "rejected_tries": 0, "draws_hitting_try_cap": 0}
 
@@ -1287,6 +1321,8 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
         nonlocal lane_header_logged
         _maybe_reseed_parity_example(_ex_i)
         os.environ["CSD_PARITY_EXAMPLE_INDEX"] = str(_ex_i)
+        if dataset == "smiles":
+            seed_smiles_draw(example["draw_seed"])
         if dataset == "gsm_symbolic":
             grammar_text = gsm_cars_grammar
         elif dataset == "spider":
@@ -1382,6 +1418,7 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
         _write_cars_partial_json(
             rows,
             args.output_json,
+            eval_split=_eval_split_record(args),
             run_wall_time_seconds=time.perf_counter() - run_started,
             extra_metrics=slice_metrics,
         )
@@ -1400,6 +1437,13 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
             class_templates.setdefault(str(ex.get("class_name", "")), ex)
         target_counts = _cars_smiles_class_targets(examples)
 
+        if int(getattr(args, "eval_start_index", 0) or 0) != 0:
+            # CARS spends up to 10x its target in draws, so a shard starting at
+            # draw k would spend seeds another shard also spends.
+            raise ValueError(
+                "CARS SMILES lanes cannot be sharded with --eval-start-index: each "
+                "class draws seeds 0.. of its split until its target is met."
+            )
         _ex_i = -1
         for cls, template in class_templates.items():
             target = max(1, target_counts.get(cls, 1))
@@ -1413,7 +1457,10 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
                     break
                 _ex_i += 1
                 class_draws += 1
-                actual, syntax_valid, is_exemplar, row = _cars_draw(_ex_i, dict(template))
+                draw_example = dict(template)
+                draw_example["draw_index"] = _draw
+                draw_example["draw_seed"] = smiles_draw_seed(template["smiles_split_name"], template["smiles_trial"], _draw)
+                actual, syntax_valid, is_exemplar, row = _cars_draw(_ex_i, draw_example)
                 verdict = _cars_smiles_draw_verdict(
                     actual, syntax_valid, is_exemplar, accepted_molecules
                 )
@@ -1472,6 +1519,7 @@ def run_cars_legacy_adapter(args: argparse.Namespace) -> int:
     _build_minimal_json(
         rows,
         args.output_json,
+        eval_split=_eval_split_record(args),
         run_wall_time_seconds=time.perf_counter() - run_started,
         extra_metrics=final_metrics,
     )
@@ -1538,6 +1586,8 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
             if dataset == "smiles" and getattr(args, "smiles_classes", None)
             else None
         ),
+        smiles_split_name=args.smiles_split_name if dataset == "smiles" else None,
+        smiles_trial=args.smiles_trial if dataset == "smiles" else None,
     )
     _configure_fixed_eval_runtime(eval_runtime, args, dataset)
     examples, _slice_metrics = _slice_eval_examples(
@@ -1604,6 +1654,9 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
                 opp=False,
                 **gcd_generation_kwargs,
             )
+            _use_global_sampling_defaults(
+                getattr(getattr(syncode_cache[cache_key], "model", None), "model", None), tag="legacy-gcd"
+            )
             LOGGER.info(
                 "[legacy-gcd] settings dataset=%s model=%s mode=grammar_strict opp=False do_sample=%s "
                 "temperature=%s top_p=%s top_k=%s max_new_tokens=%d stop_words=%s grammar_chars=%d",
@@ -1620,10 +1673,7 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
         sc = syncode_cache[cache_key]
 
         if dataset == "smiles":
-            import torch as _torch
-
-            _draw_i = int(getattr(args, "eval_start_index", 0) or 0) + len(rows)
-            _torch.manual_seed(_smiles_draw_seed(_draw_i))
+            seed_smiles_draw(example["draw_seed"])
 
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, _gcd_prompt_profile(dataset))
         if dataset == "gsm_symbolic":
@@ -1703,6 +1753,7 @@ def run_gcd_legacy_adapter(args: argparse.Namespace) -> int:
     _build_minimal_json(
         rows,
         args.output_json,
+        eval_split=_eval_split_record(args),
         run_wall_time_seconds=time.perf_counter() - run_started,
     )
     print(f"Saved baseline JSON: {args.output_json}")
@@ -1840,6 +1891,7 @@ def _itergen_generation_stop_token_ids(iter_gen: Any, tokenizer: Any) -> set[int
     for value in (
         getattr(tokenizer, "eos_token_id", None),
         getattr(getattr(getattr(iter_gen, "model", None), "config", None), "eos_token_id", None),
+        getattr(getattr(iter_gen, "generation_config", None), "eos_token_id", None),
     ):
         if value is None:
             continue
@@ -2491,6 +2543,8 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
             if dataset == "smiles" and getattr(args, "smiles_classes", None)
             else None
         ),
+        smiles_split_name=args.smiles_split_name if dataset == "smiles" else None,
+        smiles_trial=args.smiles_trial if dataset == "smiles" else None,
     )
     _configure_fixed_eval_runtime(eval_runtime, args, dataset)
     examples, _slice_metrics = _slice_eval_examples(
@@ -2555,10 +2609,7 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
         iter_gen = itergen_cache[cache_key]
 
         if dataset == "smiles":
-            import torch as _torch
-
-            _draw_i = int(getattr(args, "eval_start_index", 0) or 0) + _ex_i
-            _torch.manual_seed(_smiles_draw_seed(_draw_i))
+            seed_smiles_draw(example["draw_seed"])
 
         prompt = _legacy_benchmark_prompt(logic, eval_runtime, example, "expression_only")
         if dataset == "gsm_symbolic":
@@ -2679,6 +2730,7 @@ def _run_itergen_legacy_adapter_inner(args: argparse.Namespace) -> int:
     _build_minimal_json(
         rows,
         args.output_json,
+        eval_split=_eval_split_record(args),
         run_wall_time_seconds=time.perf_counter() - run_started,
     )
     print(f"Saved baseline JSON: {args.output_json}")
@@ -2819,7 +2871,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
         generation_prompt = _render_chat_prompt(tokenizer, seed_prompt)
 
         for _i in range(draw_start, draw_end):
-            draw_seed = _smiles_draw_seed(_i)
+            draw_seed = smiles_draw_seed(args.smiles_split_name, args.smiles_trial, _i)
             # The dedup set accumulates every molecule this run has accepted so far
             # (seeded from the prompt's own exemplars), independently of the prompt
             # text, so scoring still excludes prior draws' molecules even though the
@@ -2919,6 +2971,7 @@ def run_unconstrained_smiles_adapter(args: argparse.Namespace) -> int:
     _build_minimal_json(
         rows,
         args.output_json,
+        eval_split=_eval_split_record(args),
         run_wall_time_seconds=time.perf_counter() - run_started,
     )
     print(f"Saved baseline JSON: {args.output_json}")
@@ -3076,6 +3129,7 @@ def run_unconstrained_spider_adapter(args: argparse.Namespace) -> int:
     _build_minimal_json(
         rows,
         args.output_json,
+        eval_split=_eval_split_record(args),
         run_wall_time_seconds=time.perf_counter() - run_started,
     )
     print(f"Saved baseline JSON: {args.output_json}")
@@ -3167,6 +3221,8 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
             if dataset == "smiles" and getattr(args, "smiles_classes", None)
             else None
         ),
+        smiles_split_name=args.smiles_split_name if dataset == "smiles" else None,
+        smiles_trial=args.smiles_trial if dataset == "smiles" else None,
     )
     _configure_fixed_eval_runtime(eval_runtime, args, dataset)
     examples, _slice_metrics = _slice_eval_examples(
@@ -3252,10 +3308,7 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
         if dataset == "smiles":
             prompt = _render_chat_prompt(sc.model.tokenizer, prompt)
         if dataset == "smiles":
-            import torch as _torch
-
-            _draw_i = int(getattr(args, "eval_start_index", 0) or 0) + len(rows)
-            _torch.manual_seed(_smiles_draw_seed(_draw_i))
+            seed_smiles_draw(example["draw_seed"])
         example_index = len(rows)
         if not rows:
             _log_lane_header(
@@ -3367,6 +3420,7 @@ def _crane_via_adaptive_syncode(args: argparse.Namespace, dataset: str) -> int:
     _build_minimal_json(
         rows,
         args.output_json,
+        eval_split=_eval_split_record(args),
         run_wall_time_seconds=time.perf_counter() - run_started,
         extra_metrics={
             "adapter": "crane_shared_evaluator",
@@ -3471,6 +3525,7 @@ def run_crane_legacy_adapter(args: argparse.Namespace) -> int:
     _build_minimal_json(
         rows,
         args.output_json,
+        eval_split=_eval_split_record(args),
         run_wall_time_seconds=time.perf_counter() - crane_run_started,
     )
     print(f"Saved baseline JSON: {args.output_json}")
@@ -3496,7 +3551,22 @@ def _routes_through_crane_repo(dataset: str, strategy: str) -> bool:
     return dataset in crane_repo_datasets and strategy in crane_repo_strategies
 
 
-def main() -> None:
+def _eval_split_record(args: argparse.Namespace) -> dict[str, Any]:
+    """The split-provenance dict every baseline JSON embeds (same shape as re-evals)."""
+    from synthesis.split_provenance import build_split_provenance
+
+    dataset = _normalize_dataset(args.dataset)
+    return build_split_provenance(
+        gsm_split_file=args.gsm_split_file if dataset == "gsm_symbolic" else None,
+        gsm_split_name=args.gsm_split_name if dataset == "gsm_symbolic" and args.gsm_split_file else None,
+        spider_split_file=args.spider_split_file if dataset == "spider" else None,
+        spider_split_name=args.spider_split_name if dataset == "spider" and args.spider_split_file else None,
+        smiles_split_name=args.smiles_split_name if dataset == "smiles" else None,
+        smiles_trial=args.smiles_trial if dataset == "smiles" else None,
+    )
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run legacy fixed strategy code and export minimal baseline JSON"
     )
@@ -3545,6 +3615,26 @@ def main() -> None:
         help="Comma-separated SMILES classes for legacy CRANE main.py (default: all three)",
     )
     parser.add_argument(
+        "--smiles-split-name",
+        choices=["train", "test"],
+        default=None,
+        help=(
+            "Which SMILES seed range to draw from (required for --dataset smiles, no "
+            "default). Train and test are disjoint per-draw seed ranges; see "
+            "synthesis/evaluate/benchmarks/smiles/seed_split.py."
+        ),
+    )
+    parser.add_argument(
+        "--smiles-trial",
+        type=int,
+        choices=[1, 2, 3],
+        default=None,
+        help=(
+            "Which SMILES trial of that split (required for --dataset smiles, no default). "
+            "Each trial is its own block of 10,000 seeds, so the 3 trials are independent draws."
+        ),
+    )
+    parser.add_argument(
         "--smiles-samples-per-class",
         type=int,
         default=None,
@@ -3559,12 +3649,27 @@ def main() -> None:
             "a sample). Default 200. Independent of --eval-max-steps."
         ),
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.dataset == "smiles" and args.smiles_split_name is None:
+        parser.error(
+            "--smiles-split-name train|test is required for --dataset smiles "
+            "(no default side; see synthesis/evaluate/benchmarks/smiles/seed_split.py)"
+        )
+    if args.dataset == "smiles" and args.smiles_trial is None:
+        parser.error(
+            "--smiles-trial 1|2|3 is required for --dataset smiles "
+            "(no default; see synthesis/evaluate/benchmarks/smiles/seed_split.py)"
+        )
+    return args
+
+
+def main() -> None:
+    args = _parse_args()
     # CSD_TRACE_LOG=1 turns the baseline trace log on (see _configure_trace_logging).
     _configure_trace_logging()
     LOGGER.info(
         "[legacy-runner] lane strategy=%s dataset=%s model=%s backend=%s eval_max_steps=%s "
-        "start_index=%s end_index=%s",
+        "start_index=%s end_index=%s smiles_split=%s smiles_trial=%s",
         args.strategy,
         args.dataset,
         args.eval_model,
@@ -3572,6 +3677,8 @@ def main() -> None:
         args.eval_max_steps,
         args.eval_start_index,
         args.eval_end_index,
+        args.smiles_split_name,
+        args.smiles_trial,
     )
     from synthesis.evaluate.benchmarks.common.model_utils import resolve_vllm_tensor_parallel_size
 

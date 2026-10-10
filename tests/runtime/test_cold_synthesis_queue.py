@@ -34,6 +34,7 @@ def _job(dataset="gsm_symbolic"):
         "max_iterations": 80,
         "eval_sample_size": 49,
         "min_accuracy": 0.265306122449,
+        "bar_split": "train",
         "min_syntax_rate": 0.9,
         "eval_max_steps": 900,
         "eval_max_seconds": 600,
@@ -1887,3 +1888,17 @@ def test_spider_qwen25_1p5b_two_workers_fit_the_26576_mib_free_memory_boundary()
             queue.choose_gpu_bundle(job, below_boundary, reservations, below_baseline)
             is None
         ), f"GPU {low_gpu} below 26576 MiB was incorrectly admitted"
+
+
+@pytest.mark.parametrize("bar_split", ["train", "test"])
+def test_synthesis_command_passes_exactly_the_declared_bar_split_flag(bar_split):
+    command = queue.synthesis_command({**_job(), "bar_split": bar_split}, Path("/env/python"))
+    bar_flags = [arg for arg in command if arg.startswith("--bar-from-")]
+    assert bar_flags == [f"--bar-from-{bar_split}"]
+
+
+def test_synthesis_command_refuses_a_job_without_a_declared_bar_split():
+    job = _job()
+    job.pop("bar_split", None)
+    with pytest.raises(queue.ConfigError, match="bar_split"):
+        queue.synthesis_command(job, Path("/env/python"))

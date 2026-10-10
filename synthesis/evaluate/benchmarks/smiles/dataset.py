@@ -110,15 +110,35 @@ def get_smiles_task(class_name: str) -> Dict[str, Any]:
 def load_smiles(
     classes: Sequence[str] | str | None = None,
     samples_per_class: int = 1,
+    *,
+    split_name: str,
+    trial: int,
+    first_draw_index: int = 0,
 ) -> List[Dict[str, Any]]:
-    """Return repeated class tasks for feedback evaluation attempts."""
+    """Return ``samples_per_class`` draws per class from one side of the seed split.
+
+    Each row is the class task plus which draw it is: ``draw_index`` (0-based,
+    counted from the start of the split, per class), ``draw_seed`` (the sampler
+    seed for that draw, see seed_split.py), ``smiles_split_name`` and
+    ``smiles_trial`` (1, 2 or 3: each trial is its own block of seeds). There is no
+    default split or trial: SMILES train and test are different seed ranges, and picking one
+    silently is how a test-side number ends up scored against a train-side bar.
+    ``first_draw_index`` skips the first draws of the split (a later shard or the
+    confirmation slice), so it never replays draw 0.
+    """
+    from synthesis.evaluate.benchmarks.smiles.seed_split import smiles_draw_seed
+
     if samples_per_class < 1:
         raise ValueError("samples_per_class must be >= 1")
     rows: list[dict[str, Any]] = []
     for class_name in normalize_smiles_classes(classes):
         task = get_smiles_task(class_name)
-        for attempt_index in range(samples_per_class):
+        for draw_index in range(first_draw_index, first_draw_index + samples_per_class):
             row = dict(task)
-            row["attempt_index"] = attempt_index
+            row["attempt_index"] = draw_index
+            row["draw_index"] = draw_index
+            row["draw_seed"] = smiles_draw_seed(split_name, trial, draw_index)
+            row["smiles_split_name"] = split_name
+            row["smiles_trial"] = trial
             rows.append(row)
     return rows

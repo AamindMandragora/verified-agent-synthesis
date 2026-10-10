@@ -428,6 +428,13 @@ class SynthesisAttempt:
     failed_at: Optional[FailureStage] = None
     error_summary: str = ""
 
+    # Train-side confirmation check (300-example pooled bar; see
+    # SynthesisPipeline._pooled_early_stop_targets and the greedy hill-climb
+    # block in synthesize()). None when no confirmation ran for this attempt
+    # (candidate didn't become incumbent, didn't meet the slice-A bars, or
+    # the train split has nothing beyond slice A).
+    confirmation: Optional[dict] = None
+
     def succeeded(self) -> bool:
         """Check if this attempt passed verify, compile, and evaluation."""
         if self.failed_at is not None:
@@ -471,6 +478,7 @@ class SynthesisAttempt:
             if self.compilation_result
             else None,
             "evaluation": self.eval_result.to_dict() if self.eval_result else None,
+            "confirmation": self.confirmation,
         }
 
 
@@ -1462,6 +1470,30 @@ class SynthesisPipeline:
         pooled_syn = ((a.syntax_rate or 0.0) * a_n + (b.syntax_rate or 0.0) * b_n) / total_n
         return pooled_acc, pooled_syn
 
+    def _pooled_early_stop_targets(
+        self, a_result: EvaluationResult, n_b: int, n_total: int
+    ) -> tuple[float, float]:
+        """Exact early-stop targets for the confirmation slice B so the
+        POOLED A+B result can still land exactly on the bar (user rule
+        2026-09-24): need_B = (bar * N_total - correct_A) / N_B, clipped to
+        [0, 1] since an early-stop target outside that range is meaningless
+        (already guaranteed to pass, or already guaranteed to fail no
+        matter what B scores).
+        """
+        a_n = a_result.num_examples or 0
+        a_correct = a_result.num_correct or 0
+        a_syntax_correct = (a_result.syntax_rate or 0.0) * a_n
+
+        def _need(bar: float, correct_a: float) -> float:
+            if n_b <= 0:
+                return 0.0
+            need = (bar * n_total - correct_a) / n_b
+            return max(0.0, min(1.0, need))
+
+        need_acc = _need(self.min_accuracy, a_correct)
+        need_syn = _need(self.min_syntax_rate, a_syntax_correct)
+        return need_acc, need_syn
+
     @staticmethod
     def _exceeded_attempt_budget(result: EvaluationResult) -> bool:
         attempt_budget = (result.aux_metrics or {}).get(
@@ -1996,12 +2028,14 @@ class SynthesisPipeline:
         except Exception:
             pass
 
-        # Use a per-run compiler output directory.
+        # Use a per-run compiler output directory. --no-verify: every strategy is
+        # verified before it is compiled, and compile_source only restores the
+        # prose-literal bodies that the proof treats as unknown.
         compiler = DafnyCompiler(
             dafny_path=self.compiler.dafny_path,
             output_dir=run_python_dir,
             timeout=self.compiler.timeout,
-            extra_args=list(self.compiler.extra_args),
+            extra_args=["--no-verify"],
         )
 
         self.generator.set_synthesis_context(
@@ -2261,7 +2295,9 @@ class SynthesisPipeline:
 
             # Stage 2: Compilation
             print("\n[2/4] Compiling to Python...")
-            compilation_result = compiler.compile(full_code, output_name)
+            compilation_result = compiler.compile(
+                self.generator.compile_source(strategy_code), output_name
+            )
             attempt.compilation_result = compilation_result
 
             if not compilation_result.success:
@@ -2579,194 +2615,158 @@ class SynthesisPipeline:
                     )
                 continue
 
-            # Evaluation ran cleanly on slice A. Greedy hill-climb accept/
-            # reject + slice-B confirmation (planning/monotonic-search-plan.md).
-            eval_kwargs = dict(
-                early_stop_min_accuracy=self.min_accuracy
-                if os.environ.get("CSD_SYNTHESIS_EVAL_EARLY_STOP", "1") != "0"
-                else None,
-                early_stop_min_syntax_rate=self.min_syntax_rate
-                if os.environ.get("CSD_SYNTHESIS_EVAL_EARLY_STOP", "1") != "0"
-                else None,
-                early_stop_runtime_failures=(
-                    int(os.environ.get("CSD_SYNTHESIS_EVAL_EARLY_STOP_RUNTIME_FAILURES", "3"))
-                    if os.environ.get("CSD_SYNTHESIS_EVAL_EARLY_STOP", "1") != "0"
-                    else None
-                ),
-                min_examples_before_threshold_stop=self.min_examples_before_threshold_stop,
-                deadline=attempt_deadline,
-            )
-
-            class _ConfirmationDeadlineHit(Exception):
-                """Internal signal: the slice-B eval crossed the attempt's
-                wall-clock cap. Raised before any incumbent state is mutated
-                so a timed-out confirmation can never corrupt the incumbent."""
-
-                def __init__(self, elapsed: float):
-                    self.elapsed = elapsed
-
-            def _run_confirmation_eval() -> EvaluationResult:
-                """Slice B: the NEXT eval_sample_size train examples, used
-                only to confirm a would-be accept (plan §1). Same sample_size
-                and early-stop/deadline args as slice A."""
-                print(f"  [greedy] confirming on slice B ({self.eval_sample_size} examples)...")
-                b_result = self.evaluator.evaluate_sample(
-                    compiled_module_path=compilation_result.main_module_path,
-                    sample_size=self.eval_sample_size,
-                    sample_offset=self.eval_sample_size,
-                    **eval_kwargs,
-                )
-                b_elapsed = time.time() - attempt_start_time
-                b_hit_deadline = bool(
-                    b_result.early_stop_reason
-                    and b_result.early_stop_reason.startswith(ATTEMPT_DEADLINE_EARLY_STOP_REASON)
-                ) or (self.max_attempt_seconds is not None and b_elapsed > self.max_attempt_seconds)
-                if b_hit_deadline:
-                    raise _ConfirmationDeadlineHit(b_elapsed)
-                return b_result
-
+            # Evaluation ran cleanly on slice A. Greedy hill-climb
+            # accept/reject stays A-only; a would-be win is then
+            # confirmed on the rest of the train split (user rule
+            # 2026-09-24; planning/monotonic-search-plan.md).
             cand_acc_a = eval_result.accuracy or 0.0
             cand_syn_a = eval_result.syntax_rate or 0.0
             cand_shortfall_a = self._shortfall(cand_acc_a, cand_syn_a)
-            candidate_b_result: EvaluationResult | None = None
 
-            # --- TEMPORARY A-ONLY (2026-08-10) ---------------------------------
-            # GSM/Spider train splits have an empty slice B (sample_offset past
-            # the end of train_indices), so dual-slice confirmation cannot win.
-            # Active path: hill-climb and SUCCESS on slice A only.
-            # Dual-slice body preserved under `if False:` immediately below —
-            # flip to `if True:` (and remove the else) to restore B confirmation.
-            # -----------------------------------------------------------------
-            if False:  # dual-slice B confirmation (DISABLED — restore later)
-                candidate_b_result: EvaluationResult | None = None
-
-                try:
-                    if self._incumbent is None:
-                        print(
-                            f"  [greedy] seeding incumbent from attempt {attempt_num} "
-                            f"(A: acc={cand_acc_a:.1%}, syn={cand_syn_a:.1%})"
-                        )
-                        candidate_b_result = _run_confirmation_eval()
-                        self._incumbent = _Incumbent(
-                            strategy_code=strategy_code,
-                            attempt_number=attempt_num,
-                            a_result=eval_result,
-                            b_result=candidate_b_result,
-                        )
-                        became_incumbent = True
-                    else:
-                        inc = self._incumbent
-                        inc_acc_a = inc.a_result.accuracy or 0.0
-                        inc_syn_a = inc.a_result.syntax_rate or 0.0
-                        inc_shortfall_a = self._shortfall(inc_acc_a, inc_syn_a)
-
-                        stage1_pass = self._should_accept(
-                            cand_shortfall_a, cand_acc_a, cand_syn_a,
-                            inc_shortfall_a, inc_acc_a, inc_syn_a,
-                        )
-                        if not stage1_pass:
-                            print(
-                                f"  [greedy] REJECT (stage 1, slice A): attempt {attempt_num} "
-                                f"shortfall {cand_shortfall_a:.3f} vs incumbent attempt "
-                                f"{inc.attempt_number} shortfall {inc_shortfall_a:.3f}"
-                            )
-                            became_incumbent = False
-                        else:
-                            candidate_b_result = _run_confirmation_eval()
-                            cand_pooled_acc, cand_pooled_syn = self._pooled_metrics(eval_result, candidate_b_result)
-                            inc_pooled_acc, inc_pooled_syn = self._pooled_metrics(inc.a_result, inc.b_result)
-                            cand_pooled_shortfall = self._shortfall(cand_pooled_acc, cand_pooled_syn)
-                            inc_pooled_shortfall = self._shortfall(inc_pooled_acc, inc_pooled_syn)
-                            stage2_pass = self._should_accept(
-                                cand_pooled_shortfall, cand_pooled_acc, cand_pooled_syn,
-                                inc_pooled_shortfall, inc_pooled_acc, inc_pooled_syn,
-                            )
-                            if stage2_pass:
-                                print(
-                                    f"  [greedy] ACCEPT (stage 2, pooled A+B): attempt {attempt_num} "
-                                    f"pooled shortfall {cand_pooled_shortfall:.3f} vs incumbent "
-                                    f"pooled shortfall {inc_pooled_shortfall:.3f} -- new incumbent"
-                                )
-                                self._incumbent = _Incumbent(
-                                    strategy_code=strategy_code,
-                                    attempt_number=attempt_num,
-                                    a_result=eval_result,
-                                    b_result=candidate_b_result,
-                                )
-                                became_incumbent = True
-                            else:
-                                print(
-                                    f"  [greedy] REJECT (stage 2, pooled A+B): attempt {attempt_num} "
-                                    f"pooled shortfall {cand_pooled_shortfall:.3f} vs incumbent "
-                                    f"pooled shortfall {inc_pooled_shortfall:.3f}"
-                                )
-                                became_incumbent = False
-                except _ConfirmationDeadlineHit as deadline_hit:
-                    strategy_code = self._handle_attempt_timeout(
-                        attempt, attempts, deadline_hit.elapsed, task_description, output_name, run_results_dir,
-                    )
-                    continue
-
-                success = (
-                    became_incumbent
-                    and self._meets_threshold(eval_result)
-                    and self._meets_threshold(candidate_b_result)
+            # Hill-climb accept/reject is A-only (user rule 2026-09-24;
+            # planning/monotonic-search-plan.md). A candidate that becomes
+            # the incumbent AND meets the bars on slice A is then confirmed
+            # on every remaining train example (slice A + confirmation =
+            # the whole train split, e.g. 50 + 250 = 300 for Spider). It
+            # only counts as a training win if the POOLED A+confirmation
+            # result also meets the bars.
+            if self._incumbent is None:
+                print(
+                    f"  [greedy] seeding incumbent from attempt {attempt_num} "
+                    f"(A-only: acc={cand_acc_a:.1%}, syn={cand_syn_a:.1%})"
                 )
+                self._incumbent = _Incumbent(
+                    strategy_code=strategy_code,
+                    attempt_number=attempt_num,
+                    a_result=eval_result,
+                    b_result=eval_result,
+                )
+                became_incumbent = True
             else:
-                # A-only hill-climb / win (slice B not evaluated).
-                try:
-                    if self._incumbent is None:
-                        print(
-                            f"  [greedy] seeding incumbent from attempt {attempt_num} "
-                            f"(A-only: acc={cand_acc_a:.1%}, syn={cand_syn_a:.1%})"
-                        )
-                        self._incumbent = _Incumbent(
-                            strategy_code=strategy_code,
-                            attempt_number=attempt_num,
-                            a_result=eval_result,
-                            b_result=eval_result,
-                        )
-                        became_incumbent = True
-                    else:
-                        inc = self._incumbent
-                        inc_acc_a = inc.a_result.accuracy or 0.0
-                        inc_syn_a = inc.a_result.syntax_rate or 0.0
-                        inc_shortfall_a = self._shortfall(inc_acc_a, inc_syn_a)
-                        stage1_pass = self._should_accept(
-                            cand_shortfall_a, cand_acc_a, cand_syn_a,
-                            inc_shortfall_a, inc_acc_a, inc_syn_a,
-                        )
-                        if not stage1_pass:
-                            print(
-                                f"  [greedy] REJECT (stage 1, slice A): attempt {attempt_num} "
-                                f"shortfall {cand_shortfall_a:.3f} vs incumbent attempt "
-                                f"{inc.attempt_number} shortfall {inc_shortfall_a:.3f}"
-                            )
-                            became_incumbent = False
-                        else:
-                            print(
-                                f"  [greedy] ACCEPT (A-only): attempt {attempt_num} "
-                                f"shortfall {cand_shortfall_a:.3f} vs incumbent "
-                                f"shortfall {inc_shortfall_a:.3f} -- new incumbent"
-                            )
-                            self._incumbent = _Incumbent(
-                                strategy_code=strategy_code,
-                                attempt_number=attempt_num,
-                                a_result=eval_result,
-                                b_result=eval_result,
-                            )
-                            became_incumbent = True
-                except _ConfirmationDeadlineHit as deadline_hit:
-                    strategy_code = self._handle_attempt_timeout(
-                        attempt, attempts, deadline_hit.elapsed, task_description, output_name, run_results_dir,
-                    )
-                    continue
-
-                success = (
-                    became_incumbent
-                    and self._meets_threshold(eval_result)
+                inc = self._incumbent
+                inc_acc_a = inc.a_result.accuracy or 0.0
+                inc_syn_a = inc.a_result.syntax_rate or 0.0
+                inc_shortfall_a = self._shortfall(inc_acc_a, inc_syn_a)
+                stage1_pass = self._should_accept(
+                    cand_shortfall_a, cand_acc_a, cand_syn_a,
+                    inc_shortfall_a, inc_acc_a, inc_syn_a,
                 )
+                if not stage1_pass:
+                    print(
+                        f"  [greedy] REJECT (stage 1, slice A): attempt {attempt_num} "
+                        f"shortfall {cand_shortfall_a:.3f} vs incumbent attempt "
+                        f"{inc.attempt_number} shortfall {inc_shortfall_a:.3f}"
+                    )
+                    became_incumbent = False
+                else:
+                    print(
+                        f"  [greedy] ACCEPT (A-only): attempt {attempt_num} "
+                        f"shortfall {cand_shortfall_a:.3f} vs incumbent "
+                        f"shortfall {inc_shortfall_a:.3f} -- new incumbent"
+                    )
+                    self._incumbent = _Incumbent(
+                        strategy_code=strategy_code,
+                        attempt_number=attempt_num,
+                        a_result=eval_result,
+                        b_result=eval_result,
+                    )
+                    became_incumbent = True
 
+            logger.info(
+                "[greedy] attempt=%d became_incumbent=%s slice_a_acc=%.4f "
+                "slice_a_syntax=%.4f",
+                attempt_num, became_incumbent, cand_acc_a, cand_syn_a,
+            )
+
+            confirmation_record: dict | None = None
+            meets_bars_on_a = became_incumbent and self._meets_threshold(eval_result)
+
+            if meets_bars_on_a:
+                # getattr guards fake/older evaluators in tests that predate
+                # this accessor; they behave like "no split manifest".
+                train_total = getattr(self.evaluator, "train_split_size", lambda: None)()
+                remaining = (
+                    train_total - self.eval_sample_size
+                    if train_total is not None
+                    else 0
+                )
+                if train_total is not None and remaining > 0:
+                    need_acc, need_syn = self._pooled_early_stop_targets(
+                        eval_result, n_b=remaining, n_total=train_total
+                    )
+                    early_stop_enabled = os.environ.get("CSD_SYNTHESIS_EVAL_EARLY_STOP", "1") != "0"
+                    print(
+                        f"  [confirm] train examples "
+                        f"{self.eval_sample_size + 1}-{train_total}: "
+                        f"confirming on {remaining} remaining train example(s)..."
+                    )
+                    logger.info(
+                        "[confirm] attempt=%d running confirmation offset=%d size=%d "
+                        "need_acc=%.4f need_syn=%.4f (no attempt deadline)",
+                        attempt_num, self.eval_sample_size, remaining, need_acc, need_syn,
+                    )
+                    confirm_result = self.evaluator.evaluate_sample(
+                        compiled_module_path=compilation_result.main_module_path,
+                        sample_size=remaining,
+                        sample_offset=self.eval_sample_size,
+                        early_stop_min_accuracy=need_acc if early_stop_enabled else None,
+                        early_stop_min_syntax_rate=need_syn if early_stop_enabled else None,
+                        early_stop_runtime_failures=(
+                            int(os.environ.get("CSD_SYNTHESIS_EVAL_EARLY_STOP_RUNTIME_FAILURES", "3"))
+                            if early_stop_enabled
+                            else None
+                        ),
+                        min_examples_before_threshold_stop=self.min_examples_before_threshold_stop,
+                        # Confirmation must never be killed by the per-attempt
+                        # wall-clock cap -- it can legitimately take hours.
+                        deadline=None,
+                    )
+                    confirm_acc = confirm_result.accuracy or 0.0
+                    confirm_syn = confirm_result.syntax_rate or 0.0
+                    print(
+                        f"  [confirm] train examples "
+                        f"{self.eval_sample_size + 1}-{train_total}: "
+                        f"Accuracy: {confirm_acc:.1%} Syntax: {confirm_syn:.1%}"
+                    )
+                    # Judged over the whole train split: an early-stopped
+                    # confirmation leaves examples unrun, and those count as misses.
+                    pooled_acc = (
+                        (eval_result.num_correct or 0) + (confirm_result.num_correct or 0)
+                    ) / train_total
+                    pooled_syn = (
+                        (eval_result.syntax_rate or 0.0) * (eval_result.num_examples or 0)
+                        + confirm_syn * (confirm_result.num_examples or 0)
+                    ) / train_total
+                    confirmation_passed = (
+                        pooled_acc >= self.min_accuracy and pooled_syn >= self.min_syntax_rate
+                    )
+                    print(
+                        f"  [confirm] pooled {train_total}: Accuracy: {pooled_acc:.1%} "
+                        f"(min: {self.min_accuracy:.1%}) Syntax: {pooled_syn:.1%}"
+                    )
+                    print(f"  [confirm] {'PASS' if confirmation_passed else 'MISS'}")
+                    logger.info(
+                        "[confirm] attempt=%d confirm_acc=%.4f confirm_syn=%.4f "
+                        "pooled_acc=%.4f pooled_syn=%.4f passed=%s",
+                        attempt_num, confirm_acc, confirm_syn, pooled_acc, pooled_syn,
+                        confirmation_passed,
+                    )
+                    confirmation_record = {
+                        "slice_a_size": eval_result.num_examples or 0,
+                        "confirm_size": confirm_result.num_examples or 0,
+                        "confirm_accuracy": confirm_acc,
+                        "confirm_syntax": confirm_syn,
+                        "pooled_accuracy": pooled_acc,
+                        "pooled_syntax": pooled_syn,
+                        "passed": confirmation_passed,
+                    }
+
+            attempt.confirmation = confirmation_record
+
+            success = (
+                meets_bars_on_a
+                and (confirmation_record is None or confirmation_record["passed"])
+            )
 
             if success:
                 if fixed_warm_continuation and iteration + 1 < self.max_iterations:
@@ -2814,7 +2814,14 @@ class SynthesisPipeline:
                         ),
                     )
                     continue
-                print(f"  ✓ Evaluation passed (A-only; slice B confirmation disabled):")
+                if confirmation_record is not None:
+                    print(
+                        "  \u2713 Evaluation passed (slice A + confirmation on "
+                        f"all {confirmation_record['slice_a_size'] + confirmation_record['confirm_size']} "
+                        "train examples):"
+                    )
+                else:
+                    print("  \u2713 Evaluation passed (A-only; no train examples beyond slice A):")
                 print(f"    Accuracy: {cand_acc_a:.1%}")
                 print(f"    Contains << >>: {'yes' if eval_result.contains_delimiters else 'no'}")
                 print(f"    Syntax: {cand_syn_a:.1%}")
@@ -2888,21 +2895,34 @@ class SynthesisPipeline:
                     f"    Slowest Example Time: {eval_result.max_sample_time_seconds:.2f}s "
                     f"(max: {self.eval_max_seconds_per_example:.2f}s)"
                 )
-            # TEMPORARY A-ONLY: confirmation-miss path disabled (B not evaluated).
-            # Original:
-            # confirmation_missed = (
-            #     became_incumbent
-            #     and candidate_b_result is not None
-            #     and self._meets_threshold(eval_result)
-            #     and not self._meets_threshold(candidate_b_result)
-            # )
-            # if confirmation_missed:
-            #     print("  [greedy] confirmation miss: slice A met the bars but slice B did not -- not a SUCCESS")
-            confirmation_missed = False
+            confirmation_missed = bool(
+                confirmation_record is not None and not confirmation_record["passed"]
+            )
+            confirmation_feedback_sentence = ""
+            if confirmation_missed:
+                c = confirmation_record
+                confirmation_feedback_sentence = (
+                    " Confirmation miss: this strategy met the bars on the first "
+                    f"{c['slice_a_size']} training examples, but pooled across all "
+                    f"{c['slice_a_size'] + c['confirm_size']} training examples it "
+                    f"scored {c['pooled_accuracy']:.1%} accuracy and "
+                    f"{c['pooled_syntax']:.1%} syntax, short of the "
+                    f"{self.min_accuracy:.1%}/{self.min_syntax_rate:.1%} bars."
+                )
+                print(
+                    "  [confirm] confirmation miss: slice A met the bars but the "
+                    f"pooled result across all {c['slice_a_size'] + c['confirm_size']} "
+                    f"training examples did not (acc={c['pooled_accuracy']:.1%}, "
+                    f"syn={c['pooled_syntax']:.1%}) -- not a SUCCESS"
+                )
+                logger.info(
+                    "[confirm] attempt=%d confirmation miss pooled_acc=%.4f pooled_syn=%.4f",
+                    attempt_num, c["pooled_accuracy"], c["pooled_syntax"],
+                )
 
             attempt.failed_at = FailureStage.EVALUATION
             attempt.error_summary = eval_result.get_feedback_summary(self.require_delimiters) + (
-                " (confirmation miss: slice A met the bars, slice B did not)" if confirmation_missed else ""
+                confirmation_feedback_sentence
             )
             attempts.append(attempt)
             self._save_progress_report(attempts, task_description, output_name, run_results_dir)
@@ -2919,7 +2939,10 @@ class SynthesisPipeline:
                 continue
 
             self._unload_evaluator_runtime_before_refinement()
-            candidate_feedback = self._threshold_miss_candidate_feedback(eval_result)
+            candidate_feedback = (
+                self._threshold_miss_candidate_feedback(eval_result)
+                + confirmation_feedback_sentence
+            )
             threshold_mode_examples = eval_result._render_mode_examples()
             next_allowed_helpers, next_helper_status = self._compute_allowed_helpers(attempts)
             if next_helper_status:
@@ -3005,7 +3028,9 @@ class SynthesisPipeline:
                 winner_attempt.full_dafny_code
                 or self.generator.inject_strategy(incumbent.strategy_code)
             )
-            winner_compilation = compiler.compile(winner_full_code, output_name)
+            winner_compilation = compiler.compile(
+                self.generator.compile_source(incumbent.strategy_code), output_name
+            )
             if not winner_compilation.success or winner_compilation.main_module_path is None:
                 raise SynthesisExhaustionError(
                     "fixed warm continuation could not compile its selected incumbent",

@@ -13,7 +13,7 @@ from synthesis.evaluate.benchmarks.smiles.dataset import load_smiles
 from synthesis.evaluate.benchmarks.smiles.metrics import evaluate_smiles_output, smiles_trial_metrics
 
 def main(d, cls):
-    ex = load_smiles(classes=[cls], samples_per_class=1)[0]
+    ex = load_smiles(classes=[cls], samples_per_class=1, split_name="test", trial=1)[0]  # grammar/exemplars only; split-independent
     grammar_text = ex.get("grammar_text", "")
     exemplars = ex.get("prompt_exemplars", [])
     rows = []

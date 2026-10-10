@@ -1,15 +1,14 @@
-"""Every sampled SMILES lane seeds each draw from the same formula.
+"""Every sampled SMILES lane seeds each draw from its split's seed range.
 
-The CRANE, IterGen and unconstrained SMILES lanes each seeded a draw from the
-draw's GLOBAL index, so a sharded lane does not replay another shard's draws. The
-GCD lane seeded nothing at all, so its draws depended on whatever had already
-consumed the process RNG and could not be reproduced.
-
-All four now ask one function for the seed, so the formula lives in one place.
+History: the CRANE, IterGen and unconstrained SMILES lanes seeded a draw from
+CSD_PARITY_SEED + global draw index; GCD seeded nothing until 2026-09-20; CARS
+only seeded the process once. Since 2026-09-26 SMILES has a train/test split made
+of two disjoint seed ranges (synthesis/evaluate/benchmarks/smiles/seed_split.py),
+so a draw's seed comes from (split, draw index) and nothing else: no environment
+variable moves it, and every lane asks the one module for it.
 """
 
 import inspect
-import os
 import sys
 from pathlib import Path
 
@@ -19,38 +18,31 @@ if str(REPO) not in sys.path:
 
 from synthesis.evaluate import run_legacy_fixed_strategy as lane_module
 
-SAMPLED_SMILES_LANES = (
+# Lanes that load their draws through the Evaluator and seed from the row.
+ROW_SEEDED_LANES = (
     lane_module.run_gcd_legacy_adapter,
     lane_module._crane_via_adaptive_syncode,
     lane_module._run_itergen_legacy_adapter_inner,
-    lane_module.run_unconstrained_smiles_adapter,
 )
 
 
-def test_the_seed_is_decided_by_the_global_draw_index() -> None:
-    seeds = [lane_module._smiles_draw_seed(i) for i in range(5)]
-
-    assert len(set(seeds)) == 5
-    assert seeds == [lane_module._smiles_draw_seed(i) for i in range(5)]
+def test_row_seeded_lanes_seed_each_draw_from_the_row():
+    for lane in ROW_SEEDED_LANES:
+        assert 'seed_smiles_draw(example["draw_seed"])' in inspect.getsource(lane), lane.__name__
 
 
-def test_a_shard_starting_later_gets_that_shards_own_seeds() -> None:
-    assert lane_module._smiles_draw_seed(0) != lane_module._smiles_draw_seed(10)
+def test_the_unconstrained_lane_asks_the_split_for_each_seed():
+    source = inspect.getsource(lane_module.run_unconstrained_smiles_adapter)
+    assert "smiles_draw_seed(args.smiles_split_name, args.smiles_trial, _i)" in source
 
 
-def test_the_parity_seed_environment_variable_moves_every_draw(monkeypatch) -> None:
-    monkeypatch.setenv("CSD_PARITY_SEED", "99")
-    shifted = lane_module._smiles_draw_seed(0)
-    monkeypatch.setenv("CSD_PARITY_SEED", "1234")
-
-    assert shifted != lane_module._smiles_draw_seed(0)
+def test_the_cars_lane_seeds_every_draw_it_spends():
+    source = inspect.getsource(lane_module.run_cars_legacy_adapter)
+    assert "smiles_draw_seed(" in source and "seed_smiles_draw(" in source
 
 
-def test_every_sampled_smiles_lane_asks_for_a_seed() -> None:
-    for lane in SAMPLED_SMILES_LANES:
-        assert "_smiles_draw_seed(" in inspect.getsource(lane), lane.__name__
-
-
-def test_no_lane_carries_its_own_copy_of_the_formula() -> None:
-    for lane in SAMPLED_SMILES_LANES:
+def test_the_old_environment_seeded_formula_is_gone():
+    source = Path(lane_module.__file__).read_text()
+    assert "_smiles_draw_seed" not in source
+    for lane in (*ROW_SEEDED_LANES, lane_module.run_unconstrained_smiles_adapter):
         assert "1_000_003" not in inspect.getsource(lane), lane.__name__

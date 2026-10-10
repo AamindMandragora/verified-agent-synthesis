@@ -8,17 +8,19 @@ until evaluation thresholds are met or max iterations exhausted.
 Simplified 2026-07-17: everything with exactly one correct value moved to
 synthesis/run_constants.py. The remaining flags are run identity + the
 science (dataset, models, bars, iterations, sample size). vLLM sizing
-(GPU memory share, context length) and the bar's split side are now
-hard-coded settled constants (synthesis always scores itself on train).
+(GPU memory share, context length) are hard-coded settled constants.
+Synthesis always scores itself on train; the split the accuracy bar was
+measured on is declared per launch with --bar-from-train or --bar-from-test.
 
 Usage:
     python -m synthesis.run_synthesis --task "..." --dataset gsm_symbolic \\
-        --min-accuracy 0.3 --min-syntax-rate 0.5
+        --min-accuracy 0.3 --min-syntax-rate 0.5 --bar-from-train
 """
 
 import argparse
 import dataclasses
 import json
+import logging
 import os
 import sys
 from datetime import date
@@ -34,6 +36,7 @@ from synthesis.run_constants import (
     MIN_EXAMPLES_BEFORE_THRESHOLD_STOP,
     OUTPUT_DIR,
     SPLIT_FILE_BY_DATASET,
+    SYNTHESIS_SMILES_TRIAL,
     SYNTHESIS_SPLIT_NAME,
     SYNTHESIZER_REASONING_BUDGET_DEFAULT,
     TEMPERATURE,
@@ -46,6 +49,8 @@ try:
     from synthesis.project_defaults import default_dafny_path
 except ImportError:
     from project_defaults import default_dafny_path
+
+logger = logging.getLogger(__name__)
 
 try:
     from dotenv import load_dotenv
@@ -233,7 +238,7 @@ Examples:
   # GSM-Symbolic (train side of the canonical split, bar measured on train)
   python -m synthesis.run_synthesis --task "Generate math reasoning strategy" \\
       --dataset gsm_symbolic \\
-      --min-accuracy 0.3 --min-syntax-rate 0.5
+      --min-accuracy 0.3 --min-syntax-rate 0.5 --bar-from-train
 """
     )
 
@@ -265,6 +270,29 @@ Examples:
         type=float,
         required=True,
         help="Minimum syntax validity rate threshold (e.g. 0.5)"
+    )
+
+    # Which split the --min-accuracy bar was measured on. Required on every
+    # launch, no default: a hard-coded "train" here once hid test-side bars
+    # (2026-07-17, again 2026-09-26) because the split guard below could
+    # never fire.
+    bar_split_group = parser.add_mutually_exclusive_group(required=True)
+    bar_split_group.add_argument(
+        "--bar-from-train",
+        dest="bar_split_name",
+        action="store_const",
+        const="train",
+        help="The accuracy bar was measured on the TRAIN split (the split synthesis scores).",
+    )
+    bar_split_group.add_argument(
+        "--bar-from-test",
+        dest="bar_split_name",
+        action="store_const",
+        const="test",
+        help=(
+            "The accuracy bar was measured on the TEST split. GSM/Spider synthesis "
+            "scores train, so a nonzero bar from test is refused at launch."
+        ),
     )
 
     parser.add_argument(
@@ -510,8 +538,9 @@ Examples:
         )
 
     # One canonical split per dataset; synthesis always evaluates the train side.
+    # SMILES has no split file: its split is the train seed range (seed_split.py).
     split_file = SPLIT_FILE_BY_DATASET[args.dataset]
-    split_name = SYNTHESIS_SPLIT_NAME if split_file is not None else None
+    split_name = SYNTHESIS_SPLIT_NAME
 
     # Refuse to launch when the accuracy bar's split side doesn't match the
     # split being evaluated (or is undeclared). Fail here, before any model
@@ -524,10 +553,18 @@ Examples:
             split_file=str(split_file) if split_file is not None else None,
             split_name=split_name,
             min_accuracy=args.min_accuracy,
-            bar_split_name="train",
+            bar_split_name=args.bar_split_name,
         )
     except BarSplitProvenanceError as exc:
+        logger.error(
+            "[bar-split] refusing launch: dataset=%s bar_split=%s synthesis_split=%s: %s",
+            args.dataset, args.bar_split_name, split_name, exc,
+        )
         parser.error(str(exc))
+    logger.info(
+        "[bar-split] dataset=%s bar_split=%s synthesis_split=%s min_accuracy=%s",
+        args.dataset, args.bar_split_name, split_name, args.min_accuracy,
+    )
 
     if split_file is not None and not Path(split_file).is_file():
         raise RuntimeError(
@@ -606,6 +643,7 @@ Examples:
     print(f"  OUTPUT NAME  : {output_name}")
     if split_file is not None:
         print(f"  SPLIT        : {split_name} side of {Path(split_file).name}")
+    print(f"  BAR SPLIT    : {args.bar_split_name}")
     print("=" * _banner_width)
 
     # GSM-Symbolic examples come from the vendored CRANE JSON folder only
@@ -677,6 +715,8 @@ Examples:
         spider_split_file=str(split_file) if args.dataset == "spider" else None,
         spider_split_name=split_name if args.dataset == "spider" else "train",
         smiles_classes=evaluator_smiles_classes(args.dataset, args.smiles_classes),
+        smiles_split_name=split_name if args.dataset == "smiles" else None,
+        smiles_trial=SYNTHESIS_SMILES_TRIAL if args.dataset == "smiles" else None,
         early_stop_on_answer=EVAL_EARLY_STOP_ON_ANSWER,
     )
 
@@ -689,7 +729,7 @@ Examples:
         output_dir=output_dir,
         min_accuracy=args.min_accuracy,
         min_syntax_rate=args.min_syntax_rate,
-        bar_split_name="train",
+        bar_split_name=args.bar_split_name,
         require_delimiters=resolve_require_delimiters(args.dataset, cli_value=True),
         eval_sample_size=feedback_sample_size,
         eval_max_seconds_per_example=args.eval_max_seconds_per_example,

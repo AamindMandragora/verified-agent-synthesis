@@ -283,6 +283,12 @@ def span_token_length(tokenizer: Any, text: str) -> int:
     return len(_SPAN_UNIT_PATTERN.findall(text))
 
 
+def _example_model_calls(lm: Any) -> Optional[int]:
+    """Model calls the current example has used so far (None if the LM does not count them)."""
+    count = getattr(lm, "ModelCallCount", None)
+    return int(count()) if callable(count) else None
+
+
 class _PerExampleTimer:
     """Unix wall-clock timer for interrupting a single long-running example."""
 
@@ -447,6 +453,7 @@ class EvaluationResult:
         ]
 
         output_run_summary = self._summarize_output_run()
+        model_call_cost_lines = self._summarize_model_call_cost()
 
         # Anonymized failure summary (April 25): we used to dump up to 3 specific
         # failed examples (question + expected + actual) into the feedback to
@@ -522,6 +529,7 @@ class EvaluationResult:
             failure_modes=failure_modes,
             output_run_summary=list(output_run_summary),
             aggregate_failure_stats_lines=aggregate_failure_stats_lines,
+            model_call_cost_lines=model_call_cost_lines,
             diagnostic_metrics=list(diagnostic_metrics),
             show_structural_metrics=bool(structural_metrics),
             structural_metrics=list(structural_metrics),
@@ -627,6 +635,10 @@ class EvaluationResult:
             "id_orig",
             "id_shuffled",
             "db_id",
+            "smiles_split_name",
+            "smiles_trial",
+            "draw_index",
+            "draw_seed",
         ):
             if key in example:
                 metadata[key] = example[key]
@@ -1208,6 +1220,35 @@ class EvaluationResult:
             term in lowered for term in api_error_terms
         )
 
+    def _summarize_model_call_cost(self) -> List[str]:
+        """Per-example model-call cost, as mechanism facts only.
+
+        Counts, not content: no question, output or answer text. Empty when
+        no sample recorded a model-call count (results from before counting).
+        """
+        counted = [
+            (int(s.get("example_index", pos)) + 1, int(s["model_calls"]), int(s.get("token_count") or 0))
+            for pos, s in enumerate(self.sample_outputs)
+            if s.get("model_calls") is not None
+        ]
+        if not counted:
+            return []
+        n = len(self.sample_outputs)
+        calls = sorted(c for _, c, _ in counted)
+        mid = len(calls) // 2
+        median = calls[mid] if len(calls) % 2 else (calls[mid - 1] + calls[mid]) / 2
+        median_text = f"{median:.1f}".removesuffix(".0")
+        n_timed_out = sum(1 for s in self.sample_outputs if s.get("timed_out"))
+        worst = sorted(counted, key=lambda row: (-row[1], row[0]))[:3]
+        return [
+            f"Model calls per example: median {median_text}, max {calls[-1]}",
+            f"Stopped by the per-example time limit: {n_timed_out}/{n} (scored as failures)",
+            "Most calls: "
+            + "; ".join(
+                f"#{number} {c} calls, {tokens} output tokens" for number, c, tokens in worst
+            ),
+        ]
+
     def _summarize_output_run(self) -> List[str]:
         """Summarize factual output behavior without causal labels."""
         if not self.sample_outputs:
@@ -1717,6 +1758,8 @@ class Evaluator:
         spider_split_file: str | Path | None = None,
         spider_split_name: str = "train",
         smiles_classes: Optional[List[str]] = None,
+        smiles_split_name: Optional[str] = None,
+        smiles_trial: Optional[int] = None,
         grammars_dir: str | Path | None = None,
         early_stop_on_answer: bool = False,
     ):
@@ -1743,6 +1786,10 @@ class Evaluator:
             gsm_split_name: Which split from gsm_split_file to use ("train" or "test").
             spider_split_file: Optional JSON manifest with train_indices/test_indices for Spider.
             spider_split_name: Which split from spider_split_file to use ("train" or "test").
+            smiles_split_name: Which SMILES seed range to draw from ("train" or "test").
+                Required for SMILES (no default); see benchmarks/smiles/seed_split.py.
+            smiles_trial: Which SMILES trial (1, 2 or 3) of that split; each trial is
+                its own block of seeds. Required for SMILES (no default).
         """
         if backend not in {"huggingface", "vllm"}:
             raise NotImplementedError(
@@ -1784,6 +1831,16 @@ class Evaluator:
         self.spider_split_file = Path(spider_split_file) if spider_split_file is not None else None
         self.spider_split_name = spider_split_name
         self.smiles_classes = smiles_classes
+        if smiles_split_name is not None:
+            from synthesis.evaluate.benchmarks.smiles.seed_split import seed_range
+
+            seed_range(smiles_split_name)  # refuse an unknown split name at construction
+        if smiles_trial is not None:
+            from synthesis.evaluate.benchmarks.smiles.seed_split import trial_seed_range
+
+            trial_seed_range(smiles_split_name or "train", smiles_trial)  # refuse an unknown trial
+        self.smiles_split_name = smiles_split_name
+        self.smiles_trial = smiles_trial
         self.grammars_dir = Path(grammars_dir).expanduser() if grammars_dir is not None else None
 
         # Lazy-loaded components
@@ -1827,6 +1884,8 @@ class Evaluator:
             gsm_split_name=self.gsm_split_name if self.gsm_split_file is not None else None,
             spider_split_file=self.spider_split_file,
             spider_split_name=self.spider_split_name if self.spider_split_file is not None else None,
+            smiles_split_name=self.smiles_split_name if self.dataset_name == "smiles" else None,
+            smiles_trial=self.smiles_trial if self.dataset_name == "smiles" else None,
             bar_split_name=bar_split_name,
         )
 
@@ -1899,6 +1958,30 @@ class Evaluator:
         # so slice-B confirmation draws the NEXT N indices.
         offset = self.sample_offset or 0
         return indices[offset:]
+
+    def train_split_size(self) -> Optional[int]:
+        """Total number of examples in the active dataset's train-side split
+        manifest, or None if this dataset has no split manifest (e.g.
+        SMILES, or GSM/Spider configured without one).
+
+        Used by the synthesis feedback loop to know how many train examples
+        remain beyond slice A for the 300-example confirmation check (see
+        evaluate_sample's sample_offset). Deliberately ignores the instance's
+        current sample_offset -- this always reports the manifest's raw
+        length, not a length already trimmed for a particular call.
+        """
+        if self.dataset_name == "gsm_symbolic" and self.gsm_split_file is not None:
+            manifest = self._read_split_manifest(self.gsm_split_file)
+            key = f"{self.gsm_split_name}_indices"
+        elif self.dataset_name == "spider" and self.spider_split_file is not None:
+            manifest = self._read_split_manifest(self.spider_split_file)
+            key = f"{self.spider_split_name}_indices"
+        else:
+            return None
+        indices = manifest.get(key)
+        if not isinstance(indices, list):
+            return None
+        return len(indices)
 
     def _get_grammar_file(self) -> Path:
         """Get the grammar file path for the dataset."""
@@ -2434,6 +2517,19 @@ class Evaluator:
         example_start = time.time()
         if self.dataset_name == "smiles" and os.environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
             _apply_smiles_rolling_suffix(example, smiles_suffix)
+        if self.dataset_name == "smiles":
+            # A SMILES draw IS its seed (train/test are disjoint seed ranges), so
+            # seed right before generating: the draw then replays the same way in
+            # any order, in any process.
+            from synthesis.evaluate.benchmarks.smiles.seed_split import seed_smiles_draw
+
+            seed_smiles_draw(example["draw_seed"])
+            print(
+                f"  [EVAL]   [smiles-seed-split] split={example.get('smiles_split_name')} "
+                f"trial={example.get('smiles_trial')} "
+                f"draw_index={example.get('draw_index')} draw_seed={example['draw_seed']}",
+                flush=True,
+            )
         prompt = self._format_prompt(example)
         expected = self._get_expected_answer(example)
         benchmark_aux: Optional[dict[str, Any]] = None
@@ -2445,6 +2541,11 @@ class Evaluator:
         from synthesis.evaluate.benchmarks.sql_spider.output_contract import (
             SpiderEvidenceContractError,
         )
+
+        # The LM persists across examples; its model-call count is per example.
+        example_lm = env.get("lm")
+        if hasattr(example_lm, "ResetModelCallCount"):
+            example_lm.ResetModelCallCount()
 
         try:
             print(f"  [EVAL]   Running CSD strategy (max_steps={self.max_steps})...", flush=True)
@@ -2496,6 +2597,8 @@ class Evaluator:
             prompt_contract = getattr(env.get("lm"), "_last_prompt_contract", None)
             example_time = time.time() - example_start
             print(f"  [EVAL]   Generated {token_count} tokens in {example_time:.2f}s", flush=True)
+            model_calls = _example_model_calls(example_lm)
+            print(f"  [EVAL][model-calls] example={i + 1} model_calls={model_calls}", flush=True)
             # region agent log
             _agent_debug_log(
                 "A",
@@ -2652,6 +2755,7 @@ class Evaluator:
                 "valid_visible_span_token_lengths": valid_visible_span_lengths,
                 "token_count": token_count,
                 "constrained_work": constrained_work,
+                "model_calls": model_calls,
                 "hit_max_steps": token_count >= self.max_steps,
                 "time_seconds": gen_time,
                 "runtime_budget_exceeded": (
@@ -2729,6 +2833,12 @@ class Evaluator:
             q_str = q_full[:200]
             elapsed = time.time() - example_start
             timed_out = isinstance(e, PerExampleTimeout)
+            model_calls = _example_model_calls(example_lm)
+            print(
+                f"  [EVAL][model-calls] example={i + 1} model_calls={model_calls} "
+                f"(example ended by {type(e).__name__})",
+                flush=True,
+            )
             if timed_out:
                 print(
                     f"  [EVAL]   Timed out after {elapsed:.2f}s (per-example runtime budget)",
@@ -2783,6 +2893,7 @@ class Evaluator:
                 "token_count": 0,
                 "hit_max_steps": False,
                 "time_seconds": elapsed,
+                "model_calls": model_calls,
                 "runtime_budget_exceeded": timed_out or (
                     self.max_seconds_per_example is not None
                     and elapsed > self.max_seconds_per_example
@@ -2841,10 +2952,6 @@ class Evaluator:
         n_timeouts = 0
 
         def early_stop_reason_if_any() -> Optional[str]:
-            if callable(collected_stop) and sample_outputs:
-                reason = collected_stop(sample_outputs)
-                if reason:
-                    return reason
             if not early_stop_enabled or not sample_outputs:
                 return None
             runtime_failures = sum(
@@ -2881,6 +2988,13 @@ class Evaluator:
                 print(f"  [EVAL] Early stopping eval: {reason}", flush=True)
                 return sample_outputs, reason
 
+            # Reaching CARS's unique-valid target finishes the trial: a
+            # complete evaluation, not an early stop.
+            if callable(collected_stop):
+                collected_reason = collected_stop(sample_outputs)
+                if collected_reason:
+                    print(f"  [EVAL] Trial complete: {collected_reason}", flush=True)
+                    return sample_outputs, None
             early_reason = early_stop_reason_if_any()
             if early_reason:
                 print(f"  [EVAL] Early stopping synthesis eval: {early_reason}", flush=True)
@@ -3111,9 +3225,12 @@ class Evaluator:
         # confirmation slice for non-indexed datasets is drawn by shifting
         # the sample seed instead -- restored after this call so it never
         # leaks into a later normal (offset=0) evaluation.
+        # SMILES applies the offset as its first draw index inside the seed range
+        # (see smiles/eval_logic.load_dataset_sample), so it needs no seed shift.
         has_split_manifest = (
             (self.dataset_name == "gsm_symbolic" and self.gsm_split_file is not None)
             or (self.dataset_name == "spider" and self.spider_split_file is not None)
+            or self.dataset_name == "smiles"
         )
         original_sample_seed = self.sample_seed
         if self.sample_offset and not has_split_manifest:

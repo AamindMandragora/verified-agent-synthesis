@@ -64,7 +64,9 @@ also selects `/home/aadivyar/.claude-csd-synthesis` and expects the configured
 
 Cold reruns use the canonical train split selected by `synthesis.run_synthesis`
 and set `CSD_OUTPUT_NAME`; they do not pass unsupported output-name or split
-flags.
+flags. They pass `--bar-from-test`, because their bars come from
+the test-side fixed-baseline runs; `run_synthesis` therefore refuses GSM/Spider
+reruns with a nonzero bar until the bar is re-measured on train.
 
 Use `--dry-run` to print the exact fixed-baseline and possible cold rerun
 commands. It never creates a claim or calls an evaluator. A real queue uses

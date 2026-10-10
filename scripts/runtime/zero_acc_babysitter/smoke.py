@@ -535,8 +535,10 @@ def run_hardened_smoke_job(
     ]
     if smiles_class:
         cmd.extend(["--smiles-classes", smiles_class])
-    # Split name is required for gsm/spider (no default side); smoke is a
+    # Split name is required for gsm/spider/smiles (no default side); smoke is a
     # sanity gate, so score the train side — test is reserved for final numbers.
+    if dataset == "smiles":
+        cmd.extend(["--smiles-split-name", "train", "--smiles-trial", "1"])
     if dataset == "gsm_symbolic":
         cmd.extend(["--gsm-split-name", "train"])
     elif dataset == "spider":
@@ -702,6 +704,8 @@ def run_twin_accuracy_probe(
     ]
     if smiles_class:
         cmd.extend(["--smiles-classes", smiles_class])
+    if dataset == "smiles":
+        cmd.extend(["--smiles-split-name", "train", "--smiles-trial", "1"])
     if dataset == "gsm_symbolic":
         cmd.extend(["--gsm-split-name", "train"])
     elif dataset == "spider":

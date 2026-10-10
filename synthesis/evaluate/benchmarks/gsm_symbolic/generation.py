@@ -217,6 +217,22 @@ def _enforce_max_steps(result_tokens: List[str], max_steps: int) -> None:
         )
 
 
+def _callback_seconds() -> Tuple[float, float]:
+    """Seconds this process has spent so far in timed LM and parser callbacks.
+
+    Both timing tables (model_utils._TIMINGS, parser_utils._PARSER_TIMINGS)
+    are running totals for the whole process, never reset; a per-example
+    figure is the change in these totals across the example.
+    """
+    from synthesis.evaluate.benchmarks.common.model_utils import _TIMINGS
+    from synthesis.evaluate.benchmarks.common.parser_utils import _PARSER_TIMINGS
+
+    return (
+        sum(t for t, _ in _TIMINGS.values()),
+        sum(t for t, _ in _PARSER_TIMINGS.values()),
+    )
+
+
 def run_crane_csd(
     env: dict,
     prompt_text: Union[str, List[dict]],
@@ -368,6 +384,7 @@ def run_crane_csd(
         if hasattr(lm, "set_chat_messages"):
             lm.set_chat_messages(chat_messages)
     start_time = time.time()
+    lm_seconds_at_start, parser_seconds_at_start = _callback_seconds()
     runtime_deadline = None
     if max_seconds is not None:
         runtime_deadline = time.monotonic() + max_seconds
@@ -576,15 +593,18 @@ def run_crane_csd(
     if debug_delimiters:
         print(f"  [DEBUG] Generation finished in {execution_time:.2f}s. Cost: {total_cost}. Tokens: {len(result_tokens)}")
 
-    # Per-example timing dump: what fraction of wall time went to Python callbacks
-    # (LM + parser) vs Dafny-internal work. If callbacks sum << execution_time,
-    # the bottleneck is inside the generated Dafny strategy (not our Python code).
+    # Per-example timing dump: what fraction of this example's wall time went to
+    # Python callbacks (LM + parser) vs Dafny-internal work. If callbacks sum <<
+    # execution_time, the bottleneck is inside the generated Dafny strategy (not
+    # our Python code). The timing tables are process-wide running totals, so the
+    # per-example figures are the change since this example started.
     try:
-        from synthesis.evaluate.benchmarks.common.model_utils import _TIMINGS, _print_timings_breakdown
-        from synthesis.evaluate.benchmarks.common.parser_utils import _PARSER_TIMINGS, print_parser_timings
+        from synthesis.evaluate.benchmarks.common.model_utils import _print_timings_breakdown
+        from synthesis.evaluate.benchmarks.common.parser_utils import print_parser_timings
 
-        lm_total = sum(t for t, _ in _TIMINGS.values())
-        parser_total = sum(t for t, _ in _PARSER_TIMINGS.values())
+        lm_seconds_now, parser_seconds_now = _callback_seconds()
+        lm_total = lm_seconds_now - lm_seconds_at_start
+        parser_total = parser_seconds_now - parser_seconds_at_start
         callbacks_total = lm_total + parser_total
         dafny_internal = max(execution_time - callbacks_total, 0.0)
         print(

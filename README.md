@@ -180,8 +180,14 @@ CUDA_VISIBLE_DEVICES=1,2 python -m synthesis.run_synthesis \
   --max-iterations 5 \
   --min-accuracy 0.3 \
   --min-syntax-rate 1.0 \
-  --eval-sample-size 10
+  --eval-sample-size 10 \
+  --bar-from-train
 ```
+
+Every launch must pass exactly one of `--bar-from-train` or `--bar-from-test`:
+the split the `--min-accuracy` bar was measured on. There is no default.
+Synthesis scores the train split, so a GSM/Spider launch with a nonzero bar
+from test is refused.
 
 UCB/bandit helper-call pruning and local-beam refinement are no longer
 CLI-configurable: every recorded run used the same settings, so they are

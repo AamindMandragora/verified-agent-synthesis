@@ -547,6 +547,10 @@ def create_lark_dafny_parser(
                     return False
                 return self._is_complete(self._complete_text(prefix))
 
+        def ParseG(self, input_):
+            """Dafny extern: does the whole string `input_` parse as a complete word of the grammar?"""
+            return self._is_complete(dafny_seq_to_str(input_))
+
         def ValidNextTokens(self, prefix):
             """Dafny interface: every token the mask offers that also passes the exact grammar check."""
             with _parser_timed("ValidNextTokens.total"):

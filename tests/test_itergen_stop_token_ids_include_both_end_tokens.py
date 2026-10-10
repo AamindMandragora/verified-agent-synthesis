@@ -76,3 +76,18 @@ def test_an_explicit_override_still_wins():
     iter_gen.generation_stop_token_ids = {99}
 
     assert _itergen_generation_stop_token_ids(iter_gen, tokenizer) == {99}
+
+
+class _FakeGenerationConfig:
+    def __init__(self, eos_token_id):
+        self.eos_token_id = eos_token_id
+
+
+def test_iter_gen_generation_config_end_tokens_are_included():
+    """Qwen2.5: IterGen stops on generation_config.json's [151645, 151643]; the
+    tokenizer and model config know only 151645. The trim must see 151643 too."""
+    tokenizer = _FakeTokenizer(eos_token_id=151645)
+    iter_gen = _FakeIterGen(model_eos_token_id=151645)
+    iter_gen.generation_config = _FakeGenerationConfig([151645, 151643])
+
+    assert _itergen_generation_stop_token_ids(iter_gen, tokenizer) == {151645, 151643}

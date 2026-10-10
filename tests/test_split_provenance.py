@@ -45,7 +45,10 @@ def test_unknown_name_rejected():
 
 def test_none_and_unknown_dataset_are_noops():
     validate_split_name("gsm_symbolic", None, "x")
-    validate_split_name("smiles", "anything", "x")
+    validate_split_name("no_such_dataset", "anything", "x")
+    # SMILES has named splits since 2026-09-26 (two seed ranges).
+    with pytest.raises(BarSplitProvenanceError):
+        validate_split_name("smiles", "anything", "x")
 
 
 # --- launch guard (behavior unchanged) ----------------------------------------
@@ -58,7 +61,7 @@ def test_guard_mismatch_refuses():
 
 
 def test_guard_missing_bar_split_refuses():
-    with pytest.raises(BarSplitProvenanceError, match="--bar-split-name"):
+    with pytest.raises(BarSplitProvenanceError, match="--bar-from-train or --bar-from-test"):
         check_bar_split_provenance("spider", "splits.json", "train", 0.52, None)
 
 
@@ -67,7 +70,7 @@ def test_guard_match_passes():
 
 
 def test_guard_exempt_cases():
-    check_bar_split_provenance("smiles", None, None, 0.1, None)  # no split mechanism
+    check_bar_split_provenance("smiles", None, "train", 0.0, None)  # no bar
     check_bar_split_provenance("spider", None, "train", 0.5, None)  # no split file
     check_bar_split_provenance("spider", "splits.json", "train", 0.0, None)  # no bar
 
@@ -88,6 +91,9 @@ def test_build_full():
         "spider_split_file": None,
         "spider_split_name": None,
         "bar_split_name": "train",
+        "smiles_split_name": None,
+        "smiles_trial": None,
+        "smiles_seed_range": None,
     }
 
 
@@ -104,6 +110,7 @@ def test_build_defaults_all_none():
     assert set(got) == {
         "gsm_split_file", "gsm_split_name",
         "spider_split_file", "spider_split_name", "bar_split_name",
+        "smiles_split_name", "smiles_trial", "smiles_seed_range",
     }
     assert all(v is None for v in got.values())
 

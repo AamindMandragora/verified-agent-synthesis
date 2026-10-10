@@ -333,7 +333,10 @@ def fixed_baseline_command(row: dict[str, Any], python: Path) -> list[str]:
     elif row["dataset"] == "spider":
         command += ["--spider-split-file", str(row["split_file"]), "--spider-split-name", "test"]
     else:
-        command += ["--smiles-classes", str(row["smiles_class"]), "--smiles-samples-per-class", str(row["sample_size"])]
+        command += [
+            "--smiles-classes", str(row["smiles_class"]), "--smiles-samples-per-class", str(row["sample_size"]),
+            "--smiles-split-name", "test", "--smiles-trial", "1",
+        ]
     return command
 
 
@@ -364,6 +367,10 @@ def rerun_command(row: dict[str, Any], python: Path, thresholds: dict[str, Any] 
         "--eval-sample-size", str(row["sample_size"]), "--eval-max-steps", str(row["eval_max_steps"]),
         "--eval-max-seconds-per-example", str(row["eval_max_seconds"]), "--eval-step-token-budget", "1",
         "--generation-backend", "claude", "--generation-model", "claude-opus-5",
+        # The bar comes from fixed_baseline_command, which scores the TEST side.
+        # run_synthesis scores train, so it refuses GSM/Spider reruns with a
+        # nonzero bar; that refusal is the split guard doing its job.
+        "--bar-from-test",
     ]
     if row["dataset"] == "smiles":
         command += ["--smiles-classes", str(row["smiles_class"]), "--smiles-samples-per-class", str(row["sample_size"])]
@@ -411,7 +418,8 @@ def _smiles_uv(payload: dict[str, Any], row: dict[str, Any]) -> float | None:
     try:
         from synthesis.evaluate.benchmarks.smiles.dataset import load_smiles
         from synthesis.evaluate.benchmarks.smiles.metrics import evaluate_smiles_output, smiles_trial_metrics
-        example = load_smiles(classes=[row["smiles_class"]], samples_per_class=1)[0]
+        # Only the class grammar and exemplars are read here; they do not depend on the split.
+        example = load_smiles(classes=[row["smiles_class"]], samples_per_class=1, split_name="test", trial=1)[0]
         samples = [{"smiles_eval": evaluate_smiles_output(row["smiles_class"], str(answer.get("generated_answer", "")), example.get("grammar_text", ""), example.get("prompt_exemplars", []), require_rdkit=True)} for answer in answers]
         trial = smiles_trial_metrics(samples)
         return float(trial["unique_valid_count"]) / max(1, len(samples))

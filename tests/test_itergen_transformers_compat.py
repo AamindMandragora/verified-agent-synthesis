@@ -342,6 +342,8 @@ def test_spider_itergen_timeout_does_not_restore_session_evidence_after_empty_co
     )
 
     args = argparse.Namespace(
+        smiles_split_name="train",
+        smiles_trial=1,
         dataset="spider",
         eval_model="Qwen/Qwen2.5-7B-Instruct",
         eval_backend="vllm",
@@ -569,6 +571,8 @@ def test_qwen35_spider_adapter_keeps_raw_prompt_for_scoring_and_evidence(
     )
 
     args = argparse.Namespace(
+        smiles_split_name="train",
+        smiles_trial=1,
         dataset="spider",
         eval_model="Qwen/Qwen3.5-2B",
         eval_backend="vllm",
@@ -664,7 +668,7 @@ def test_crane_smiles_samples_with_neutral_reasoning_and_scores_only_inner_span(
         def load_dataset_sample(self, evaluator):
             return [
                 {
-                    "class_name": "acrylates",
+                    "class_name": "acrylates", "draw_index": 0, "draw_seed": 100000, "smiles_split_name": "train", "smiles_trial": 1,
                     "grammar_text": "start: /[A-Z0-9=()]+/",
                     "prompt": _SMILES_PROMPT,
                 }
@@ -699,6 +703,8 @@ def test_crane_smiles_samples_with_neutral_reasoning_and_scores_only_inner_span(
     monkeypatch.setattr(legacy_runner, "_build_minimal_json", lambda rows, *args, **kwargs: written.update(rows=rows))
 
     args = argparse.Namespace(
+        smiles_split_name="train",
+        smiles_trial=1,
         dataset="smiles", eval_model="Qwen/Qwen2.5-Coder-7B-Instruct",
         eval_backend="vllm", device="cuda", eval_sample_size=1, eval_max_steps=64,
         eval_step_token_budget=1, vllm_gpu_memory_utilization=0.1,

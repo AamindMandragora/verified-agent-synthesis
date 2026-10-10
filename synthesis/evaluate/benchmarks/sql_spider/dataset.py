@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import json
 import os
+import logging
 import random
+import sqlite3
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
@@ -31,6 +33,8 @@ from synthesis.evaluate.benchmarks.split_utils import (
     stratified_sample_indices,
 )
 from synthesis.project_defaults import default_spider_data_dir
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SPIDER_DIR = Path(
     default_spider_data_dir()
@@ -521,23 +525,29 @@ def write_gold_file(examples: List[Dict[str, Any]], path: Path) -> None:
 
 
 def default_db_dir() -> Path:
-    """Default SQLite databases directory for Spider.
+    """SQLite databases for Spider execution accuracy: the official release copy.
 
-    Prefer the vendored test-suite ("fixed") databases — these are the SAME
-    .sqlite files the baselines (IterGen/CRANE) score against, and the ones the
-    Spider gold queries were validated on. The raw `DEFAULT_SPIDER_DIR/database`
-    copy has divergent .sqlite contents that under-count by ~8pp (proven
-    2026-06-06: identical code + predictions + gold give 57.9% on the raw copy
-    vs 65.2% on the vendored copy for the Spider-7B held-out set). Scoring
-    against the baseline's databases is the fair, CLAUDE.md-mandated choice.
+    IterGen's vendored `sql_spider_eval/databases` is built by create_databases.py
+    from tables.json alone (no INSERTs), so every query returns an empty result
+    and wrong SQL scores as correct. The earlier "~8pp" gap that made the
+    vendored copy look preferable was that artifact. See
+    saved-results/2026-09-25-spider-populated-db-rescore.md.
     """
-    env = os.environ.get("SPIDER_DB_DIR")
-    if env:
-        return Path(env)
-    vendored = _vendored_spider_eval_dir() / "databases"
-    if vendored.exists():
-        return vendored
-    return DEFAULT_SPIDER_DIR / "database"
+    return require_populated_db_dir(DEFAULT_SPIDER_DIR / "database")
+
+
+def require_populated_db_dir(db_dir: Path) -> Path:
+    """Refuse a schema-only database copy (probe: concert_singer.concert has rows)."""
+    probe = Path(db_dir) / "concert_singer" / "concert_singer.sqlite"
+    con = sqlite3.connect(f"file:{probe}?mode=ro", uri=True)
+    try:
+        rows = con.execute("SELECT COUNT(*) FROM concert").fetchone()[0]
+    finally:
+        con.close()
+    if rows == 0:
+        raise RuntimeError(f"Spider databases at {db_dir} have no rows (schema-only copy)")
+    logger.info("[spider-db] using populated databases at %s", db_dir)
+    return Path(db_dir)
 
 
 def default_tables_json() -> Path:

@@ -54,7 +54,6 @@ case "$DATASET" in
     EXTRA=(--dataset gsm_symbolic --gsm-split-file "$SPLIT" --gsm-split-name "$SPLIT_NAME")
     ;;
   spider)
-    export SPIDER_DB_DIR=/home/aadivyar/csd-generation/synthesis/evaluate/syncode/syncode/utils/sql_spider_eval/databases
     export CSD_API_MAX_RETRIES=10
     export CSD_RECURRENCE_PENALTY=0.3
     SPLIT="${SPLIT_FILE:-/home/aadivyar/csd-generation/environment/benchmark_splits/spider_dev_proportional_300x300_seed334.json}"

@@ -47,8 +47,8 @@ _GRAMMAR = "start: /[A-Z0-9=()]+/"
 
 def _two_examples(prompt: str = _SMILES_PROMPT, grammar: str = _GRAMMAR) -> list[dict]:
     return [
-        {"class_name": "acrylates", "grammar_text": grammar, "prompt": prompt},
-        {"class_name": "acrylates", "grammar_text": grammar, "prompt": prompt},
+        {"class_name": "acrylates", "draw_index": 0, "draw_seed": 100000, "smiles_split_name": "train", "smiles_trial": 1, "grammar_text": grammar, "prompt": prompt},
+        {"class_name": "acrylates", "draw_index": 0, "draw_seed": 100000, "smiles_split_name": "train", "smiles_trial": 1, "grammar_text": grammar, "prompt": prompt},
     ]
 
 
@@ -120,6 +120,8 @@ def test_gcd_lane_sends_the_same_prompt_on_draw_two_as_draw_one(monkeypatch, tmp
     monkeypatch.setattr(runner, "_build_minimal_json", lambda *args, **kwargs: None)
 
     args = argparse.Namespace(
+        smiles_split_name="train",
+        smiles_trial=1,
         dataset="smiles", eval_model="Qwen/Qwen2.5-1.5B-Instruct", eval_backend="vllm",
         device="cuda:0", eval_sample_size=2, eval_max_steps=400, eval_step_token_budget=1,
         vllm_gpu_memory_utilization=0.3, vllm_tensor_parallel_size=1,
@@ -154,6 +156,8 @@ def test_crane_lane_sends_the_same_prompt_on_draw_two_as_draw_one(monkeypatch, t
     monkeypatch.setattr(runner, "_build_minimal_json", lambda rows, *a, **k: None)
 
     args = argparse.Namespace(
+        smiles_split_name="train",
+        smiles_trial=1,
         dataset="smiles", eval_model="Qwen/Qwen2.5-Coder-7B-Instruct", eval_backend="vllm",
         device="cuda", eval_sample_size=2, eval_max_steps=64, eval_step_token_budget=1,
         vllm_gpu_memory_utilization=0.1, vllm_tensor_parallel_size=1,
@@ -204,13 +208,13 @@ def test_itergen_lane_sends_the_same_prompt_on_draw_two_as_draw_one(monkeypatch,
     def _examples():
         return [
             {
-                "class_name": "acrylates",
+                "class_name": "acrylates", "draw_index": 0, "draw_seed": 100000, "smiles_split_name": "train", "smiles_trial": 1,
                 "grammar_text": task["grammar_text"],
                 "prompt": task["prompt"],
                 "prompt_exemplars": task["prompt_exemplars"],
             },
             {
-                "class_name": "acrylates",
+                "class_name": "acrylates", "draw_index": 0, "draw_seed": 100000, "smiles_split_name": "train", "smiles_trial": 1,
                 "grammar_text": task["grammar_text"],
                 "prompt": task["prompt"],
                 "prompt_exemplars": task["prompt_exemplars"],
@@ -226,6 +230,8 @@ def test_itergen_lane_sends_the_same_prompt_on_draw_two_as_draw_one(monkeypatch,
     monkeypatch.setattr(runner.Path, "exists", lambda self: True)
 
     args = argparse.Namespace(
+        smiles_split_name="train",
+        smiles_trial=1,
         dataset="smiles", eval_model="Qwen/Qwen3.5-2B", eval_backend="vllm", device="cuda",
         eval_sample_size=2, eval_max_steps=64, eval_step_token_budget=1,
         vllm_gpu_memory_utilization=0.1, vllm_tensor_parallel_size=1,
@@ -277,6 +283,8 @@ def test_unconstrained_lane_sends_the_same_prompt_on_draw_two_as_draw_one(monkey
     monkeypatch.setattr(runner, "_build_minimal_json", lambda *a, **k: None)
 
     args = argparse.Namespace(
+        smiles_split_name="train",
+        smiles_trial=1,
         dataset="smiles", eval_backend="vllm", eval_model="fake/model", device="cpu",
         eval_sample_size=2, eval_start_index=0, eval_end_index=2, eval_max_steps=64,
         eval_step_token_budget=1, vllm_gpu_memory_utilization=0.3, vllm_tensor_parallel_size=1,

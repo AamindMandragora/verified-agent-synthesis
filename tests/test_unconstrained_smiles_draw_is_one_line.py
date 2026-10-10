@@ -56,6 +56,8 @@ class _FakeLLM:
 
 def _args(tmp_path, backend: str) -> argparse.Namespace:
     return argparse.Namespace(
+        smiles_split_name="train",
+        smiles_trial=1,
         dataset="smiles",
         eval_model="Qwen/Qwen2.5-1.5B-Instruct",
         eval_backend=backend,

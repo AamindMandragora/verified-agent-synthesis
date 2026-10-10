@@ -73,6 +73,13 @@ Aggregate Failure Stats:
 {{ line }}
 {% endfor %}
 {% endif %}
+{% if model_call_cost_lines %}
+
+Model Call Cost (one model call = one next-token scoring pass; rollbacks and regenerations add calls):
+{% for line in model_call_cost_lines %}
+  {{ line }}
+{% endfor %}
+{% endif %}
 {% if diagnostic_metrics %}
 
 Diagnostic Error Decomposition:
