@@ -2698,6 +2698,12 @@ class Evaluator:
                 segments,
                 benchmark_aux,
             )
+            print(
+                f"  [EVAL] result example={i + 1}/{dataset_len} correct={bool(is_correct)} "
+                f"syntax={bool(example_syntax_pass)} answer={str(actual)[:120]!r} "
+                f"expected={str(expected)[:120]!r}",
+                flush=True,
+            )
             if self.dataset_name == "smiles" and os.environ.get("CSD_SMILES_ROLLING_PROMPT", "1") != "0":
                 _update_smiles_rolling_suffix(
                     example,
